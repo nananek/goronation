@@ -12,20 +12,30 @@ import (
 var repoAnchors = []string{"tools/archtest/archtest.go", "core/doc.go"}
 
 // repoRoot は、go test の cwd (tools/archtest のパッケージ dir) から、repo の root (2 つ上) を返す。
-// symlink は解決し、cwd が <root>/tools/archtest と一致しなければ error にする。
-// cwd から最も近い go.work を root にする方式は、tools/archtest に nested の go.work を置くだけで、
-// root をすり替えられた (走査が tools/archtest だけになり、core の os/exec が通った)。
+// root は、cwd の絶対 path (論理 path) の 2 つ上で、symlink を解決しない。cwd が <root>/tools/archtest と
+// 一致しなければ error にする。さらに、<root>/tools と <root>/tools/archtest が symlink なら error にする
+// (go は、symlink の module の dir を、解決せずに cwd にする)。
+//   - cwd から最も近い go.work を root にする方式は、tools/archtest に nested の go.work を置くだけで、
+//     root をすり替えられた (走査が tools/archtest だけになり、core の os/exec が通った)。
+//   - symlink を解決して root を作る方式は、tools/archtest を repo 内の decoy への symlink に置き換えるだけで、
+//     root を decoy にすり替えられた (decoy が core/doc.go と archtest.go を持てば、repoAnchors も通った)。
 func repoRoot(cwd string) (string, error) {
 	if !filepath.IsAbs(cwd) {
 		return "", fmt.Errorf("cwd %q が絶対 path ではない", cwd)
 	}
-	dir, err := filepath.EvalSymlinks(cwd)
-	if err != nil {
-		return "", err
-	}
+	dir := filepath.Clean(cwd)
 	root := filepath.Dir(filepath.Dir(dir))
 	if dir != filepath.Join(root, "tools", "archtest") {
-		return "", fmt.Errorf("cwd %s (symlink を解決した結果) が <root>/tools/archtest ではない", dir)
+		return "", fmt.Errorf("cwd %s が <root>/tools/archtest ではない", dir)
+	}
+	for _, p := range []string{filepath.Join(root, "tools"), dir} {
+		info, err := os.Lstat(p)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("%s が symlink (root のすり替えを防ぐため、symlink は許さない)", p)
+		}
 	}
 	return root, nil
 }
@@ -41,9 +51,12 @@ func missingFiles(files []string, want ...string) []string {
 	return missing
 }
 
-// TestRepoRoot は、root が go test の cwd の 2 つ上に固定されることを確認する。
+// TestRepoRoot は、root が go test の cwd の 2 つ上 (論理 path。symlink を解決しない) に固定され、
+// root/tools と root/tools/archtest が symlink なら error になることを確認する。
 // cwd から最も近い go.work を root にする方式は、tools/archtest に nested の go.work を置くだけで、
 // root を tools/archtest にすり替えられた (走査が tools/archtest だけになり、core の os/exec が通った)。
+// symlink を解決して root を作る方式は、tools/archtest を repo 内の decoy への symlink に置き換えるだけで、
+// root を decoy にすり替えられた (core の os/exec が通った)。
 func TestRepoRoot(t *testing.T) {
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -59,6 +72,15 @@ func TestRepoRoot(t *testing.T) {
 		"repo/tools/other/x.go":                          "package other\n",
 	})
 	repo := filepath.Join(tmp, "repo")
+	symlink := func(t *testing.T, target, link string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("symlink を作れない: %v", err)
+		}
+	}
 
 	t.Run("decoy があっても、cwd の 2 つ上", func(t *testing.T) {
 		got, err := repoRoot(filepath.Join(repo, "tools", "archtest"))
@@ -70,30 +92,54 @@ func TestRepoRoot(t *testing.T) {
 		}
 	})
 
-	t.Run("symlink の cwd は、解決してから 2 つ上", func(t *testing.T) {
-		link := filepath.Join(tmp, "link")
-		if err := os.Symlink(filepath.Join(repo, "tools", "archtest"), link); err != nil {
-			t.Skipf("symlink を作れない: %v", err)
-		}
-		got, err := repoRoot(link)
+	t.Run("root への symlink 経由の cwd は、解決せずに論理 path の 2 つ上 (root 自体の symlink は許す)", func(t *testing.T) {
+		link := filepath.Join(tmp, "replink")
+		symlink(t, repo, link)
+		got, err := repoRoot(filepath.Join(link, "tools", "archtest"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != repo {
-			t.Errorf("repoRoot = %q, want %q", got, repo)
+		if got != link {
+			t.Errorf("repoRoot = %q, want %q (論理 path)", got, link)
 		}
 	})
 
 	t.Run("tools/archtest が別の場所への symlink なら error", func(t *testing.T) {
 		writeTree(t, tmp, map[string]string{"elsewhere/x/archtest.go": "package archtest\n"})
-		other := filepath.Join(tmp, "repo2", "tools")
-		if err := os.MkdirAll(other, 0o755); err != nil {
+		symlink(t, filepath.Join(tmp, "elsewhere", "x"), filepath.Join(tmp, "repo2", "tools", "archtest"))
+		if got, err := repoRoot(filepath.Join(tmp, "repo2", "tools", "archtest")); err == nil {
+			t.Errorf("error を返すべき (root = %q)", got)
+		}
+	})
+
+	t.Run("tools が symlink なら error", func(t *testing.T) {
+		writeTree(t, tmp, map[string]string{"elsewhere2/tools/archtest/archtest.go": "package archtest\n"})
+		symlink(t, filepath.Join(tmp, "elsewhere2", "tools"), filepath.Join(tmp, "repo3", "tools"))
+		if got, err := repoRoot(filepath.Join(tmp, "repo3", "tools", "archtest")); err == nil {
+			t.Errorf("error を返すべき (root = %q)", got)
+		}
+	})
+
+	// tools/archtest を、repo 内の decoy への symlink に置き換える。decoy が core/doc.go と
+	// tools/archtest/archtest.go を持てば、repoAnchors も満たせるので、symlink を解決して root を作ると、
+	// root が decoy になり、core の os/exec が通る。
+	t.Run("tools/archtest が repo 内の decoy への symlink なら error", func(t *testing.T) {
+		writeTree(t, tmp, map[string]string{
+			"repo4/core/exec.go":                          "package core\n\nimport \"os/exec\"\n\nvar Spawn = exec.Command\n",
+			"repo4/docs/decoy/core/doc.go":                "package core\n",
+			"repo4/docs/decoy/tools/archtest/archtest.go": "package archtest\n",
+		})
+		symlink(t, filepath.Join("..", "docs", "decoy", "tools", "archtest"), filepath.Join(tmp, "repo4", "tools", "archtest"))
+		if got, err := repoRoot(filepath.Join(tmp, "repo4", "tools", "archtest")); err == nil {
+			t.Errorf("error を返すべき (root = %q)", got)
+		}
+	})
+
+	t.Run("tools/archtest が無ければ error", func(t *testing.T) {
+		if err := os.MkdirAll(filepath.Join(tmp, "repo5", "tools"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(filepath.Join(tmp, "elsewhere", "x"), filepath.Join(other, "archtest")); err != nil {
-			t.Skipf("symlink を作れない: %v", err)
-		}
-		if got, err := repoRoot(filepath.Join(other, "archtest")); err == nil {
+		if got, err := repoRoot(filepath.Join(tmp, "repo5", "tools", "archtest")); err == nil {
 			t.Errorf("error を返すべき (root = %q)", got)
 		}
 	})
