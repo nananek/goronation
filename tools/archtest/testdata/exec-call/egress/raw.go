@@ -15,4 +15,7 @@ func run() {
 	unix.Syscall6(0, 0, 0, 0, 0, 0, 0)
 	unix.RawSyscall(0, 0, 0, 0)
 	unix.RawSyscall6(0, 0, 0, 0, 0, 0, 0)
+	syscall.AllThreadsSyscall(0, 0, 0, 0)
+	syscall.AllThreadsSyscall6(0, 0, 0, 0, 0, 0, 0)
+	syscall.Syscall9(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 }

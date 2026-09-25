@@ -67,7 +67,8 @@ func TestFixtures(t *testing.T) {
 			"sandboxx/x.go:3: exec-import",
 		}},
 		// raw.go は、生 syscall (execve を直接呼べる)。syscall と x/sys/unix の Syscall / Syscall6 /
-		// RawSyscall / RawSyscall6 を、それぞれ検出する。sandbox/raw_ok.go は許可の対照。
+		// RawSyscall / RawSyscall6 と、syscall の AllThreadsSyscall / AllThreadsSyscall6 (linux) /
+		// Syscall9 (darwin・BSD) を、それぞれ検出する。sandbox/raw_ok.go は許可の対照。
 		{"exec-call", 10, []string{
 			"egress/dot.go:3: exec-call",
 			"egress/os.go:6: exec-call",
@@ -80,6 +81,9 @@ func TestFixtures(t *testing.T) {
 			"egress/raw.go:15: exec-call",
 			"egress/raw.go:16: exec-call",
 			"egress/raw.go:17: exec-call",
+			"egress/raw.go:18: exec-call",
+			"egress/raw.go:19: exec-call",
+			"egress/raw.go:20: exec-call",
 			"egress/ref.go:5: exec-call",
 			"egress/sys.go:6: exec-call",
 			"egress/unix.go:6: exec-call",
@@ -223,6 +227,9 @@ func TestGoldenOutput(t *testing.T) {
 			`egress/raw.go:15: exec-call: golang.org/x/sys/unix.Syscall6 は sandbox/**, cmd/** 以外では使えない`,
 			`egress/raw.go:16: exec-call: golang.org/x/sys/unix.RawSyscall は sandbox/**, cmd/** 以外では使えない`,
 			`egress/raw.go:17: exec-call: golang.org/x/sys/unix.RawSyscall6 は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:18: exec-call: syscall.AllThreadsSyscall は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:19: exec-call: syscall.AllThreadsSyscall6 は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:20: exec-call: syscall.Syscall9 は sandbox/**, cmd/** 以外では使えない`,
 			`egress/ref.go:5: exec-call: syscall.ForkExec は sandbox/**, cmd/** 以外では使えない`,
 			`egress/sys.go:6: exec-call: syscall.Exec は sandbox/**, cmd/** 以外では使えない`,
 			`egress/unix.go:6: exec-call: golang.org/x/sys/unix.Exec は sandbox/**, cmd/** 以外では使えない`,
