@@ -18,6 +18,8 @@ on:
 permissions: {}
 
 jobs:
+  # job 名 only-from-develop は、required check 名として固定する。変えると保守者の設定と食い違う。
+  # 他の workflow の job と重複させない (重複すると check の結果が曖昧になる。GitHub の docs)。
   only-from-develop:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
