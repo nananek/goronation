@@ -40,6 +40,11 @@
 // 黙って通さず error にする。名前が .go・go.mod・go.work で、通常のファイルではないもの (FIFO・デバイス・ソケット。
 // symlink の指す先も) も error にする (go は開いて読むが、writer が無いと止まるので、開かず、種別だけで判定する)。
 // vendor/modules.txt は、通常のファイルでなくても、あれば違反にする (go は開いて読む)。
+// symlink は、link の位置のファイルとして、archtest のプロセスから読んで検査する。連鎖の途中 (途中のディレクトリの
+// symlink の先も、1 段ずつ解決して見る) が、/proc・/dev・/sys を通る symlink は、プロセスごとに (cwd・fd・pid で) 別の
+// ものに解決され、archtest が読む実体と、go tool・gofmt・compile が読む実体が別になりうる (実測: /proc/self/cwd/x を指す
+// core/link.go で、archtest は無害な実体を検査して緑、go は os/exec を含む実体を build した)。名前が .go・go.mod・go.work なら
+// error に、vendor か vendor/modules.txt なら違反にする。root の中 (root が /dev/shm の下でもよい) は対象にしない。
 //
 // # 限界
 //
@@ -52,8 +57,11 @@
 //     /proc/self/mem への書き込みで、実行中のコードを書き換えることもできる。禁止する語を一切使わないので、検出できない
 //     (fixture reflect-pointer で、検出しないことを固定している)。この検査は lint で、I1 の封じ込めは、檻とレビューが担う。
 //   - 外部 module (require) のコードは走査しない。外部依存はいまは無く、go.mod / go.sum の変更はレビューで見る。
-//   - ツリーの外は見えない。環境変数 (GOFLAGS・GOWORK など) や、go の引数 (-overlay など) は、
-//     Makefile と CI の設定の変更として、レビューで見る。
+//   - ツリーの外は見えない。環境変数 (GOFLAGS・GOWORK・GOROOT など。TestStdExecDependents は GOROOT を読む) や、
+//     go の引数 (-overlay など) は、Makefile と CI の設定の変更として、レビューで見る。
+//   - root の外の絶対 path を指す symlink は、これまでどおり検査する (archtest が読む実体と、go が読む実体が、同じ
+//     ファイルであることに依存する)。/proc・/dev・/sys 以外で、プロセス・マウント名前空間・環境ごとに別のものに解決される
+//     場所と、検査から go の実行までの間の差し替えは、検出できない。
 //   - 表に無い API は検出しない。syscall の生 syscall は、Windows 以外の全 GOOS で、go doc syscall で数えた全部を
 //     表に持つ (Go 1.24 時点)。Windows 専用の API (CreateProcess・SyscallN、(*LazyProc).Call など。メソッドは
 //     照合できない) は、対応 OS (Linux・macOS) ではないため表に無い。x/sys/unix の生 syscall は

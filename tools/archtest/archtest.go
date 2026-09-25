@@ -134,6 +134,8 @@ type Rules struct {
 // 読めないディレクトリ、辿れない symlink も error にする (見えないものを、違反なしとして扱わない)。
 // .go・go.mod・go.work の名前で、通常のファイルではないもの (FIFO・デバイス・ソケット。symlink の指す先を含む) も
 // error にする。go tool は開いて読むが、開くと writer が無いときに止まるため、開かず、種別だけで判定する。
+// symlink の連鎖が、プロセスごとに別のものに解決される場所 (/proc・/dev・/sys) を通るものは、build に使われる名前では
+// error にする (processDependent)。archtest が読む実体と、go tool が読む実体が、cwd などの違いでずれうるため。
 func Check(root string, rules Rules) (violations []Violation, scanned int, err error) {
 	violations, files, err := scan(root, rules)
 	return violations, len(files), err
@@ -183,11 +185,19 @@ func scan(root string, rules Rules) (violations []Violation, files []string, err
 			// 明示的に import されれば辿って build するため、黙って無視すると規則の抜け道になる。
 			// 走査しないディレクトリの名前のものだけは、実体のディレクトリと同じく走査しない
 			// (その import は unscanned-dir-import が違反にする)。
+			//
+			// symlink の連鎖が、プロセスごとに別のものに解決される場所 (/proc など) を通るものは、archtest が
+			// 読む実体と、go tool・gofmt・compile が読む実体が、別になりうるので、build に使われる名前では error にする。
+			// vendor (modules.txt を持つ vendor は、go が暗黙に使う) は、Stat の結果によらず (壊れた symlink でも、
+			// cwd によっては、別の場所に解決されうる)、checkVendorMode で判定する。
+			through := c.processDependent(p)
+			if d.Name() == "vendor" {
+				c.checkVendorMode(p)
+			}
 			target, err := os.Stat(p)
 			switch {
 			case err == nil && target.IsDir():
 				if skipDir(d.Name()) {
-					c.checkVendorMode(p)
 					return nil
 				}
 				return fmt.Errorf("%s: ディレクトリの symlink は検査できない "+
@@ -195,6 +205,9 @@ func scan(root string, rules Rules) (violations []Violation, files []string, err
 					"実体のディレクトリにする)", rel)
 			case !isBuildInput(d.Name()):
 				return nil // build に使われない。壊れていてもよい
+			case through != "":
+				return fmt.Errorf("%s: プロセスごとに別のものに解決される symlink (%s を通る) は検査できない "+
+					"(archtest が読む実体と、go tool・gofmt・compile が読む実体が、cwd などの違いでずれる)", rel, through)
 			case err != nil:
 				return err
 			case !target.Mode().IsRegular():
@@ -261,18 +274,93 @@ func (c *checker) checkVendorMode(p string) {
 	if filepath.Base(p) != "vendor" {
 		return
 	}
-	// go は、FIFO などの通常のファイルではないものでも、開いて modules.txt として読む。開かずに Stat だけで判定する。
-	// 無い (壊れた symlink を含む) か、ディレクトリ (go は読めずに失敗する) なら、vendor モードにならない。
 	modules := filepath.Join(p, "modules.txt")
-	if info, err := os.Stat(modules); err != nil || info.IsDir() {
-		return
-	}
 	rel, err := filepath.Rel(c.root, modules)
 	if err != nil {
 		rel = modules
 	}
-	c.add(filepath.ToSlash(rel), 1, ruleVendorMode,
+	rel = filepath.ToSlash(rel)
+	// modules.txt への path (vendor の symlink も含む) が、プロセスごとに別のものに解決される symlink なら、archtest から
+	// 見えない (無い) 場所を、go tool が読みうる。Stat の結果によらず、全面禁止にする。
+	if through := c.processDependent(modules); through != "" {
+		c.add(rel, 1, ruleVendorMode, fmt.Sprintf(
+			"vendor か vendor/modules.txt が、プロセスごとに別のものに解決される symlink (%s を通る) のため、全面禁止", through))
+		return
+	}
+	// go は、FIFO などの通常のファイルではないものでも、開いて modules.txt として読む。開かずに Stat だけで判定する。
+	// 無い (壊れた symlink を含む) か、ディレクトリ (go は読めずに失敗する) なら、vendor モードにならない。
+	if info, err := os.Stat(modules); err != nil || info.IsDir() {
+		return
+	}
+	c.add(rel, 1, ruleVendorMode,
 		"vendor/modules.txt がある (go は vendor から外部 module を build するが、archtest は vendor を走査しない) ため、全面禁止")
+}
+
+// processDependentRoots は、プロセスごとに (cwd・fd・pid・root などで) 別のものに解決される場所。
+// symlink の連鎖がここを通ると、archtest が読む実体と、go tool・gofmt・compile が読む実体が、別になりうる
+// (実測: /proc/self/cwd/x を指す core/link.go で、archtest は無害な実体を検査して緑、go は os/exec を含む実体を build した)。
+var processDependentRoots = []string{"/proc", "/dev", "/sys"}
+
+// processDependent は、symlink p を、1 段ずつ辿って解決する途中で、processDependentRoots の中に入ったら、
+// その path を返す。入らなければ空。root の中と、root の祖先は、それらの下にあっても対象にしない (root が /dev/shm の下でもよい)。
+//
+// filepath.EvalSymlinks は使わない。/proc/self/cwd を解決すると、いまのプロセスの cwd の実体の path が返り、/proc を
+// 通ったことが分からなくなる。".." は、字面で畳まずに、解決済みの親のディレクトリにする (symlink のディレクトリの
+// 先を通る連鎖を、OS と同じに解決する)。連鎖が深すぎる (輪) なら空を返し、Stat の失敗が error にする。
+func (c *checker) processDependent(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return ""
+	}
+	root, err := filepath.Abs(c.root)
+	if err != nil {
+		return ""
+	}
+	sep := string(filepath.Separator)
+	resolved, rest := sep, abs
+	for links := 0; rest != ""; {
+		var elem string
+		elem, rest, _ = strings.Cut(rest, sep)
+		switch elem {
+		case "", ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		next := filepath.Join(resolved, elem)
+		if inProcessDependentRoots(next, root) {
+			return next
+		}
+		if info, err := os.Lstat(next); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			resolved = next
+			continue
+		}
+		if links++; links > 255 {
+			return ""
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return ""
+		}
+		if filepath.IsAbs(target) {
+			resolved = sep
+		}
+		rest = target + sep + rest
+	}
+	return ""
+}
+
+// inProcessDependentRoots は、p が processDependentRoots の中で、root の中でも、root の祖先でもないか。
+// root が /dev/shm の下にあるとき、root の中と、その祖先 (/dev・/dev/shm) は、対象にしない。
+func inProcessDependentRoots(p, root string) bool {
+	sep := string(filepath.Separator)
+	if p == root || strings.HasPrefix(p, root+sep) || strings.HasPrefix(root, p+sep) {
+		return false
+	}
+	return slices.ContainsFunc(processDependentRoots, func(r string) bool {
+		return p == r || strings.HasPrefix(p, r+"/")
+	})
 }
 
 // isModFile は、go が module の構成に使うファイルの名前か。
