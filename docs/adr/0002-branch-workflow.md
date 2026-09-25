@@ -22,7 +22,6 @@
 
 - main と develop へ直接 push する。
 - main への PR を出す。main への PR を merge する。
-- force push をする。
 
 ### 3. main 向けの PR は develop からだけ
 
