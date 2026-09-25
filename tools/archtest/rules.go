@@ -16,6 +16,11 @@ func mods(rel ...string) []string {
 // 規則を緩めるときは ADR を書き、この表だけを変える。
 var execAllowed = []string{"sandbox/**", "cmd/**"}
 
+// execImports は、import するだけで子プロセスを起動できる package。os/exec と、標準ライブラリの中で
+// os/exec を使う package (net/http/cgi など。標準ライブラリの中の import は exec-import の対象外)。
+// 後者は網羅しにくいため、標準ライブラリの側から求めた全数を、テスト (TestStdExecDependents) が確かめる。
+var execImports = []string{"os/exec/**", "net/http/cgi"}
+
 // DefaultRules は、このリポジトリに適用する規則の表。
 //
 // パターンは、完全一致か "P/**" (P とその配下、セグメント単位)。
@@ -27,7 +32,7 @@ var DefaultRules = Rules{
 	AllowImports: []AllowImport{
 		// I1: os/exec を import してよいのは sandbox/** と cmd/** だけ。
 		// 別名・blank・dot import も、_test.go も、全ビルドタグも対象。
-		{ID: "exec-import", Imports: []string{"os/exec/**"}, OnlyIn: execAllowed},
+		{ID: "exec-import", Imports: execImports, OnlyIn: execAllowed},
 
 		// 単一バイナリ / CGO_ENABLED=0 の方針。許可される場所は無い。
 		{ID: "cgo", Imports: []string{"C"}},
