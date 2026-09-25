@@ -159,9 +159,6 @@ func TestFixtures(t *testing.T) {
 			"core/x.go:3: plugin",
 			"sandbox/y.go:3: plugin",
 		}},
-		// 標準ライブラリの中で os/exec を使う package (net/http/cgi など) は、import するだけで子プロセスを起動できる
-		// (標準ライブラリの中の import は、exec-import の対象外)。os/exec と同じ場所にだけ許す。
-		// control.go は対照 (os/exec に依存しない go/build/constraint と net/http)。
 		// vendor/modules.txt があると、go は vendor の中の外部 module を build する (ネットワークも go.sum も要らない)。
 		// archtest は vendor を走査しないので、vendor/example.com/evil の os/exec を、core が使える。
 		// 走査しない vendor (modules.txt の無い、unscanned-import や empty の vendor) は、これまでどおり違反にしない。
@@ -169,6 +166,9 @@ func TestFixtures(t *testing.T) {
 			"core/vendor/modules.txt:1: vendor-mode",
 			"vendor/modules.txt:1: vendor-mode",
 		}},
+		// 標準ライブラリの中で os/exec を使う package (net/http/cgi など) は、import するだけで子プロセスを起動できる
+		// (標準ライブラリの中の import は、exec-import の対象外)。os/exec と同じ場所にだけ許す。
+		// control.go は対照 (os/exec に依存しない go/build/constraint と net/http)。
 		{"exec-std", 8, []string{
 			"core/build.go:3: exec-import",
 			"core/cgi.go:3: exec-import",
