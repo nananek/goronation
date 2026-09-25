@@ -1,8 +1,6 @@
 # main への PR は、この repo の develop からのものだけを許す。
 #
-# pull_request_target を使う理由: PR の head ではなく、既定ブランチの定義で動くため、
-#   PR 側から検査そのものを書き換えられない (base ブランチの定義ではない。GitHub の docs と、
-#   2025-12-08 から有効の changelog による。ADR 0002)。既定ブランチに入って初めて有効になる。
+# pull_request_target を使う理由: PR 側から検査そのものを書き換えられないため (ADR 0002)。
 # checkout しない理由: pull_request_target は、書き込み権限と secrets を持ちうる特権的な文脈で動く
 #   (GitHub の docs)。ここでは permissions を空にし、そのうえで PR のコードを取得せず、
 #   信頼できないコードを持ち込まない。
