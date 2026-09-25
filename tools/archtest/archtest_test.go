@@ -230,6 +230,34 @@ func TestParseErrorIsError(t *testing.T) {
 	}
 }
 
+// TestBadModuleLine は、module 行を解釈できない go.mod (引数が 0 個、または 2 個以上) を、
+// 黙って通さず modpath の違反にすることを確認する。
+func TestBadModuleLine(t *testing.T) {
+	cases := map[string]string{
+		"引数が無い":   "module\n",
+		"引数が 2 つ": "module a b\n",
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{
+				"core/doc.go": "package core\n",
+				"core/go.mod": content,
+			})
+			vs, _, err := Check(root, DefaultRules)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := []string{"core/go.mod:1: modpath"}; !slices.Equal(keys(vs), want) {
+				t.Fatalf("violations=%v (want %v)", keys(vs), want)
+			}
+			if want := "module 行を解釈できない"; vs[0].Detail != want {
+				t.Errorf("detail = %q, want %q", vs[0].Detail, want)
+			}
+		})
+	}
+}
+
 // TestDirSymlink は、走査対象のツリー内のディレクトリの symlink を、辿らずに error にすることを確認する。
 // go tool は、./... では symlink のディレクトリを列挙しないが、明示的に import されれば辿って build する。
 // 黙って無視すると、許可された場所 (sandbox/**) のディレクトリへの symlink を core/ に置くだけで、
