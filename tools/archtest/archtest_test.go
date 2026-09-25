@@ -143,6 +143,12 @@ func TestFixtures(t *testing.T) {
 			"egress/indented.go:4: linkname",
 			"egress/x.go:8: linkname",
 		}},
+		// plugin は、事前ビルドした .so を実行時にロードでき、os/exec も表の関数も要らない。
+		// 許可される場所は無い (sandbox/** でも使えない)。
+		{"plugin", 2, []string{
+			"core/x.go:3: plugin",
+			"sandbox/y.go:3: plugin",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -221,6 +227,10 @@ func TestGoldenOutput(t *testing.T) {
 		{"linkname", []string{
 			`egress/indented.go:4: linkname: //go:linkname は全面禁止 (名前を変えて、表の関数を参照できるため)`,
 			`egress/x.go:8: linkname: //go:linkname は全面禁止 (名前を変えて、表の関数を参照できるため)`,
+		}},
+		{"plugin", []string{
+			`core/x.go:3: plugin: import "plugin" は全面禁止`,
+			`sandbox/y.go:3: plugin: import "plugin" は全面禁止`,
 		}},
 	}
 	for _, tc := range cases {

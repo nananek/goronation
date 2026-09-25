@@ -32,6 +32,10 @@ var DefaultRules = Rules{
 		// 単一バイナリ / CGO_ENABLED=0 の方針。許可される場所は無い。
 		{ID: "cgo", Imports: []string{"C"}},
 
+		// plugin は、事前ビルドした .so を実行時にロードでき、os/exec も表の関数も要らない
+		// (リポジトリの .so は archtest には見えない)。許可される場所は無い。
+		{ID: "plugin", Imports: []string{"plugin"}},
+
 		// 実装の配線 (build tag) は cmd/** だけが行う。
 		{
 			ID:      "impl-only-from-cmd",
