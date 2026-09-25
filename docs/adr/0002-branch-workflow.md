@@ -43,6 +43,7 @@ main を base とする PR は、同じ repo の `develop` を head とするも
 - その代わり、既定ブランチに workflow が入って初めて有効になる。既定ブランチが main の間は、最初の develop から main への merge の後になる。required check への登録は、有効になった後に保守者が行う。
 - guard 自身の変更を含む develop 向けの PR では、guard は動かない (base が main ではないため)。`.github/` の変更は、保守者が目で確認する。
 - `edited` を trigger に含めるのは、PR の base が後から main に変更された場合も検査するためである。docs の Webhook events and payloads は `edited` を「title か body の編集、または base ブランチの変更」と述べ、Events that trigger workflows は activity type の意味をそこに委ねている。ただし、base の変更でこの workflow が実際に起動し、`branches` が新しい base で評価されることは、実機で確かめておらず**未検証**である。起動しなくても、required check は pending のままになり、merge は塞がれる (決定 4 と同じ)。
+- guard は事故防止であり、悪意ある PR 作成者への防壁ではない。別の workflow が同名の job を success で報告した場合に required check が満たされうるかは、**未検証**である。
 - develop に入った変更は、保守者が反映するまで main に出ない。反映の手間は保守者が負う。
 
 ## 代替案
