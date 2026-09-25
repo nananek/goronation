@@ -65,6 +65,7 @@ PATH を検索しない (設計ルール 1 の「固定パスの起動器」に�
 - 依存方向と I1 が、CI のテストで機械的に守られる。違反はビルドを落とす。
 - `go.mod` では依存方向が守れないため、archtest の規則表が唯一の防壁になる。規則表の変更は、レビューで特に注意して見る。
 - **既知の限界**: 静的検査なので、`//go:linkname`、`reflect`、生の `syscall.Syscall(SYS_EXECVE, ...)` などで回避できる。強制の主体は設計ルール 1 とレビューであり、このテストは **事故防止** である。悪意ある実装への防壁ではない。
+- **既知の限界 (`impl-only-from-cmd`)**: 規則は plan の文言どおり「実装 package (`sandbox/bwrap/**` など) を import してよいのは `cmd/**` だけ」と置いている。そのため、実装 package 自身の側の import も違反になる (実測): 自 package 配下の `sandbox/bwrap/internal/*` の import、外部テストパッケージ (`package bwrap_test`) から `sandbox/bwrap` の import、`sandbox/conformance` から `sandbox/bwrap` の import。M0 の時点では該当するコードが無く、緑である。**M1 で実装 package が内部構造やテストを持った時点で、`tools/archtest/rules.go` の表の変更が要る** (自 package 配下と `sandbox/conformance` を許可に足す、など)。誤検出の側 (fail-closed) に倒れているので、いまは表を直さない。
 - `-race` は cgo を要するため、ローカルに gcc が無いと `make test` が落ちる (Makefile のコメントに逃げ道を書く)。最終成果物は `CGO_ENABLED=0` でビルドする。
 - `sandbox/**` の許可範囲は Issue の文言どおりで広く、`sandbox/conformance` も含む。M1 で `bwrap` / `seatbelt` / `init` のみに絞れるか再検討する。
 - I1 の解釈は Issue #1 で未決である (入力が全てデーモン由来のものに限り、外部バイナリのホスト直実行を許すか)。この ADR は現行文言どおりの **厳格解釈** で規則を置く。解釈が緩和された場合は、ADR を書いて規則表を直す。
