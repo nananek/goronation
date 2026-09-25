@@ -137,6 +137,12 @@ func TestFixtures(t *testing.T) {
 			"go.work:15: go-work-use",
 			"go.work:16: go-work-use",
 		}},
+		// //go:linkname は、名前を変えて表の関数 (os.StartProcess など) を参照でき、セレクタの検出をすり抜ける。
+		// 位置を問わず (字下げも) 違反にする。control.go は対照 (空白入り・ブロックコメント・文字列の中)。
+		{"linkname", 3, []string{
+			"egress/indented.go:4: linkname",
+			"egress/x.go:8: linkname",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -211,6 +217,10 @@ func TestGoldenOutput(t *testing.T) {
 			`go.work:11: go-work-use: use "." は、go.mod を持つディレクトリではない`,
 			`go.work:15: go-work-use: use "./core/../../outside" は、リポジトリの root の外を指す`,
 			`go.work:16: go-work-use: use "./vendor/m" は、走査しないディレクトリ "vendor" を含む`,
+		}},
+		{"linkname", []string{
+			`egress/indented.go:4: linkname: //go:linkname は全面禁止 (名前を変えて、表の関数を参照できるため)`,
+			`egress/x.go:8: linkname: //go:linkname は全面禁止 (名前を変えて、表の関数を参照できるため)`,
 		}},
 	}
 	for _, tc := range cases {

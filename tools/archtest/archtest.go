@@ -48,6 +48,13 @@ const ruleReplace = "replace"
 // module を取り込めるため。root の外や、go.mod が無いものも、見えない (検査していない) ので許さない。
 const ruleGoWorkUse = "go-work-use"
 
+// ruleLinkname は、//go:linkname の規則 ID。linkname は、名前を変えて他の package の関数を参照でき、
+// セレクタ (os.StartProcess など) で照合する exec-call をすり抜ける。Go 1.24 のリンカは、標準ライブラリの
+// 公開していない参照を既定で拒否する (link: invalid reference) が、-checklinkname=0 で回避できる。
+// その flag は Makefile や GOFLAGS で渡せるので、リンカの検査には頼らず、ディレクティブ自体を禁止する。
+// 位置は問わず (字下げも、関数の中も)、許可される場所は無い。
+const ruleLinkname = "linkname"
+
 // Violation は規則違反 1 件。
 type Violation struct {
 	Path   string // repo 相対、"/" 区切り
@@ -225,7 +232,7 @@ func isModFile(name string) bool {
 }
 
 func (c *checker) checkGo(file, rel string) error {
-	f, err := parser.ParseFile(c.fset, file, nil, parser.SkipObjectResolution)
+	f, err := parser.ParseFile(c.fset, file, nil, parser.SkipObjectResolution|parser.ParseComments)
 	if err != nil {
 		return fmt.Errorf("%s: 構文解析に失敗: %w", rel, err)
 	}
@@ -245,6 +252,14 @@ func (c *checker) checkGo(file, rel string) error {
 		for _, r := range c.rules.ForbidImports {
 			if matchAny(r.In, rel) && matchAny(r.Imports, ipath) {
 				c.add(rel, line, r.ID, fmt.Sprintf("%s から import %q は使えない", strings.Join(r.In, ", "), ipath))
+			}
+		}
+	}
+
+	for _, cg := range f.Comments {
+		for _, cm := range cg.List {
+			if strings.HasPrefix(cm.Text, "//go:linkname") {
+				c.add(rel, c.fset.Position(cm.Pos()).Line, ruleLinkname, "//go:linkname は全面禁止 (名前を変えて、表の関数を参照できるため)")
 			}
 		}
 	}
