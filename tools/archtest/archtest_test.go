@@ -69,8 +69,13 @@ func TestFixtures(t *testing.T) {
 		// raw.go は、生 syscall (execve を直接呼べる)。syscall と x/sys/unix の Syscall / Syscall6 /
 		// RawSyscall / RawSyscall6 と、syscall の AllThreadsSyscall / AllThreadsSyscall6 (linux) /
 		// Syscall9 (darwin・BSD・linux/mips) を、それぞれ検出する。sandbox/raw_ok.go は許可の対照。
-		{"exec-call", 10, []string{
+		// mem.go は、実行可能メモリを作れる Mmap / Mprotect (syscall と x/sys/unix)。sandbox/mem_ok.go は許可の対照。
+		{"exec-call", 12, []string{
 			"egress/dot.go:3: exec-call",
+			"egress/mem.go:10: exec-call",
+			"egress/mem.go:11: exec-call",
+			"egress/mem.go:12: exec-call",
+			"egress/mem.go:13: exec-call",
 			"egress/os.go:6: exec-call",
 			"egress/paren.go:5: exec-call",
 			"egress/raw.go:10: exec-call",
@@ -241,6 +246,10 @@ func TestGoldenOutput(t *testing.T) {
 		}},
 		{"exec-call", []string{
 			`egress/dot.go:3: exec-call: import . "syscall" は呼び出しを判定できないため、sandbox/**, cmd/** 以外では使えない`,
+			`egress/mem.go:10: exec-call: syscall.Mmap は sandbox/**, cmd/** 以外では使えない`,
+			`egress/mem.go:11: exec-call: syscall.Mprotect は sandbox/**, cmd/** 以外では使えない`,
+			`egress/mem.go:12: exec-call: golang.org/x/sys/unix.Mmap は sandbox/**, cmd/** 以外では使えない`,
+			`egress/mem.go:13: exec-call: golang.org/x/sys/unix.Mprotect は sandbox/**, cmd/** 以外では使えない`,
 			`egress/os.go:6: exec-call: os.StartProcess は sandbox/**, cmd/** 以外では使えない`,
 			`egress/paren.go:5: exec-call: os.StartProcess は sandbox/**, cmd/** 以外では使えない`,
 			`egress/raw.go:10: exec-call: syscall.Syscall は sandbox/**, cmd/** 以外では使えない`,

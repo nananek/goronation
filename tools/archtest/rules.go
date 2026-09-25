@@ -69,7 +69,7 @@ var DefaultRules = Rules{
 	},
 
 	Calls: []CallRule{
-		// I1: プロセス起動の関数と、生 syscall (execve を番号で直接呼べる)。
+		// I1: プロセス起動の関数、生 syscall (execve を番号で直接呼べる)、実行可能メモリを作る関数。
 		// import 別名は解決して判定する。
 		{
 			ID: "exec-call",
@@ -91,6 +91,11 @@ var DefaultRules = Rules{
 				{Pkg: "golang.org/x/sys/unix", Name: "Syscall6"},
 				{Pkg: "golang.org/x/sys/unix", Name: "RawSyscall"},
 				{Pkg: "golang.org/x/sys/unix", Name: "RawSyscall6"},
+				// 実行可能メモリを作れる (機械語を書いて、関数として呼べる。unsafe-import と合わせて塞ぐ)。
+				{Pkg: "syscall", Name: "Mmap"},
+				{Pkg: "syscall", Name: "Mprotect"},
+				{Pkg: "golang.org/x/sys/unix", Name: "Mmap"},
+				{Pkg: "golang.org/x/sys/unix", Name: "Mprotect"},
 			},
 			OnlyIn: execAllowed,
 		},
