@@ -75,7 +75,8 @@ type Rules struct {
 //
 // 検査は構文解析だけで行い (go list を使わない)、全ビルドタグ・全 _test.go を対象にする。
 // 走査対象は root 配下の全 .go で、.git / testdata / vendor と、"." または "_" で始まる
-// ディレクトリは除く。symlink は追わない。
+// ディレクトリは除く。go tool と同じく、symlink のディレクトリは辿らず、
+// symlink の .go は link の位置のファイルとして検査する。
 //
 // fail-closed: 走査した .go が 0 ファイルなら error を返す。構文解析できない .go や、
 // 読めないディレクトリも error にする (見えないものを、違反なしとして扱わない)。
@@ -106,7 +107,21 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 			}
 			return nil
 		}
-		if !d.Type().IsRegular() { // symlink などは追わない
+		if d.Type()&fs.ModeSymlink != 0 {
+			// go tool は、symlink の .go を通常のファイルとして build する
+			// (symlink のディレクトリは辿らない)。.go の symlink だけは、指す先を
+			// link の位置のファイルとして検査する。壊れた symlink は error にする。
+			if !strings.HasSuffix(d.Name(), ".go") {
+				return nil
+			}
+			target, err := os.Stat(p)
+			if err != nil {
+				return err
+			}
+			if !target.Mode().IsRegular() {
+				return nil
+			}
+		} else if !d.Type().IsRegular() {
 			return nil
 		}
 		rel, err := filepath.Rel(root, p)

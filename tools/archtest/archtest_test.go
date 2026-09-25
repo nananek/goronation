@@ -213,8 +213,11 @@ func TestParseErrorIsError(t *testing.T) {
 	}
 }
 
-// TestSymlinkNotFollowed は、symlink を追わない (ファイルもディレクトリも) ことを確認する。
-func TestSymlinkNotFollowed(t *testing.T) {
+// TestSymlink は、go tool と同じく、symlink のディレクトリは辿らず、
+// symlink の .go は link の位置のファイルとして検査することを確認する。
+// go tool は symlink の .go を通常のファイルとして build するため、追わないと、
+// 許可された場所のファイルへの symlink で規則をすり抜けられる。
+func TestSymlink(t *testing.T) {
 	tmp := t.TempDir()
 	root := filepath.Join(tmp, "root")
 	writeTree(t, tmp, map[string]string{
@@ -224,15 +227,29 @@ func TestSymlinkNotFollowed(t *testing.T) {
 	if err := os.Symlink(filepath.Join(tmp, "outside", "egress"), filepath.Join(root, "egress")); err != nil {
 		t.Skipf("symlink を作れない: %v", err)
 	}
-	if err := os.Symlink(filepath.Join(tmp, "outside", "egress", "bad.go"), filepath.Join(root, "core", "link.go")); err != nil {
+	link := filepath.Join(root, "core", "link.go")
+	if err := os.Symlink(filepath.Join(tmp, "outside", "egress", "bad.go"), link); err != nil {
 		t.Skipf("symlink を作れない: %v", err)
 	}
+
 	vs, scanned, err := Check(root, DefaultRules)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(vs) != 0 || scanned != 1 {
-		t.Errorf("symlink を追っている: violations=%v scanned=%d (want なし / 1)", keys(vs), scanned)
+	// egress/ (ディレクトリの symlink) は辿らず、core/link.go は core/ の中のファイルとして検査する。
+	if want := []string{"core/link.go:3: exec-import"}; !slices.Equal(keys(vs), want) || scanned != 2 {
+		t.Errorf("violations=%v scanned=%d (want %v / 2)", keys(vs), scanned, want)
+	}
+
+	// 壊れた symlink の .go は、build もできない。見えないものを黙って無視しない。
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(tmp, "no-such.go"), link); err != nil {
+		t.Skipf("symlink を作れない: %v", err)
+	}
+	if _, _, err := Check(root, DefaultRules); err == nil {
+		t.Error("壊れた symlink の .go は error にすべき")
 	}
 }
 

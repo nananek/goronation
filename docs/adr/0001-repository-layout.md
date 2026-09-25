@@ -40,6 +40,7 @@ Issue #1 の構成図に無い `tools/archtest` module を追加する。検査�
 
 - 標準ライブラリだけで書く。`go/parser` と `go/ast` で構文解析し、`go list` も `os/exec` も使わない。archtest 自身も規則の適用対象で、自己免除しない。
 - ソースを **全ビルドタグ・全 `_test.go` を含めて** 解析する。`//go:build darwin` の側に隠れた違反も拾うため。ビルド済みパッケージ一覧 (`go/packages`) は使わない。
+- symlink のディレクトリは辿らない (go tool の `./...` と同じ)。一方、symlink の `.go` は go tool が通常のファイルとして build する (実測: `go list` の `GoFiles` に入る) ため、link の位置のファイルとして検査する。追わないと、許可された場所 (`sandbox/**`) のファイルへの symlink を `core/` に置くだけで規則をすり抜けられる。
 - 規則は許可リスト方式で、`tools/archtest/rules.go` の表に置く。規則の追加や緩和は表の変更だけで済む。
 - **fail-closed**。root が見つからない、または走査した `.go` が 0 ファイルなら、テストは失敗する (空振りで緑にしない)。
 - `go.mod` の `module` 行が規約と一致することも検査する (`modpath`)。ずれると import 規則が黙って空振りするため。
