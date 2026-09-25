@@ -224,6 +224,12 @@ func TestFixtures(t *testing.T) {
 		{"reflect-methodbyname", 2, []string{
 			"core/dynamic.go:10: reflect-unsafe",
 		}},
+		// reflect.Value.Pointer は、関数の実行中コードのアドレスを uintptr で返す。これと
+		// /proc/self/mem への書き込み (os.OpenFile + WriteAt) を組み合わせると、実行可能メモリを
+		// 作らず (Mmap・Mprotect 不要)、unsafe も reflect.NewAt も UnsafePointer も gosym も
+		// 使わずに、既存のコードページを機械語で書き換えて実行できる。現状は検出しない
+		// (doc.go の限界に追記する候補)。検出しないことの pin。
+		{"reflect-pointer", 1, nil},
 		// vendor/modules.txt があると、go は vendor の中の外部 module を build する (ネットワークも go.sum も要らない)。
 		// archtest は vendor を走査しないので、vendor/example.com/evil の os/exec を、core が使える。
 		// 走査しない vendor (modules.txt の無い、unscanned-import や empty の vendor) は、これまでどおり違反にしない。
