@@ -13,7 +13,8 @@ name: main-source-guard
 on:
   pull_request_target:
     branches: [main]
-    # edited: PR の base が後から main に変更された場合も検査するため (未検証。ADR 0002)。
+    # edited: PR の base が後から main に変更された場合も検査するため。docs は edited に base の変更を
+    # 含めるが、この workflow が実際に起動することは実機で未検証 (ADR 0002)。
     types: [opened, reopened, synchronize, edited]
 
 permissions: {}
