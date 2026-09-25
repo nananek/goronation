@@ -82,7 +82,7 @@ plan 6.1 は、走査から `testdata` / `vendor` / `.` または `_` で始ま�
 - `-race` は cgo を要するため、ローカルに gcc が無いと `make test` が落ちる (Makefile のコメントに逃げ道を書く)。最終成果物は `CGO_ENABLED=0` でビルドする。
 - `sandbox/**` の許可範囲は Issue の文言どおりで広く、`sandbox/conformance` も含む。M1 で `bwrap` / `seatbelt` / `init` のみに絞れるか再検討する。
 - I1 の解釈は Issue #1 で未決である (入力が全てデーモン由来のものに限り、外部バイナリのホスト直実行を許すか)。この ADR は現行文言どおりの **厳格解釈** で規則を置く。解釈が緩和された場合は、ADR を書いて規則表を直す。
-- GitHub の ubuntu-24.04 runner で、bwrap が unprivileged user namespace の制限 (AppArmor の `kernel.apparmor_restrict_unprivileged_userns`) に阻まれる可能性がある。**未検証** で、初回の CI で確定する。結果は、この ADR への追記か別 ADR に残す。
+- ubuntu-24.04 の runner で apt の bubblewrap 0.9.0 は、sysctl `kernel.apparmor_restrict_unprivileged_userns=0` 無しでは `loopback: Failed RTM_NEWADDR: Operation not permitted` で起動できない (CI で確認)。この sysctl は PR のコード実行前に userns の制限を外すが、runner は使い捨てで secrets も使わないため受け入れる。
 
 ## 代替案
 
