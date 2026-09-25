@@ -32,15 +32,15 @@ main を base とする PR は、同じ repo の `develop` を head とするも
 次は保守者がリポジトリの設定で行う。**コードでは強制されない。**
 
 - ruleset: develop は squash のみ、main は merge commit のみを許可する。
-- required check: main を対象とする設定にだけ、job 名 `only-from-develop` (workflow `main-source-guard` の job) を登録する。develop には登録しない (この workflow は base が main の PR でしか動かず、`branches` で skip された workflow の check は pending のままになり、merge が塞がれる。GitHub の docs)。
+- required check: main を対象とする設定にだけ、job 名 `only-from-develop` (workflow `main-source-guard` の job) を登録する。develop には登録しない (この workflow は base が main の PR でしか動かず、`branches` で skip された workflow の check は pending のままになり、merge が塞がれる。docs の Troubleshooting required status checks による)。
 - 既定ブランチ。guard の workflow 定義は、既定ブランチから読まれる (「帰結」を参照)。
 
 ## 帰結
 
 - GitHub には PR の取り込み元ブランチを制限する標準の設定が無いため、workflow による検査で代替する。
-- guard は `pull_request_target` で動くので、PR の head ではなく、リポジトリの**既定ブランチ**の workflow 定義が使われる (base ブランチの定義ではない。GitHub の docs と、2025-12-08 から有効の changelog による: https://github.blog/changelog/2025-11-07-actions-pull_request_target-and-environment-branch-protections-changes/)。PR 側から検査自体を書き換えられない。
+- guard は `pull_request_target` で動くので、PR の head ではなく、リポジトリの**既定ブランチ**の workflow 定義が使われる (base ブランチの定義ではない。docs の Events that trigger workflows と、2025-12-08 から有効の changelog による: https://github.blog/changelog/2025-11-07-actions-pull_request_target-and-environment-branch-protections-changes/)。PR 側から検査自体を書き換えられない。
 - その代わり、既定ブランチに workflow が入って初めて有効になる。既定ブランチが main の間は、最初の develop から main への merge の後になる。required check への登録は、有効になった後に保守者が行う。
-- `edited` を trigger に含めるのは、PR の base が後から main に変更された場合も検査するためである。webhook の docs は `edited` を「title か body の編集、または base ブランチの変更」と述べ、Actions の docs は activity type の意味をその webhook の docs に委ねている。ただし、base の変更でこの workflow が実際に起動し、`branches` が新しい base で評価されることは、実機で確かめておらず**未検証**である。起動しなくても、required check は pending のままになり、merge は塞がれる (決定 4 と同じ)。
+- `edited` を trigger に含めるのは、PR の base が後から main に変更された場合も検査するためである。docs の Webhook events and payloads は `edited` を「title か body の編集、または base ブランチの変更」と述べ、Events that trigger workflows は activity type の意味をそこに委ねている。ただし、base の変更でこの workflow が実際に起動し、`branches` が新しい base で評価されることは、実機で確かめておらず**未検証**である。起動しなくても、required check は pending のままになり、merge は塞がれる (決定 4 と同じ)。
 - develop に入った変更は、保守者が反映するまで main に出ない。反映の手間は保守者が負う。
 
 ## 代替案
