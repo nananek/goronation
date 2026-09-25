@@ -124,19 +124,25 @@ type Rules struct {
 // fail-closed: 走査した .go が 0 ファイルなら error を返す。構文解析できない .go や、
 // 読めないディレクトリ、辿れない symlink も error にする (見えないものを、違反なしとして扱わない)。
 func Check(root string, rules Rules) (violations []Violation, scanned int, err error) {
+	violations, files, err := scan(root, rules)
+	return violations, len(files), err
+}
+
+// scan は Check の本体で、走査した .go の repo 相対 path ("/" 区切り、走査した順) も返す。
+func scan(root string, rules Rules) (violations []Violation, files []string, err error) {
 	if rules.Module == "" {
-		return nil, 0, errors.New("Rules.Module が空 (import 規則が黙って空振りするため許さない)")
+		return nil, nil, errors.New("Rules.Module が空 (import 規則が黙って空振りするため許さない)")
 	}
 	root, err = filepath.EvalSymlinks(filepath.Clean(root))
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	info, err := os.Stat(root)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	if !info.IsDir() {
-		return nil, 0, fmt.Errorf("%s はディレクトリではない", root)
+		return nil, nil, fmt.Errorf("%s はディレクトリではない", root)
 	}
 
 	c := &checker{root: root, rules: rules, fset: token.NewFileSet()}
@@ -188,7 +194,7 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 		}
 		switch {
 		case strings.HasSuffix(d.Name(), ".go"):
-			c.scanned++
+			c.files = append(c.files, rel)
 			return c.checkGo(p, rel)
 		case d.Name() == "go.mod":
 			return c.checkGoMod(p, rel)
@@ -198,10 +204,10 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 		return nil
 	})
 	if err != nil {
-		return nil, c.scanned, err
+		return nil, c.files, err
 	}
-	if c.scanned == 0 {
-		return nil, 0, fmt.Errorf("%s の配下に走査対象の .go が 1 つも無い (空振りで緑にしない)", root)
+	if len(c.files) == 0 {
+		return nil, nil, fmt.Errorf("%s の配下に走査対象の .go が 1 つも無い (空振りで緑にしない)", root)
 	}
 
 	slices.SortFunc(c.violations, func(a, b Violation) int {
@@ -212,14 +218,14 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 			strings.Compare(a.Detail, b.Detail),
 		)
 	})
-	return c.violations, c.scanned, nil
+	return c.violations, c.files, nil
 }
 
 type checker struct {
 	root       string
 	rules      Rules
 	fset       *token.FileSet
-	scanned    int
+	files      []string // 走査した .go の repo 相対 path
 	violations []Violation
 }
 
