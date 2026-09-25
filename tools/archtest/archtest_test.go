@@ -152,8 +152,11 @@ func TestFixtures(t *testing.T) {
 		// 標準ライブラリの中で os/exec を使う package (net/http/cgi など) は、import するだけで子プロセスを起動できる
 		// (標準ライブラリの中の import は、exec-import の対象外)。os/exec と同じ場所にだけ許す。
 		// control.go は対照 (os/exec に依存しない go/build/constraint と net/http)。
-		{"exec-std", 4, []string{
+		{"exec-std", 8, []string{
+			"core/build.go:3: exec-import",
 			"core/cgi.go:3: exec-import",
+			"core/fcgi.go:3: exec-import",
+			"core/importer.go:3: exec-import",
 		}},
 	}
 	for _, tc := range cases {
@@ -239,7 +242,10 @@ func TestGoldenOutput(t *testing.T) {
 			`sandbox/y.go:3: plugin: import "plugin" は全面禁止`,
 		}},
 		{"exec-std", []string{
+			`core/build.go:3: exec-import: import "go/build" は sandbox/**, cmd/** 以外では使えない`,
 			`core/cgi.go:3: exec-import: import "net/http/cgi" は sandbox/**, cmd/** 以外では使えない`,
+			`core/fcgi.go:3: exec-import: import "net/http/fcgi" は sandbox/**, cmd/** 以外では使えない`,
+			`core/importer.go:3: exec-import: import "go/importer" は sandbox/**, cmd/** 以外では使えない`,
 		}},
 	}
 	for _, tc := range cases {

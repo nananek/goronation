@@ -19,7 +19,9 @@ var execAllowed = []string{"sandbox/**", "cmd/**"}
 // execImports は、import するだけで子プロセスを起動できる package。os/exec と、標準ライブラリの中で
 // os/exec を使う package (net/http/cgi など。標準ライブラリの中の import は exec-import の対象外)。
 // 後者は網羅しにくいため、標準ライブラリの側から求めた全数を、テスト (TestStdExecDependents) が確かめる。
-var execImports = []string{"os/exec/**", "net/http/cgi"}
+//
+// go/build/constraint など、os/exec に依存しない子 package は含めないため、"/**" を付けずに 1 つずつ書く。
+var execImports = []string{"os/exec/**", "go/build", "go/importer", "net/http/cgi", "net/http/fcgi"}
 
 // DefaultRules は、このリポジトリに適用する規則の表。
 //
