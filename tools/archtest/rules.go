@@ -107,12 +107,15 @@ var DefaultRules = Rules{
 
 		// reflect は、unsafe を import せずに、unsafe.Pointer を得て (UnsafePointer・UnsafeAddr)、任意のアドレスを
 		// 書き換える (NewAt・SetPointer) 入口になる。unsafe-import と同じ理由で、os/exec と同じ場所にだけ許す。
+		// MethodByName は、それらのメソッドを、セレクタを書かずに、名前の文字列から動的に呼べる (セレクタの名前では
+		// 検出できない)。Method(i) のような添字での動的な呼び出しは、net/http の Request.Method など正当な名前と
+		// 衝突して誤検出が多いので、規則にしない (doc.go の限界)。
 		// メソッドは、構文解析だけで型情報が無いので、レシーバの型によらず名前だけで検出する。reflect と無関係な
 		// 同名のメソッドやフィールドも検出する (誤検出。fail-closed 側で許容する。fixture reflect-unsafe の homonym.go)。
 		{
 			ID:      "reflect-unsafe",
 			Funcs:   []Func{{Pkg: "reflect", Name: "NewAt"}},
-			Methods: []string{"UnsafePointer", "UnsafeAddr", "SetPointer"},
+			Methods: []string{"UnsafePointer", "UnsafeAddr", "SetPointer", "MethodByName"},
 			OnlyIn:  execAllowed,
 		},
 	},

@@ -217,6 +217,13 @@ func TestFixtures(t *testing.T) {
 			"core/methods.go:9: reflect-unsafe",
 			"core/newat.go:5: reflect-unsafe",
 		}},
+		// reflect-unsafe は *ast.SelectorExpr の Sel.Name しか見ないため、UnsafePointer を
+		// reflect.Value.MethodByName("UnsafePointer") で名前の文字列から動的に呼ぶと、AST 上に
+		// UnsafePointer というセレクタが一度も現れず、すり抜ける (攻撃者視点レビュー finding、
+		// attack-review-86fdc67 参照)。sandbox/ok.go は許可の対照。
+		{"reflect-methodbyname", 2, []string{
+			"core/dynamic.go:10: reflect-unsafe",
+		}},
 		// vendor/modules.txt があると、go は vendor の中の外部 module を build する (ネットワークも go.sum も要らない)。
 		// archtest は vendor を走査しないので、vendor/example.com/evil の os/exec を、core が使える。
 		// 走査しない vendor (modules.txt の無い、unscanned-import や empty の vendor) は、これまでどおり違反にしない。
@@ -359,6 +366,9 @@ func TestGoldenOutput(t *testing.T) {
 			`core/methods.go:8: reflect-unsafe: メソッド SetPointer (レシーバの型によらず、名前だけで検出する) は sandbox/**, cmd/** 以外では使えない`,
 			`core/methods.go:9: reflect-unsafe: メソッド UnsafePointer (レシーバの型によらず、名前だけで検出する) は sandbox/**, cmd/** 以外では使えない`,
 			`core/newat.go:5: reflect-unsafe: reflect.NewAt は sandbox/**, cmd/** 以外では使えない`,
+		}},
+		{"reflect-methodbyname", []string{
+			`core/dynamic.go:10: reflect-unsafe: メソッド MethodByName (レシーバの型によらず、名前だけで検出する) は sandbox/**, cmd/** 以外では使えない`,
 		}},
 		{"vendor-mode", []string{
 			`core/vendor/modules.txt:1: vendor-mode: vendor/modules.txt がある (go は vendor から外部 module を build するが、archtest は vendor を走査しない) ため、全面禁止`,
