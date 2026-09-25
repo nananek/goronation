@@ -37,6 +37,12 @@ var nonGoSourceExts = []string{
 	".f", ".F", ".for", ".f90", ".s", ".S", ".sx", ".swig", ".swigcxx", ".syso",
 }
 
+// ruleReplace は、go.mod / go.work の replace の規則 ID。replace は、走査しないディレクトリや、
+// 別の module path のコードを、そのまま取り込める (core/go.mod に 1 行足すだけで、core/_evil の
+// os/exec に依存できる)。import path を見る unscanned-dir-import では、これを防げない。
+// 許可される場所は無い。
+const ruleReplace = "replace"
+
 // Violation は規則違反 1 件。
 type Violation struct {
 	Path   string // repo 相対、"/" 区切り
@@ -136,7 +142,7 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 			c.add(rel, 1, ruleNonGoSource, d.Name()+" は、Go が build に使う .go 以外のソース (archtest は検査できない) のため、全面禁止")
 		}
 		if d.Type()&fs.ModeSymlink != 0 {
-			// go tool は、symlink の .go と go.mod を通常のファイルとして読むため、この 2 つの
+			// go tool は、symlink の .go と go.mod / go.work を通常のファイルとして読むため、これらの
 			// symlink は、指す先を link の位置のファイルとして検査する。壊れていたら error にする。
 			// symlink のディレクトリは辿らずに error にする。go tool は、./... では列挙しないが、
 			// 明示的に import されれば辿って build するため、黙って無視すると規則の抜け道になる。
@@ -151,7 +157,7 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 				return fmt.Errorf("%s: ディレクトリの symlink は検査できない "+
 					"(go tool は明示的に import されると辿って build するため、辿らずに無視すると規則の抜け道になる。"+
 					"実体のディレクトリにする)", rel)
-			case d.Name() != "go.mod" && !strings.HasSuffix(d.Name(), ".go"):
+			case !isModFile(d.Name()) && !strings.HasSuffix(d.Name(), ".go"):
 				return nil // build に使われない。壊れていてもよい
 			case err != nil:
 				return err
@@ -167,6 +173,8 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 			return c.checkGo(p, rel)
 		case d.Name() == "go.mod":
 			return c.checkGoMod(p, rel)
+		case d.Name() == "go.work":
+			return c.checkGoWork(p, rel)
 		}
 		return nil
 	})
@@ -203,6 +211,11 @@ func (c *checker) add(rel string, line int, rule, detail string) {
 func skipDir(name string) bool {
 	return name == "testdata" || name == "vendor" ||
 		strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+}
+
+// isModFile は、go が module の構成に使うファイルの名前か。
+func isModFile(name string) bool {
+	return name == "go.mod" || name == "go.work"
 }
 
 func (c *checker) checkGo(file, rel string) error {
@@ -310,35 +323,66 @@ func (c *checker) checkCalls(rel string, f *ast.File, r CallRule) {
 	})
 }
 
-// checkGoMod は、go.mod の module 行が Module + "/" + <相対dir> と一致することを確認する。
-func (c *checker) checkGoMod(file, rel string) error {
+// readModFile は go.mod / go.work を読み、文に分ける。解釈できなければ error にする。
+func readModFile(file, rel string) ([]modStmt, error) {
 	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	stmts, err := parseModFile(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", rel, err)
+	}
+	return stmts, nil
+}
+
+// checkReplace は、replace の文を全部違反にする (ruleReplace)。
+func (c *checker) checkReplace(rel string, stmts []modStmt) {
+	for _, s := range stmts {
+		if s.Verb == "replace" {
+			c.add(rel, s.Line, ruleReplace, "replace は全面禁止 (archtest が走査しないコードを、別の module path で取り込めるため)")
+		}
+	}
+}
+
+// checkGoMod は、go.mod の module 行が Module + "/" + <相対dir> と一致することと、
+// replace が無いことを確認する。
+func (c *checker) checkGoMod(file, rel string) error {
+	stmts, err := readModFile(file, rel)
 	if err != nil {
 		return err
 	}
+	c.checkReplace(rel, stmts)
+
 	want := c.rules.Module
 	if dir := path.Dir(rel); dir != "." {
 		want += "/" + dir
 	}
-
-	for i, line := range strings.Split(string(data), "\n") {
-		if j := strings.Index(line, "//"); j >= 0 {
-			line = line[:j]
-		}
-		fields := strings.Fields(line)
-		if len(fields) == 0 || fields[0] != "module" {
-			continue
-		}
-		if len(fields) != 2 {
-			c.add(rel, i+1, ruleModPath, "module 行を解釈できない")
-			return nil
-		}
-		if got := strings.Trim(fields[1], "\"`"); got != want {
-			c.add(rel, i+1, ruleModPath, fmt.Sprintf("module が %q だが、%q であるべき", got, want))
-		}
-		return nil
+	i := slices.IndexFunc(stmts, func(s modStmt) bool { return s.Verb == "module" })
+	switch {
+	case i < 0:
+		c.add(rel, 1, ruleModPath, "module 行が無い")
+	case len(stmts[i].Args) != 1:
+		c.add(rel, stmts[i].Line, ruleModPath, "module 行を解釈できない")
+	case stmts[i].Args[0] != want:
+		c.add(rel, stmts[i].Line, ruleModPath, fmt.Sprintf("module が %q だが、%q であるべき", stmts[i].Args[0], want))
 	}
-	c.add(rel, 1, ruleModPath, "module 行が無い")
+	return nil
+}
+
+// checkGoWork は、go.work の replace を違反にする。go の directive (go / toolchain / godebug /
+// use / replace) 以外は、go も受け付けないため、error にする。
+func (c *checker) checkGoWork(file, rel string) error {
+	stmts, err := readModFile(file, rel)
+	if err != nil {
+		return err
+	}
+	c.checkReplace(rel, stmts)
+	for _, s := range stmts {
+		if !slices.Contains([]string{"go", "toolchain", "godebug", "use", "replace"}, s.Verb) {
+			return fmt.Errorf("%s:%d: go.work の directive %q を解釈できない", rel, s.Line, s.Verb)
+		}
+	}
 	return nil
 }
 

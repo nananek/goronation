@@ -113,6 +113,15 @@ func TestFixtures(t *testing.T) {
 		{"non-go-source", 1, []string{
 			"core/evil_amd64.s:1: non-go-source",
 		}},
+		// go.mod / go.work の replace は、走査しないディレクトリや別の module path のコードを取り込める
+		// (core/go.mod に replace を 1 行足すだけで、core/_evil2 の os/exec に依存できる)。全面禁止。
+		// コメントの中の replace と、module 名に replace を含む require は、対照 (違反にしない)。
+		{"replace", 2, []string{
+			"core/go.mod:8: replace",
+			"go.work:8: replace",
+			"sandbox/go.mod:6: replace",
+			"sandbox/go.mod:7: replace",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,6 +179,12 @@ func TestGoldenOutput(t *testing.T) {
 		}},
 		{"non-go-source", []string{
 			`core/evil_amd64.s:1: non-go-source: evil_amd64.s は、Go が build に使う .go 以外のソース (archtest は検査できない) のため、全面禁止`,
+		}},
+		{"replace", []string{
+			`core/go.mod:8: replace: replace は全面禁止 (archtest が走査しないコードを、別の module path で取り込めるため)`,
+			`go.work:8: replace: replace は全面禁止 (archtest が走査しないコードを、別の module path で取り込めるため)`,
+			`sandbox/go.mod:6: replace: replace は全面禁止 (archtest が走査しないコードを、別の module path で取り込めるため)`,
+			`sandbox/go.mod:7: replace: replace は全面禁止 (archtest が走査しないコードを、別の module path で取り込めるため)`,
 		}},
 	}
 	for _, tc := range cases {
@@ -279,6 +294,55 @@ func TestNonGoSourceExts(t *testing.T) {
 	}
 	if got := keys(vs); !slices.Equal(got, want) {
 		t.Errorf("違反が一致しない\ngot:\n%s\nwant:\n%s", lines(got), lines(want))
+	}
+}
+
+// TestBadModFileIsError は、解釈できない go.mod / go.work を、黙って通さず error にすることを確認する。
+// go.work は、go の directive (go / toolchain / godebug / use / replace) 以外も error にする。
+func TestBadModFileIsError(t *testing.T) {
+	cases := []struct{ name, rel, content string }{
+		{"go.mod の括弧が閉じていない", "core/go.mod", "module github.com/nananek/goronation/core\n\nrequire (\n\ta v1.0.0\n"},
+		{"go.work の括弧が閉じていない", "go.work", "go 1.24.0\n\nuse (\n\t./core\n"},
+		{"go.work の未知の directive", "go.work", "go 1.24.0\n\nfrobnicate ./core\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{
+				"core/doc.go": "package core\n",
+				"core/go.mod": "module github.com/nananek/goronation/core\n",
+				tc.rel:        tc.content,
+			})
+			_, _, err := Check(root, DefaultRules)
+			if err == nil {
+				t.Fatal("error を返すべき")
+			}
+			if !strings.Contains(err.Error(), tc.rel) {
+				t.Errorf("error に対象ファイルが含まれない: %v", err)
+			}
+		})
+	}
+}
+
+// TestSymlinkGoWork は、symlink の go.work も、link の位置のファイルとして検査することを確認する
+// (go は symlink の go.work をそのまま読む)。
+func TestSymlinkGoWork(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "root")
+	writeTree(t, tmp, map[string]string{
+		"root/core/doc.go": "package core\n",
+		"root/core/go.mod": "module github.com/nananek/goronation/core\n",
+		"outside/go.work":  "go 1.24.0\n\nreplace example.com/a => ./x\n",
+	})
+	if err := os.Symlink(filepath.Join(tmp, "outside", "go.work"), filepath.Join(root, "go.work")); err != nil {
+		t.Skipf("symlink を作れない: %v", err)
+	}
+	vs, _, err := Check(root, DefaultRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"go.work:3: replace"}; !slices.Equal(keys(vs), want) {
+		t.Errorf("violations=%v (want %v)", keys(vs), want)
 	}
 }
 
