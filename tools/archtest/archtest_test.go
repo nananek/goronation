@@ -255,6 +255,28 @@ func TestSymlink(t *testing.T) {
 	}
 }
 
+// TestSymlinkGoMod は、symlink の go.mod も link の位置のファイルとして検査する
+// (modpath) ことを確認する。go tool は symlink の go.mod をそのまま読むため、
+// 追わないと、module path のずれを検知できない。
+func TestSymlinkGoMod(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "root")
+	writeTree(t, tmp, map[string]string{
+		"root/core/doc.go": "package core\n",
+		"outside/go.mod":   "module example.com/wrong\n\ngo 1.24.0\n",
+	})
+	if err := os.Symlink(filepath.Join(tmp, "outside", "go.mod"), filepath.Join(root, "core", "go.mod")); err != nil {
+		t.Skipf("symlink を作れない: %v", err)
+	}
+	vs, _, err := Check(root, DefaultRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"core/go.mod:1: modpath"}; !slices.Equal(keys(vs), want) {
+		t.Errorf("violations=%v (want %v)", keys(vs), want)
+	}
+}
+
 // TestDepCoreAllTops は、dep-core が対象とする全トップ module を 1 つずつ確認する。
 func TestDepCoreAllTops(t *testing.T) {
 	for _, top := range []string{"control", "agent", "sandbox", "egress", "vault", "hostfs", "gateway", "cmd"} {
