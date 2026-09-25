@@ -1,6 +1,6 @@
 # main への PR は、この repo の develop からのものだけを許す。
 #
-# pull_request_target を使う理由: PR 側から検査そのものを書き換えられないため (ADR 0002)。
+# pull_request_target を使う理由: main 向けの PR の中身で、その PR に対する検査を書き換えられないため (ADR 0002)。
 # checkout しない理由: pull_request_target のジョブは、GITHUB_TOKEN と secrets を使える。docs は、
 #   この trigger で信頼できない PR のコードを取得・実行すべきでないと述べている
 #   (Securely using pull_request_target)。permissions も空にしている。
