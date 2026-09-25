@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -96,7 +95,8 @@ func execDependents(imports map[string]map[string]bool) map[string]bool {
 	importers := map[string][]string{}
 	for pkg, set := range imports {
 		for ipath := range set {
-			importers[resolve(ipath)] = append(importers[resolve(ipath)], pkg)
+			p := resolve(ipath)
+			importers[p] = append(importers[p], pkg)
 		}
 	}
 	deps := map[string]bool{}
@@ -180,7 +180,7 @@ func TestStdExecDependents(t *testing.T) {
 			missing = append(missing, p)
 		}
 	}
-	sort.Strings(missing)
+	slices.Sort(missing)
 	for _, p := range missing {
 		t.Errorf("標準ライブラリの %s は os/exec に依存するが、execImports (rules.go) に無い", p)
 	}
