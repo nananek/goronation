@@ -32,7 +32,7 @@ main を base とする PR は、同じ repo の `develop` を head とするも
 次は保守者がリポジトリの設定で行う。**コードでは強制されない。**
 
 - ruleset: develop は squash のみ、main は merge commit のみを許可する。
-- ruleset (develop と main): PR を必須にし (Require a pull request before merging)、bypass list は空にする。保守者も PR の merge で変更を入れるので、通常の作業は妨げられない。エージェントが保守者と同じアカウントで push しても、直接 push は止まる想定である。決定 2 の強制はこの設定に依存し、設定が無い間は約束にすぎない。
+- ruleset (develop と main): PR を必須にし (Require a pull request before merging)、bypass list は空にする。保守者も PR の merge で変更を入れるので、通常の作業は妨げられない。エージェントが保守者と同じアカウントで push しても、直接 push は止まる想定である。設定で担保する対象は決定 2 の「直接 push の禁止」だけで、設定が無い間は約束にすぎない。PR の作成と merge を制限する設定は、この一覧に無く、「main への PR を出さない・merge しない」は運用の約束である (エージェントの資格情報での PR の制限は、egress で行う予定。Issue #1)。
 - 上の ruleset について、docs (Available rules for rulesets) は「対象ブランチへのすべての変更を PR に関連づけることを求められる」と述べる。しかし、bypass できない actor の直接 push が拒否されることと、bypass list が空なら管理者を含めて誰も bypass できないことは、原文で明記を確認できておらず**未検証**である。設定後に、保守者が同じアカウントで、ruleset の対象に含めたテスト用のブランチへ直接 push し、拒否されることを確かめる。
 - required check: main を対象とする設定にだけ、job 名 `only-from-develop` (workflow `main-source-guard` の job) を登録する。develop には登録しない (この workflow は base が main の PR でしか動かず、`branches` で skip された workflow の check は pending のままになり、merge が塞がれる。docs の Troubleshooting required status checks の「Handling skipped but required checks」による)。required check は workflow を区別しない (docs の Troubleshooting rules の「Troubleshooting required status checks」は「workflow、matrix、event の種類を考慮しない」と述べる)。job 名 `only-from-develop` を、他の workflow で使わない。
 - 既定ブランチは `develop` とする (設定済み)。guard は既定ブランチの定義で動くので、guard が develop に入った時点で有効になり、最初の develop から main への PR も検査される (「帰結」を参照)。
