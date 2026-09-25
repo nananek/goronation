@@ -1,9 +1,9 @@
 # main への PR は、この repo の develop からのものだけを許す。
 #
 # pull_request_target を使う理由: PR 側から検査そのものを書き換えられないため (ADR 0002)。
-# checkout しない理由: pull_request_target は、書き込み権限と secrets を持ちうる特権的な文脈で動く
-#   (GitHub の docs)。ここでは permissions を空にし、そのうえで PR のコードを取得せず、
-#   信頼できないコードを持ち込まない。
+# checkout しない理由: pull_request_target のジョブは、GITHUB_TOKEN と secrets を使える。docs は、
+#   この trigger で信頼できない PR のコードを取得・実行すべきでないと述べている
+#   (Securely using pull_request_target)。permissions も空にしている。
 # head の情報を env 経由で渡す理由: ブランチ名は PR の作成者が決める。
 #   run に直接展開すると、ブランチ名でシェルにコマンドを注入されうる。
 name: main-source-guard
