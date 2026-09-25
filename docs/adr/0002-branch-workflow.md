@@ -33,7 +33,7 @@ main を base とする PR は、同じ repo の `develop` を head とするも
 
 - ruleset: develop は squash のみ、main は merge commit のみを許可する。
 - required check: main を対象とする設定にだけ、job 名 `only-from-develop` (workflow `main-source-guard` の job) を登録する。develop には登録しない (この workflow は base が main の PR でしか動かず、`branches` で skip された workflow の check は pending のままになり、merge が塞がれる。docs の Troubleshooting required status checks による)。
-- 既定ブランチ。guard の workflow 定義は、既定ブランチから読まれる (「帰結」を参照)。
+- 既定ブランチの選択。guard が有効になる時期に関わる (「帰結」を参照)。
 
 ## 帰結
 
