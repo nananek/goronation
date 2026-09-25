@@ -24,8 +24,8 @@ func TestParseModFile(t *testing.T) {
 	}{
 		{"1 行の文", "module a/b\n\ngo 1.24.0\n", []string{"1:module:a/b", "3:go:1.24.0"}},
 		{"コメントと空行", "// 先頭\n\nuse ./a // 行末\n  // 字下げしたコメント\n", []string{"3:use:./a"}},
-		{"ブロック", "use (\n\t./a // c\n\n\t\"./b c\"\n\t`./d`\n)\nuse ./e\n", []string{
-			"2:use:./a", "4:use:./b c", "5:use:./d", "7:use:./e",
+		{"ブロック", "use (\n\t./a // c\n\n\t\"./b c\"\n)\nuse ./e\n", []string{
+			"2:use:./a", "4:use:./b c", "6:use:./e",
 		}},
 		{"replace のブロック", "replace (\n\ta v1.0.0 => ./b\n\tc => ../d\n)\n", []string{
 			"2:replace:a|v1.0.0|=>|./b", "3:replace:c|=>|../d",
@@ -62,7 +62,7 @@ func TestParseModFileErrors(t *testing.T) {
 		"1 行の中の括弧":         "replace ( a => b )\n",
 		"ブロックの中の入れ子":       "use (\n\tx (\n)\n",
 		"引用符が閉じていない":       "use \"./a\n",
-		"生文字列が閉じていない":      "use `./a\n",
+		"go が受け付けない生文字列":   "use `./a`\n",
 		"引用符の直後に語が続く":      "use \"./a\"b\n",
 		"引用符の中身が解釈できない":    "use \"\\q\"\n",
 		"括弧を引用符で包んだもの":     "use \"(\"\n",

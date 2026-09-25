@@ -18,10 +18,11 @@ type modStmt struct {
 
 // parseModFile は、go.mod / go.work の文を取り出す (golang.org/x/mod は使わない。外部依存を持たない)。
 //
-// 書式は go と同じにする: 空白区切り、"//" から行末までがコメント、"..." と `...` の引用、
+// 書式は go と同じにする: 空白区切り、"//" から行末までがコメント、"..." の引用、
 // verb ( ... ) のブロック。"//" は単語の途中でもコメントの始まりで、go も use ./a//x を ./a と読む。
 // 違う読み方をすると、archtest が検査した path と、go が使う path がずれる。
 // 解釈できない書式は、黙って読み飛ばさず error にする (見えないものを、違反なしとして扱わない)。
+// go は `...` の引用を受け付けない (unquoted string cannot contain quote) ため、これも error にする。
 func parseModFile(data []byte) ([]modStmt, error) {
 	var stmts []modStmt
 	var block string // 開いているブロックの verb。無ければ空
@@ -68,7 +69,9 @@ func modTokens(line string) ([]string, error) {
 		switch line[0] {
 		case '(', ')':
 			tok, line = line[:1], line[1:]
-		case '"', '`':
+		case '`':
+			return nil, errors.New("` の引用は、go が受け付けない")
+		case '"':
 			end := quoteEnd(line)
 			if end < 0 {
 				return nil, errors.New("引用符が閉じていない")
@@ -99,14 +102,8 @@ func modTokens(line string) ([]string, error) {
 	}
 }
 
-// quoteEnd は、line の先頭の引用符 (" か `) に対応する、閉じる引用符の位置を返す。無ければ -1。
+// quoteEnd は、line の先頭の引用符 (") に対応する、閉じる引用符の位置を返す。無ければ -1。
 func quoteEnd(line string) int {
-	if line[0] == '`' {
-		if i := strings.IndexByte(line[1:], '`'); i >= 0 {
-			return i + 1
-		}
-		return -1
-	}
 	for i := 1; i < len(line); i++ {
 		switch line[i] {
 		case '\\':
