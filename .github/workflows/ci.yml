@@ -61,4 +61,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap
           /usr/bin/bwrap --version
+      # ubuntu-24.04 は unprivileged user namespace を AppArmor が制限し、
+      # bwrap が "setting up uid map: Permission denied" で落ちることがある (未検証。ADR 0001)。
+      - name: unprivileged user namespace の制限を外す
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: make check
