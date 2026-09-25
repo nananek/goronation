@@ -42,6 +42,9 @@
 //
 // 静的検査なので、このテストは事故防止であり、悪意ある実装への防壁ではない。強制の主体は設計ルールとレビュー。
 //
+//   - 純 Go の静的検査では、reflect・実行ファイルのシンボル表 (pclntab)・生のシステムコールを組み合わせて、表に無い
+//     関数をアドレスで呼べる。これは実測した (この経路の入口は reflect-unsafe・gosym-import で塞いだが、同種の別の
+//     経路は、完全には塞げない)。この検査は lint で、I1 の封じ込めは、檻とレビューが担う。
 //   - 外部 module (require) のコードは走査しない。外部依存はいまは無く、go.mod / go.sum の変更はレビューで見る。
 //   - ツリーの外は見えない。環境変数 (GOFLAGS・GOWORK など) や、go の引数 (-overlay など) は、
 //     Makefile と CI の設定の変更として、レビューで見る。
@@ -50,8 +53,9 @@
 //     照合できない) は、対応 OS (Linux・macOS) ではないため表に無い。x/sys/unix の生 syscall は
 //     Syscall / Syscall6 / RawSyscall / RawSyscall6 だけで、Syscall9 などは表に無い。標準ライブラリで os/exec に
 //     依存する package は、TestStdExecDependents が全数を確かめる (Go の更新で増えると、そのテストが赤になる)。
-//   - 実行可能メモリに書いた機械語を呼ぶ経路は、unsafe の import と Mmap / Mprotect で塞ぐ。reflect や、外部 module
-//     (x/sys/unix など) の同種の関数を経由する経路は、検出できるか確かめていない。
+//   - 実行可能メモリを作る・アドレスで関数を呼ぶ経路のうち、塞いでいるのは、unsafe の import、Mmap・Mprotect の直接の
+//     参照、reflect の unsafe アクセサ (NewAt・UnsafePointer・UnsafeAddr・SetPointer)、debug/gosym の import だけ。
+//     外部 module (x/sys/unix など) の同種の関数を経由する経路は、検出できるか確かめていない。
 //   - 手動で go test を回すときは -count=1 を付ける (module の外の変更は、テストの結果のキャッシュに反映されない。make check は付けている)。
 //   - impl-only-from-cmd は、実装 package 自身の側の import も違反にする (docs/adr/0001 の帰結を参照)。
 package archtest
