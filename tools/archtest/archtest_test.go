@@ -66,9 +66,10 @@ func TestFixtures(t *testing.T) {
 		{"exec-prefix", 2, []string{
 			"sandboxx/x.go:3: exec-import",
 		}},
-		{"exec-call", 7, []string{
+		{"exec-call", 8, []string{
 			"egress/dot.go:3: exec-call",
 			"egress/os.go:6: exec-call",
+			"egress/paren.go:5: exec-call",
 			"egress/ref.go:5: exec-call",
 			"egress/sys.go:6: exec-call",
 			"egress/unix.go:6: exec-call",
@@ -137,6 +138,7 @@ func TestGoldenOutput(t *testing.T) {
 		{"exec-call", []string{
 			`egress/dot.go:3: exec-call: import . "syscall" は呼び出しを判定できないため、sandbox/**, cmd/** 以外では使えない`,
 			`egress/os.go:6: exec-call: os.StartProcess は sandbox/**, cmd/** 以外では使えない`,
+			`egress/paren.go:5: exec-call: os.StartProcess は sandbox/**, cmd/** 以外では使えない`,
 			`egress/ref.go:5: exec-call: syscall.ForkExec は sandbox/**, cmd/** 以外では使えない`,
 			`egress/sys.go:6: exec-call: syscall.Exec は sandbox/**, cmd/** 以外では使えない`,
 			`egress/unix.go:6: exec-call: golang.org/x/sys/unix.Exec は sandbox/**, cmd/** 以外では使えない`,

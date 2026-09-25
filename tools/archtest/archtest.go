@@ -243,7 +243,7 @@ func (c *checker) checkCalls(rel string, f *ast.File, r CallRule) {
 		if !ok {
 			return true
 		}
-		id, ok := sel.X.(*ast.Ident)
+		id, ok := ast.Unparen(sel.X).(*ast.Ident) // (os).StartProcess も同じ参照
 		if !ok {
 			return true
 		}
