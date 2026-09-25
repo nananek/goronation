@@ -20,6 +20,11 @@ import (
 // import 規則は module path の一致を前提にするため、ずれを検知する。
 const ruleModPath = "modpath"
 
+// ruleUnscannedImport は、走査しないディレクトリ (skipDir) を含む、リポジトリ内の import path の規則 ID。
+// go tool は、そこにある package も、明示的に import されれば build する。
+// 走査しないまま import だけを許すと、そのディレクトリが規則の抜け道になる。
+const ruleUnscannedImport = "unscanned-dir-import"
+
 // Violation は規則違反 1 件。
 type Violation struct {
 	Path   string // repo 相対、"/" 区切り
@@ -185,6 +190,7 @@ func (c *checker) checkGo(file, rel string) error {
 			return fmt.Errorf("%s: import path を解釈できない: %w", rel, err)
 		}
 		line := c.fset.Position(spec.Path.Pos()).Line
+		c.checkUnscannedImport(rel, line, ipath)
 		for _, r := range c.rules.AllowImports {
 			if matchAny(r.Imports, ipath) && !matchAny(r.OnlyIn, rel) {
 				c.add(rel, line, r.ID, unless(fmt.Sprintf("import %q", ipath), r.OnlyIn))
@@ -203,6 +209,22 @@ func (c *checker) checkGo(file, rel string) error {
 		}
 	}
 	return nil
+}
+
+// checkUnscannedImport は、ipath がリポジトリ内の path で、走査しないディレクトリの名前を
+// セグメントに含む場合に違反にする。許可される場所は無い。
+func (c *checker) checkUnscannedImport(rel string, line int, ipath string) {
+	sub, ok := strings.CutPrefix(ipath, c.rules.Module+"/")
+	if !ok {
+		return
+	}
+	for _, seg := range strings.Split(sub, "/") {
+		if skipDir(seg) {
+			c.add(rel, line, ruleUnscannedImport, fmt.Sprintf(
+				"import %q は走査しないディレクトリ %q を含む (明示 import されると go tool は build するが、archtest は走査しない)", ipath, seg))
+			return
+		}
+	}
 }
 
 // checkCalls は、r.Funcs の参照を検出する。

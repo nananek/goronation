@@ -94,6 +94,15 @@ func TestFixtures(t *testing.T) {
 			"control/y.go:3: impl-only-from-cmd",
 			"egress/x.go:3: impl-only-from-cmd",
 		}},
+		// 走査しないディレクトリ (.hidden / _hidden / testdata / vendor) は、明示的に import されると
+		// go tool は build する。その import を違反にする。scanned = 1 は、それらを走査していない確認。
+		// sub / testdatax / 外部の testdata は、対照 (違反にしない)。
+		{"unscanned-import", 1, []string{
+			"core/doc.go:5: unscanned-dir-import",
+			"core/doc.go:6: unscanned-dir-import",
+			"core/doc.go:8: unscanned-dir-import",
+			"core/doc.go:10: unscanned-dir-import",
+		}},
 		{"modpath", 1, []string{
 			"cmd/go.mod:1: modpath",
 			"core/go.mod:3: modpath",
@@ -142,6 +151,12 @@ func TestGoldenOutput(t *testing.T) {
 			`egress/ref.go:5: exec-call: syscall.ForkExec は sandbox/**, cmd/** 以外では使えない`,
 			`egress/sys.go:6: exec-call: syscall.Exec は sandbox/**, cmd/** 以外では使えない`,
 			`egress/unix.go:6: exec-call: golang.org/x/sys/unix.Exec は sandbox/**, cmd/** 以外では使えない`,
+		}},
+		{"unscanned-import", []string{
+			`core/doc.go:5: unscanned-dir-import: import "` + m + `/core/.hidden" は走査しないディレクトリ ".hidden" を含む (明示 import されると go tool は build するが、archtest は走査しない)`,
+			`core/doc.go:6: unscanned-dir-import: import "` + m + `/core/_hidden" は走査しないディレクトリ "_hidden" を含む (明示 import されると go tool は build するが、archtest は走査しない)`,
+			`core/doc.go:8: unscanned-dir-import: import "` + m + `/core/testdata" は走査しないディレクトリ "testdata" を含む (明示 import されると go tool は build するが、archtest は走査しない)`,
+			`core/doc.go:10: unscanned-dir-import: import "` + m + `/core/vendor" は走査しないディレクトリ "vendor" を含む (明示 import されると go tool は build するが、archtest は走査しない)`,
 		}},
 		{"modpath", []string{
 			`cmd/go.mod:1: modpath: module が "example.com/x" だが、"` + m + `/cmd" であるべき`,
