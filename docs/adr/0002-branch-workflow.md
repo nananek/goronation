@@ -34,13 +34,13 @@ main を base とする PR は、同じ repo の `develop` を head とするも
 
 - ruleset: develop は squash のみ、main は merge commit のみを許可する。
 - required check: main-source-guard の job `only-from-develop`。
-- 既定ブランチ。
+- 既定ブランチ。guard の workflow 定義は、既定ブランチから読まれる (「帰結」を参照)。
 
 ## 帰結
 
 - GitHub には PR の取り込み元ブランチを制限する標準の設定が無いため、workflow による検査で代替する。
-- guard は `pull_request_target` で動くので、base 側 (main) の workflow 定義が使われる。PR 側から検査自体を書き換えられない。
-- その代わり、main に workflow が入って初めて有効になる。最初の develop から main への merge の後に、保守者が required check に登録する。
+- guard は `pull_request_target` で動くので、PR の head ではなく、リポジトリの**既定ブランチ**の workflow 定義が使われる (base ブランチの定義ではない。GitHub の docs による。2025-12-08 以降の挙動)。PR 側から検査自体を書き換えられない。
+- その代わり、既定ブランチに workflow が入って初めて有効になる。既定ブランチが main の間は、最初の develop から main への merge の後になる。required check への登録は、有効になった後に保守者が行う。
 - develop に入った変更は、保守者が反映するまで main に出ない。反映の手間は保守者が負う。
 
 ## 代替案
