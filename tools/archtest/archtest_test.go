@@ -162,6 +162,13 @@ func TestFixtures(t *testing.T) {
 		// 標準ライブラリの中で os/exec を使う package (net/http/cgi など) は、import するだけで子プロセスを起動できる
 		// (標準ライブラリの中の import は、exec-import の対象外)。os/exec と同じ場所にだけ許す。
 		// control.go は対照 (os/exec に依存しない go/build/constraint と net/http)。
+		// vendor/modules.txt があると、go は vendor の中の外部 module を build する (ネットワークも go.sum も要らない)。
+		// archtest は vendor を走査しないので、vendor/example.com/evil の os/exec を、core が使える。
+		// 走査しない vendor (modules.txt の無い、unscanned-import や empty の vendor) は、これまでどおり違反にしない。
+		{"vendor-mode", 1, []string{
+			"core/vendor/modules.txt:1: vendor-mode",
+			"vendor/modules.txt:1: vendor-mode",
+		}},
 		{"exec-std", 8, []string{
 			"core/build.go:3: exec-import",
 			"core/cgi.go:3: exec-import",
@@ -258,6 +265,10 @@ func TestGoldenOutput(t *testing.T) {
 		{"plugin", []string{
 			`core/x.go:3: plugin: import "plugin" は全面禁止`,
 			`sandbox/y.go:3: plugin: import "plugin" は全面禁止`,
+		}},
+		{"vendor-mode", []string{
+			`core/vendor/modules.txt:1: vendor-mode: vendor/modules.txt がある (go は vendor から外部 module を build するが、archtest は vendor を走査しない) ため、全面禁止`,
+			`vendor/modules.txt:1: vendor-mode: vendor/modules.txt がある (go は vendor から外部 module を build するが、archtest は vendor を走査しない) ため、全面禁止`,
 		}},
 		{"exec-std", []string{
 			`core/build.go:3: exec-import: import "go/build" は sandbox/**, cmd/** 以外では使えない`,
@@ -452,6 +463,26 @@ func TestBadModuleLine(t *testing.T) {
 				t.Errorf("detail = %q, want %q", vs[0].Detail, want)
 			}
 		})
+	}
+}
+
+// TestVendorSymlink は、vendor が symlink でも、指す先の modules.txt を見る (go は辿る) ことを確認する。
+func TestVendorSymlink(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "root")
+	writeTree(t, tmp, map[string]string{
+		"root/core/doc.go":           "package core\n",
+		"outside/vendor/modules.txt": "# example.com/evil v1.0.0\n",
+	})
+	if err := os.Symlink(filepath.Join(tmp, "outside", "vendor"), filepath.Join(root, "vendor")); err != nil {
+		t.Skipf("symlink を作れない: %v", err)
+	}
+	vs, _, err := Check(root, DefaultRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"vendor/modules.txt:1: vendor-mode"}; !slices.Equal(keys(vs), want) {
+		t.Errorf("violations=%v (want %v)", keys(vs), want)
 	}
 }
 

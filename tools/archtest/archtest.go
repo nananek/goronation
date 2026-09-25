@@ -55,6 +55,11 @@ const ruleGoWorkUse = "go-work-use"
 // 位置は問わず (字下げも、関数の中も)、許可される場所は無い。
 const ruleLinkname = "linkname"
 
+// ruleVendorMode は、vendor/modules.txt の規則 ID。go は、vendor/modules.txt があると、vendor の中の
+// 外部 module を build する (workspace でも同じ。ネットワークも go.sum も要らない)。archtest は vendor を
+// 走査しないため、vendor/example.com/evil の os/exec を、core が使える。許可される場所は無い。
+const ruleVendorMode = "vendor-mode"
+
 // Violation は規則違反 1 件。
 type Violation struct {
 	Path   string // repo 相対、"/" 区切り
@@ -141,6 +146,7 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 		}
 		if d.IsDir() {
 			if p != root && skipDir(d.Name()) {
+				c.checkVendorMode(p)
 				return filepath.SkipDir
 			}
 			return nil
@@ -164,6 +170,7 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 			switch {
 			case err == nil && target.IsDir():
 				if skipDir(d.Name()) {
+					c.checkVendorMode(p)
 					return nil
 				}
 				return fmt.Errorf("%s: ディレクトリの symlink は検査できない "+
@@ -224,6 +231,24 @@ func (c *checker) add(rel string, line int, rule, detail string) {
 func skipDir(name string) bool {
 	return name == "testdata" || name == "vendor" ||
 		strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+}
+
+// checkVendorMode は、走査しないディレクトリ p が vendor で、modules.txt を持つなら違反にする (ruleVendorMode)。
+// p が symlink でも、指す先を見る (go は辿る)。
+func (c *checker) checkVendorMode(p string) {
+	if filepath.Base(p) != "vendor" {
+		return
+	}
+	modules := filepath.Join(p, "modules.txt")
+	if info, err := os.Stat(modules); err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	rel, err := filepath.Rel(c.root, modules)
+	if err != nil {
+		rel = modules
+	}
+	c.add(filepath.ToSlash(rel), 1, ruleVendorMode,
+		"vendor/modules.txt がある (go は vendor から外部 module を build するが、archtest は vendor を走査しない) ため、全面禁止")
 }
 
 // isModFile は、go が module の構成に使うファイルの名前か。
