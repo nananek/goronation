@@ -80,11 +80,12 @@ type Rules struct {
 //
 // 検査は構文解析だけで行い (go list を使わない)、全ビルドタグ・全 _test.go を対象にする。
 // 走査対象は root 配下の全 .go で、.git / testdata / vendor と、"." または "_" で始まる
-// ディレクトリは除く。go tool と同じく、symlink のディレクトリは辿らず、
-// symlink の .go と go.mod は link の位置のファイルとして検査する。
+// ディレクトリは除く。除いたディレクトリを import する、リポジトリ内の import path は
+// 違反にする (unscanned-dir-import)。symlink の .go と go.mod は link の位置のファイルとして
+// 検査し、symlink のディレクトリは辿らずに error にする (走査しないディレクトリの名前のものを除く)。
 //
 // fail-closed: 走査した .go が 0 ファイルなら error を返す。構文解析できない .go や、
-// 読めないディレクトリも error にする (見えないものを、違反なしとして扱わない)。
+// 読めないディレクトリ、辿れない symlink も error にする (見えないものを、違反なしとして扱わない)。
 func Check(root string, rules Rules) (violations []Violation, scanned int, err error) {
 	if rules.Module == "" {
 		return nil, 0, errors.New("Rules.Module が空 (import 規則が黙って空振りするため許さない)")
@@ -112,28 +113,37 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 			}
 			return nil
 		}
-		if d.Type()&fs.ModeSymlink != 0 {
-			// go tool は、symlink の .go と go.mod を通常のファイルとして読む
-			// (symlink のディレクトリは辿らない)。この 2 つの symlink だけは、指す先を
-			// link の位置のファイルとして検査する。壊れた symlink は error にする。
-			if name := d.Name(); name != "go.mod" && !strings.HasSuffix(name, ".go") {
-				return nil
-			}
-			target, err := os.Stat(p)
-			if err != nil {
-				return err
-			}
-			if !target.Mode().IsRegular() {
-				return nil
-			}
-		} else if !d.Type().IsRegular() {
-			return nil
-		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		if d.Type()&fs.ModeSymlink != 0 {
+			// go tool は、symlink の .go と go.mod を通常のファイルとして読むため、この 2 つの
+			// symlink は、指す先を link の位置のファイルとして検査する。壊れていたら error にする。
+			// symlink のディレクトリは辿らずに error にする。go tool は、./... では列挙しないが、
+			// 明示的に import されれば辿って build するため、黙って無視すると規則の抜け道になる。
+			// 走査しないディレクトリの名前のものだけは、実体のディレクトリと同じく走査しない
+			// (その import は unscanned-dir-import が違反にする)。
+			target, err := os.Stat(p)
+			switch {
+			case err == nil && target.IsDir():
+				if skipDir(d.Name()) {
+					return nil
+				}
+				return fmt.Errorf("%s: ディレクトリの symlink は検査できない "+
+					"(go tool は明示的に import されると辿って build するため、辿らずに無視すると規則の抜け道になる。"+
+					"実体のディレクトリにする)", rel)
+			case d.Name() != "go.mod" && !strings.HasSuffix(d.Name(), ".go"):
+				return nil // build に使われない。壊れていてもよい
+			case err != nil:
+				return err
+			case !target.Mode().IsRegular():
+				return nil
+			}
+		} else if !d.Type().IsRegular() {
+			return nil
+		}
 		switch {
 		case strings.HasSuffix(d.Name(), ".go"):
 			c.scanned++

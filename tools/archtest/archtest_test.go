@@ -230,8 +230,55 @@ func TestParseErrorIsError(t *testing.T) {
 	}
 }
 
-// TestSymlink は、go tool と同じく、symlink のディレクトリは辿らず、
-// symlink の .go は link の位置のファイルとして検査することを確認する。
+// TestDirSymlink は、走査対象のツリー内のディレクトリの symlink を、辿らずに error にすることを確認する。
+// go tool は、./... では symlink のディレクトリを列挙しないが、明示的に import されれば辿って build する。
+// 黙って無視すると、許可された場所 (sandbox/**) のディレクトリへの symlink を core/ に置くだけで、
+// 規則をすり抜けられる。
+func TestDirSymlink(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "root")
+	writeTree(t, tmp, map[string]string{
+		"root/core/ok.go":       "package core\n",
+		"outside/runner/run.go": "package runner\n\nimport \"os/exec\"\n\nvar Run = exec.Command\n",
+	})
+	outside := filepath.Join(tmp, "outside", "runner")
+	link := filepath.Join(root, "core", "runner")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink を作れない: %v", err)
+	}
+	_, _, err := Check(root, DefaultRules)
+	if err == nil {
+		t.Fatal("ディレクトリの symlink は error にすべき")
+	}
+	if !strings.Contains(err.Error(), "core/runner") {
+		t.Errorf("error に対象の symlink が含まれない: %v", err)
+	}
+
+	// 走査しないディレクトリの名前の symlink は、実体のディレクトリと同じく走査しない。
+	// その import は、unscanned-dir-import の違反になる。
+	// build に使われない、壊れた symlink (.go / go.mod 以外) は無視する。
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, root, map[string]string{
+		"core/use.go": "package core\n\nimport _ \"github.com/nananek/goronation/core/_runner\"\n",
+	})
+	if err := os.Symlink(outside, filepath.Join(root, "core", "_runner")); err != nil {
+		t.Skipf("symlink を作れない: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(tmp, "no-such"), filepath.Join(root, "core", "dangling")); err != nil {
+		t.Skipf("symlink を作れない: %v", err)
+	}
+	vs, scanned, err := Check(root, DefaultRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"core/use.go:3: unscanned-dir-import"}; !slices.Equal(keys(vs), want) || scanned != 2 {
+		t.Errorf("violations=%v scanned=%d (want %v / 2)", keys(vs), scanned, want)
+	}
+}
+
+// TestSymlink は、symlink の .go は link の位置のファイルとして検査することを確認する。
 // go tool は symlink の .go を通常のファイルとして build するため、追わないと、
 // 許可された場所のファイルへの symlink で規則をすり抜けられる。
 func TestSymlink(t *testing.T) {
@@ -241,9 +288,6 @@ func TestSymlink(t *testing.T) {
 		"root/core/ok.go":       "package core\n",
 		"outside/egress/bad.go": "package egress\n\nimport \"os/exec\"\n\nvar _ = exec.Command\n",
 	})
-	if err := os.Symlink(filepath.Join(tmp, "outside", "egress"), filepath.Join(root, "egress")); err != nil {
-		t.Skipf("symlink を作れない: %v", err)
-	}
 	link := filepath.Join(root, "core", "link.go")
 	if err := os.Symlink(filepath.Join(tmp, "outside", "egress", "bad.go"), link); err != nil {
 		t.Skipf("symlink を作れない: %v", err)
@@ -253,7 +297,7 @@ func TestSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// egress/ (ディレクトリの symlink) は辿らず、core/link.go は core/ の中のファイルとして検査する。
+	// core/link.go は、指す先ではなく、core/ の中のファイルとして検査する。
 	if want := []string{"core/link.go:3: exec-import"}; !slices.Equal(keys(vs), want) || scanned != 2 {
 		t.Errorf("violations=%v scanned=%d (want %v / 2)", keys(vs), scanned, want)
 	}
