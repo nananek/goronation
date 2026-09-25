@@ -53,7 +53,7 @@ Issue #1 の構成図に無い `tools/archtest` module を追加する。検査�
 
 job 名 `base` / `bwrap` はブランチ保護の required check 名として固定する。どちらの leg も `GO_TEST_EXTRA=-v` を渡し、skip の理由と bwrap の版をログに残す。
 
-Actions (`actions/checkout`、`actions/setup-go`) は commit SHA でピン留めする方針である。**初版は未実施** で、tag 指定のまま `ci.yml` に TODO を残している (作成時の sandbox が GitHub の API を引けず、SHA を解決できなかったため)。SHA を解決できる環境で置き換える。
+Actions (`actions/checkout`、`actions/setup-go`) は commit SHA でピン留めする (信頼できないものを扱う基盤の方針に合わせる)。`ci.yml` の SHA の末尾のコメントが tag で、更新するときは tag から SHA を引き直して両方を書き換える。
 
 ### 6. bwrap は固定パス `/usr/bin/bwrap` で呼ぶ
 
