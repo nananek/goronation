@@ -67,7 +67,7 @@ plan 6.1 は、走査から `testdata` / `vendor` / `.` または `_` で始ま�
 
 - リポジトリ内の import path が、走査しないディレクトリの名前のセグメントを含んだら違反にする (規則 `unscanned-dir-import`)。
 - 走査対象のツリー内のディレクトリの symlink は、辿らずに error にする (fail-closed)。走査しないディレクトリの名前の symlink は、実体のディレクトリと同じく走査せず、その import を上の規則が違反にする。
-- 同じ考え方で、archtest が見えないコードを取り込める経路 (.go 以外のソース、`replace`、`go.work` の `use`、`//go:linkname`、`vendor/modules.txt`) も、あるだけで禁止する (一覧は package doc)。
+- 同じ考え方で、archtest が見えないコードを取り込める経路 (.go 以外のソース、`replace`、走査できないディレクトリを指す `go.work` の `use`、`//go:linkname`、`vendor/modules.txt`) も、あるだけで禁止する (一覧は package doc)。
 
 理由: go tool の `./...` は、除外ディレクトリも symlink のディレクトリも列挙しない。しかし、明示的に import されれば、そこにある package を build する。plan のまま黙って無視すると、それらが規則の抜け道になる。実測 (`core` から import すると、`go build` が通り、`go list -deps` で `os/exec` に依存し、変更前の archtest は緑のままだった): `core/_hidden`、`core/.hidden`、`core/testdata`、`core/vendor`、`sandbox/` 配下へのディレクトリ symlink (`core/runner`)。変更後は、5 つとも archtest が赤になる。symlink の `.go` を link の位置で検査する (決定 4) のと同じ考え方である。
 
