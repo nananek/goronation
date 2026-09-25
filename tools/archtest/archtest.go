@@ -100,11 +100,14 @@ type Func struct {
 	Name string
 }
 
-// CallRule は「Funcs の参照は OnlyIn に合うファイルだけ」という規則。
+// CallRule は「Funcs の参照と、Methods の名前のセレクタは、OnlyIn に合うファイルだけ」という規則。
 type CallRule struct {
-	ID     string
-	Funcs  []Func
-	OnlyIn []string // repo 相対のファイル path のパターン
+	ID    string
+	Funcs []Func
+	// Methods は、メソッド名。型情報が無い (構文解析だけ) ので、x.Name のセレクタを、x の型によらず名前だけで
+	// 検出する。同名の無関係なメソッドや、フィールドも検出する (誤検出側に倒す = fail-closed)。
+	Methods []string
+	OnlyIn  []string // repo 相対のファイル path のパターン
 }
 
 // Rules は規則の表。
@@ -304,6 +307,7 @@ func (c *checker) checkGo(file, rel string) error {
 	for _, r := range c.rules.Calls {
 		if !matchAny(r.OnlyIn, rel) {
 			c.checkCalls(rel, f, r)
+			c.checkMethods(rel, f, r)
 		}
 	}
 	return nil
@@ -377,6 +381,23 @@ func (c *checker) checkCalls(rel string, f *ast.File, r CallRule) {
 				c.add(rel, line, r.ID, unless(ipath+"."+fn.Name, r.OnlyIn))
 			}
 		}
+		return true
+	})
+}
+
+// checkMethods は、r.Methods の名前のセレクタ (x.UnsafePointer、reflect.Value.UnsafePointer など) を検出する。
+// x の型は見ない (型情報が無い) ので、同名の無関係なメソッドやフィールドも検出する (誤検出側に倒す = fail-closed)。
+func (c *checker) checkMethods(rel string, f *ast.File, r CallRule) {
+	if len(r.Methods) == 0 {
+		return
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok || !slices.Contains(r.Methods, sel.Sel.Name) {
+			return true
+		}
+		line := c.fset.Position(sel.Sel.Pos()).Line
+		c.add(rel, line, r.ID, unless("メソッド "+sel.Sel.Name+" (レシーバの型によらず、名前だけで検出する)", r.OnlyIn))
 		return true
 	})
 }

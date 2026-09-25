@@ -47,6 +47,11 @@ var DefaultRules = Rules{
 		// 自作する)。.s も .c も linkname も表の関数の呼び出しも要らない。os/exec と同じ場所にだけ許す。
 		{ID: "unsafe-import", Imports: []string{"unsafe"}, OnlyIn: execAllowed},
 
+		// debug/gosym は、実行中のバイナリの pclntab から、関数 (exec-call の表の syscall.Syscall など) の
+		// アドレスを引ける。reflect-unsafe と組み合わせると、表に無い名前で、表の関数をアドレスで呼べる。
+		// os/exec と同じ場所にだけ許す。
+		{ID: "gosym-import", Imports: []string{"debug/gosym"}, OnlyIn: execAllowed},
+
 		// 実装の配線 (build tag) は cmd/** だけが行う。
 		{
 			ID:      "impl-only-from-cmd",
@@ -98,6 +103,17 @@ var DefaultRules = Rules{
 				{Pkg: "golang.org/x/sys/unix", Name: "Mprotect"},
 			},
 			OnlyIn: execAllowed,
+		},
+
+		// reflect は、unsafe を import せずに、unsafe.Pointer を得て (UnsafePointer・UnsafeAddr)、任意のアドレスを
+		// 書き換える (NewAt・SetPointer) 入口になる。unsafe-import と同じ理由で、os/exec と同じ場所にだけ許す。
+		// メソッドは、構文解析だけで型情報が無いので、レシーバの型によらず名前だけで検出する。reflect と無関係な
+		// 同名のメソッドやフィールドも検出する (誤検出。fail-closed 側で許容する。fixture reflect-unsafe の homonym.go)。
+		{
+			ID:      "reflect-unsafe",
+			Funcs:   []Func{{Pkg: "reflect", Name: "NewAt"}},
+			Methods: []string{"UnsafePointer", "UnsafeAddr", "SetPointer"},
+			OnlyIn:  execAllowed,
 		},
 	},
 }

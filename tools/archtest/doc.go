@@ -13,6 +13,9 @@
 //     参照も、同じ場所だけ。
 //   - cgo・plugin: import "C" と "plugin" は、全面禁止。
 //   - unsafe-import: unsafe の import は、sandbox/** と cmd/** だけ (実行可能メモリに書いた機械語を、関数として呼べるため)。
+//   - gosym-import: debug/gosym の import は、sandbox/** と cmd/** だけ (実行中のバイナリの pclntab から、関数のアドレスを引けるため)。
+//   - reflect-unsafe: reflect.NewAt と、メソッド UnsafePointer・UnsafeAddr・SetPointer は、同じ場所だけ (unsafe を import せずに、
+//     unsafe.Pointer を得て、任意のアドレスへ書き込める入口)。メソッドは型情報が無いので、名前だけで検出し、同名の無関係なものも検出する。
 //   - dep-core・dep-agent-sandbox・impl-only-from-cmd: 依存方向。
 //
 // 検査器 (archtest.go) に組み込んだもの。許可される場所は無く、理由は各規則 ID の定数のコメントに書く:

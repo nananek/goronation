@@ -192,6 +192,31 @@ func TestFixtures(t *testing.T) {
 			"core/dot.go:3: unsafe-import",
 			"core/plain.go:3: unsafe-import",
 		}},
+		// debug/gosym は、実行中のバイナリの pclntab から、関数 (表の syscall.Syscall など) のアドレスを引ける。
+		// reflect.NewAt と、unsafe.Pointer を返す・受け取るメソッド (UnsafePointer・UnsafeAddr・SetPointer) を
+		// 組み合わせると、unsafe を import せずに、アドレスで関数を呼べる。os/exec と同じ場所にだけ許す。
+		// 別名・blank・dot の import も検出する。sandbox と cmd/goro は許可の対照。control.go は対照 (debug/elf)。
+		{"gosym-import", 7, []string{
+			"core/alias.go:3: gosym-import",
+			"core/blank.go:3: gosym-import",
+			"core/dot.go:3: gosym-import",
+			"core/plain.go:3: gosym-import",
+		}},
+		// reflect.NewAt (別名・dot import も) と、メソッド UnsafePointer・UnsafeAddr・SetPointer は、
+		// unsafe を import せずに unsafe.Pointer を得て、任意のアドレスへ書き込める入口。os/exec と同じ場所にだけ許す。
+		// メソッドは型情報が無いので、レシーバの型によらず、名前だけで検出する。
+		// homonym.go は、reflect と無関係な同名のメソッドも検出する (誤検出。fail-closed 側で許容する) ことの確認。
+		// control.go は対照 (reflect の unsafe を得ない API、名前が似ているだけのもの)。sandbox と cmd/goro は許可の対照。
+		{"reflect-unsafe", 8, []string{
+			"core/alias.go:5: reflect-unsafe",
+			"core/dot.go:3: reflect-unsafe",
+			"core/homonym.go:8: reflect-unsafe",
+			"core/methods.go:6: reflect-unsafe",
+			"core/methods.go:7: reflect-unsafe",
+			"core/methods.go:8: reflect-unsafe",
+			"core/methods.go:9: reflect-unsafe",
+			"core/newat.go:5: reflect-unsafe",
+		}},
 		// vendor/modules.txt があると、go は vendor の中の外部 module を build する (ネットワークも go.sum も要らない)。
 		// archtest は vendor を走査しないので、vendor/example.com/evil の os/exec を、core が使える。
 		// 走査しない vendor (modules.txt の無い、unscanned-import や empty の vendor) は、これまでどおり違反にしない。
@@ -318,6 +343,22 @@ func TestGoldenOutput(t *testing.T) {
 			`core/blank.go:3: unsafe-import: import "unsafe" は sandbox/**, cmd/** 以外では使えない`,
 			`core/dot.go:3: unsafe-import: import "unsafe" は sandbox/**, cmd/** 以外では使えない`,
 			`core/plain.go:3: unsafe-import: import "unsafe" は sandbox/**, cmd/** 以外では使えない`,
+		}},
+		{"gosym-import", []string{
+			`core/alias.go:3: gosym-import: import "debug/gosym" は sandbox/**, cmd/** 以外では使えない`,
+			`core/blank.go:3: gosym-import: import "debug/gosym" は sandbox/**, cmd/** 以外では使えない`,
+			`core/dot.go:3: gosym-import: import "debug/gosym" は sandbox/**, cmd/** 以外では使えない`,
+			`core/plain.go:3: gosym-import: import "debug/gosym" は sandbox/**, cmd/** 以外では使えない`,
+		}},
+		{"reflect-unsafe", []string{
+			`core/alias.go:5: reflect-unsafe: reflect.NewAt は sandbox/**, cmd/** 以外では使えない`,
+			`core/dot.go:3: reflect-unsafe: import . "reflect" は呼び出しを判定できないため、sandbox/**, cmd/** 以外では使えない`,
+			`core/homonym.go:8: reflect-unsafe: メソッド UnsafePointer (レシーバの型によらず、名前だけで検出する) は sandbox/**, cmd/** 以外では使えない`,
+			`core/methods.go:6: reflect-unsafe: メソッド UnsafePointer (レシーバの型によらず、名前だけで検出する) は sandbox/**, cmd/** 以外では使えない`,
+			`core/methods.go:7: reflect-unsafe: メソッド UnsafeAddr (レシーバの型によらず、名前だけで検出する) は sandbox/**, cmd/** 以外では使えない`,
+			`core/methods.go:8: reflect-unsafe: メソッド SetPointer (レシーバの型によらず、名前だけで検出する) は sandbox/**, cmd/** 以外では使えない`,
+			`core/methods.go:9: reflect-unsafe: メソッド UnsafePointer (レシーバの型によらず、名前だけで検出する) は sandbox/**, cmd/** 以外では使えない`,
+			`core/newat.go:5: reflect-unsafe: reflect.NewAt は sandbox/**, cmd/** 以外では使えない`,
 		}},
 		{"vendor-mode", []string{
 			`core/vendor/modules.txt:1: vendor-mode: vendor/modules.txt がある (go は vendor から外部 module を build するが、archtest は vendor を走査しない) ため、全面禁止`,
