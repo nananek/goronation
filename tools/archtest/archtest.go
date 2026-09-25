@@ -43,6 +43,11 @@ var nonGoSourceExts = []string{
 // 許可される場所は無い。
 const ruleReplace = "replace"
 
+// ruleGoWorkUse は、go.work の use の規則 ID。use は、リポジトリの root の内側で、走査しない
+// ディレクトリを含まず、go.mod を持つディレクトリだけを許す。use ./core/_evil で、走査しない
+// module を取り込めるため。root の外や、go.mod が無いものも、見えない (検査していない) ので許さない。
+const ruleGoWorkUse = "go-work-use"
+
 // Violation は規則違反 1 件。
 type Violation struct {
 	Path   string // repo 相対、"/" 区切り
@@ -122,7 +127,7 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 		return nil, 0, fmt.Errorf("%s はディレクトリではない", root)
 	}
 
-	c := &checker{rules: rules, fset: token.NewFileSet()}
+	c := &checker{root: root, rules: rules, fset: token.NewFileSet()}
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -197,6 +202,7 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 }
 
 type checker struct {
+	root       string
 	rules      Rules
 	fset       *token.FileSet
 	scanned    int
@@ -370,8 +376,9 @@ func (c *checker) checkGoMod(file, rel string) error {
 	return nil
 }
 
-// checkGoWork は、go.work の replace を違反にする。go の directive (go / toolchain / godebug /
-// use / replace) 以外は、go も受け付けないため、error にする。
+// checkGoWork は、go.work の replace と、使えない use を違反にする。go の directive (go / toolchain /
+// godebug / use / replace) 以外は、go も受け付けないため、error にする。
+// use の path は、その go.work のあるディレクトリからの相対で解決する (入れ子の go.work も検査する)。
 func (c *checker) checkGoWork(file, rel string) error {
 	stmts, err := readModFile(file, rel)
 	if err != nil {
@@ -379,11 +386,48 @@ func (c *checker) checkGoWork(file, rel string) error {
 	}
 	c.checkReplace(rel, stmts)
 	for _, s := range stmts {
-		if !slices.Contains([]string{"go", "toolchain", "godebug", "use", "replace"}, s.Verb) {
+		switch s.Verb {
+		case "go", "toolchain", "godebug", "replace":
+		case "use":
+			if len(s.Args) != 1 {
+				return fmt.Errorf("%s:%d: go.work の use の引数が 1 つではない", rel, s.Line)
+			}
+			if why := c.unusable(filepath.Dir(file), s.Args[0]); why != "" {
+				c.add(rel, s.Line, ruleGoWorkUse, fmt.Sprintf("use %q は、%s", s.Args[0], why))
+			}
+		default:
 			return fmt.Errorf("%s:%d: go.work の directive %q を解釈できない", rel, s.Line, s.Verb)
 		}
 	}
 	return nil
+}
+
+// unusable は、go.work の use が指すディレクトリ (dir からの相対、または絶対) を使えない理由を返す。
+// 使えるなら空。".." は、先に字句的に畳んでから判定する (./core/../../x を、core の中と誤らない)。
+func (c *checker) unusable(dir, use string) string {
+	target := use
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(dir, target)
+	}
+	sub, err := filepath.Rel(c.root, filepath.Clean(target))
+	if err != nil {
+		return "リポジトリの root の外を指す"
+	}
+	sub = filepath.ToSlash(sub)
+	if sub == ".." || strings.HasPrefix(sub, "../") {
+		return "リポジトリの root の外を指す"
+	}
+	if sub != "." {
+		for _, seg := range strings.Split(sub, "/") {
+			if skipDir(seg) {
+				return fmt.Sprintf("走査しないディレクトリ %q を含む", seg)
+			}
+		}
+	}
+	if info, err := os.Stat(filepath.Join(target, "go.mod")); err != nil || !info.Mode().IsRegular() {
+		return "go.mod を持つディレクトリではない"
+	}
+	return ""
 }
 
 // unless は「patterns 以外では使えない」旨の detail を作る。patterns が空なら全面禁止。

@@ -122,6 +122,21 @@ func TestFixtures(t *testing.T) {
 			"sandbox/go.mod:6: replace",
 			"sandbox/go.mod:7: replace",
 		}},
+		// go.work の use は、リポジトリの root の内側で、走査しないディレクトリを含まず、go.mod を持つ
+		// ディレクトリだけを許す。use ./core/_evil で、走査しない module を取り込めるため。
+		// go.work は入れ子でも、そのファイルのあるディレクトリからの相対で検査する (core/go.work)。
+		// 4・5 行目 (./core ./sandbox) と、14 行目 (Clean すると sandbox) は、許可の対照。
+		{"go-work-use", 3, []string{
+			"core/go.work:4: go-work-use",
+			"go.work:6: go-work-use",
+			"go.work:7: go-work-use",
+			"go.work:8: go-work-use",
+			"go.work:9: go-work-use",
+			"go.work:10: go-work-use",
+			"go.work:11: go-work-use",
+			"go.work:15: go-work-use",
+			"go.work:16: go-work-use",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -185,6 +200,17 @@ func TestGoldenOutput(t *testing.T) {
 			`go.work:8: replace: replace は全面禁止 (archtest が走査しないコードを、別の module path で取り込めるため)`,
 			`sandbox/go.mod:6: replace: replace は全面禁止 (archtest が走査しないコードを、別の module path で取り込めるため)`,
 			`sandbox/go.mod:7: replace: replace は全面禁止 (archtest が走査しないコードを、別の module path で取り込めるため)`,
+		}},
+		{"go-work-use", []string{
+			`core/go.work:4: go-work-use: use "../missing" は、go.mod を持つディレクトリではない`,
+			`go.work:6: go-work-use: use "./missing" は、go.mod を持つディレクトリではない`,
+			`go.work:7: go-work-use: use "./nomod" は、go.mod を持つディレクトリではない`,
+			`go.work:8: go-work-use: use "./core/_evil" は、走査しないディレクトリ "_evil" を含む`,
+			`go.work:9: go-work-use: use "../outside" は、リポジトリの root の外を指す`,
+			`go.work:10: go-work-use: use "/no/such/abs" は、リポジトリの root の外を指す`,
+			`go.work:11: go-work-use: use "." は、go.mod を持つディレクトリではない`,
+			`go.work:15: go-work-use: use "./core/../../outside" は、リポジトリの root の外を指す`,
+			`go.work:16: go-work-use: use "./vendor/m" は、走査しないディレクトリ "vendor" を含む`,
 		}},
 	}
 	for _, tc := range cases {
@@ -304,6 +330,8 @@ func TestBadModFileIsError(t *testing.T) {
 		{"go.mod の括弧が閉じていない", "core/go.mod", "module github.com/nananek/goronation/core\n\nrequire (\n\ta v1.0.0\n"},
 		{"go.work の括弧が閉じていない", "go.work", "go 1.24.0\n\nuse (\n\t./core\n"},
 		{"go.work の未知の directive", "go.work", "go 1.24.0\n\nfrobnicate ./core\n"},
+		{"go.work の use の引数が 2 つ", "go.work", "go 1.24.0\n\nuse ./core ./sandbox\n"},
+		{"go.work の use の引数が無い", "go.work", "go 1.24.0\n\nuse\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
