@@ -60,7 +60,7 @@ CI は同じ `make check` を 2 つの leg で回し、環境だけを変えま�
 - bwrap / seatbelt / エージェントの実装を import してよいのは `cmd/**` だけ。
 - 各 `go.mod` の module path が規約どおりであること。
 
-**限界**: 静的検査なので、`//go:linkname`、`reflect`、生の `syscall.Syscall(SYS_EXECVE, ...)` などで回避できます。強制の主体は設計ルールとレビューであり、このテストは **事故防止** です。悪意ある実装への防壁ではありません。詳細は [ADR 0001](docs/adr/0001-repository-layout.md) を参照してください。
+**限界**: 静的検査なので、`//go:linkname`、`reflect`、生の `syscall.Syscall(SYS_EXECVE, ...)` などで回避できます。走査しないディレクトリ (`testdata`・`vendor`・`.` や `_` で始まるもの・symlink のディレクトリ) に置いたコードも、明示的に import されれば検出できません。強制の主体は設計ルールとレビューであり、このテストは **事故防止** です。悪意ある実装への防壁ではありません。詳細は [ADR 0001](docs/adr/0001-repository-layout.md) を参照してください。
 
 ## ADR
 
