@@ -48,6 +48,12 @@ const ruleReplace = "replace"
 // module を取り込めるため。root の外や、go.mod が無いものも、見えない (検査していない) ので許さない。
 const ruleGoWorkUse = "go-work-use"
 
+// ruleNestedGoWork は、repo の root 直下 (go.work) 以外の go.work の規則 ID。go は、cwd から上に向かって
+// 最も近い go.work で module を解決する。make と go test の cwd は module の dir とパッケージの dir なので、
+// 入れ子の go.work は、workspace を丸ごと差し替えられる (tools/archtest/go.work で、TestRepository の root を
+// tools/archtest にすり替えられた)。許可される場所は無い。
+const ruleNestedGoWork = "nested-go-work"
+
 // ruleLinkname は、//go:linkname の規則 ID。linkname は、名前を変えて他の package の関数を参照でき、
 // セレクタ (os.StartProcess など) で照合する exec-call をすり抜ける。Go 1.24 のリンカは、標準ライブラリの
 // 公開していない参照を既定で拒否する (link: invalid reference) が、-checklinkname=0 で回避できる。
@@ -422,10 +428,13 @@ func (c *checker) checkGoMod(file, rel string) error {
 	return nil
 }
 
-// checkGoWork は、go.work の replace と、使えない use を違反にする。go の directive (go / toolchain /
-// godebug / use / replace) 以外は、go も受け付けないため、error にする。
+// checkGoWork は、root 直下以外の go.work と、go.work の replace と、使えない use を違反にする。
+// go の directive (go / toolchain / godebug / use / replace) 以外は、go も受け付けないため、error にする。
 // use の path は、その go.work のあるディレクトリからの相対で解決する (入れ子の go.work も検査する)。
 func (c *checker) checkGoWork(file, rel string) error {
+	if rel != "go.work" {
+		c.add(rel, 1, ruleNestedGoWork, "入れ子の go.work は、workspace を丸ごと差し替えられる (go は cwd に最も近い go.work を使う) ため、全面禁止")
+	}
 	stmts, err := readModFile(file, rel)
 	if err != nil {
 		return err

@@ -140,7 +140,9 @@ func TestFixtures(t *testing.T) {
 		// ディレクトリだけを許す。use ./core/_evil で、走査しない module を取り込めるため。
 		// go.work は入れ子でも、そのファイルのあるディレクトリからの相対で検査する (core/go.work)。
 		// 4・5 行目 (./core ./sandbox) と、14 行目 (Clean すると sandbox) は、許可の対照。
+		// core/go.work は、入れ子なので nested-go-work の違反にもなる。
 		{"go-work-use", 3, []string{
+			"core/go.work:1: nested-go-work",
 			"core/go.work:4: go-work-use",
 			"go.work:6: go-work-use",
 			"go.work:7: go-work-use",
@@ -150,6 +152,14 @@ func TestFixtures(t *testing.T) {
 			"go.work:11: go-work-use",
 			"go.work:15: go-work-use",
 			"go.work:16: go-work-use",
+		}},
+		// go は、cwd から上に向かって最も近い go.work で module を解決する。make と go test の cwd は module と
+		// パッケージの dir なので、入れ子の go.work は workspace を丸ごと差し替えられる (tools/archtest/go.work で、
+		// TestRepository の root をすり替えられた)。root 直下の go.work だけを許し、入れ子は全面禁止。
+		// root 直下の go.work は、許可の対照。
+		{"nested-go-work", 3, []string{
+			"sandbox/go.work:1: nested-go-work",
+			"tools/archtest/go.work:1: nested-go-work",
 		}},
 		// //go:linkname は、名前を変えて表の関数 (os.StartProcess など) を参照でき、セレクタの検出をすり抜ける。
 		// 位置を問わず (字下げも) 違反にする。control.go は対照 (空白入り・ブロックコメント・文字列の中)。
@@ -255,6 +265,7 @@ func TestGoldenOutput(t *testing.T) {
 			`sandbox/go.mod:7: replace: replace は全面禁止 (archtest が走査しないコードを、別の module path で取り込めるため)`,
 		}},
 		{"go-work-use", []string{
+			`core/go.work:1: nested-go-work: 入れ子の go.work は、workspace を丸ごと差し替えられる (go は cwd に最も近い go.work を使う) ため、全面禁止`,
 			`core/go.work:4: go-work-use: use "../missing" は、go.mod を持つディレクトリではない`,
 			`go.work:6: go-work-use: use "./missing" は、go.mod を持つディレクトリではない`,
 			`go.work:7: go-work-use: use "./nomod" は、go.mod を持つディレクトリではない`,
@@ -264,6 +275,10 @@ func TestGoldenOutput(t *testing.T) {
 			`go.work:11: go-work-use: use "." は、go.mod を持つディレクトリではない`,
 			`go.work:15: go-work-use: use "./core/../../outside" は、リポジトリの root の外を指す`,
 			`go.work:16: go-work-use: use "./vendor/m" は、走査しないディレクトリ "vendor" を含む`,
+		}},
+		{"nested-go-work", []string{
+			`sandbox/go.work:1: nested-go-work: 入れ子の go.work は、workspace を丸ごと差し替えられる (go は cwd に最も近い go.work を使う) ため、全面禁止`,
+			`tools/archtest/go.work:1: nested-go-work: 入れ子の go.work は、workspace を丸ごと差し替えられる (go は cwd に最も近い go.work を使う) ため、全面禁止`,
 		}},
 		{"linkname", []string{
 			`egress/indented.go:4: linkname: //go:linkname は全面禁止 (名前を変えて、表の関数を参照できるため)`,
@@ -441,6 +456,28 @@ func TestSymlinkGoWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := []string{"go.work:3: replace"}; !slices.Equal(keys(vs), want) {
+		t.Errorf("violations=%v (want %v)", keys(vs), want)
+	}
+}
+
+// TestNestedGoWorkSymlink は、symlink の go.work も、link の位置で入れ子かどうかを判定することを確認する
+// (go は symlink の go.work をそのまま読む)。root 直下の symlink は、入れ子ではない。
+func TestNestedGoWorkSymlink(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "root")
+	writeTree(t, tmp, map[string]string{
+		"root/core/doc.go": "package core\n",
+		"root/core/go.mod": "module github.com/nananek/goronation/core\n",
+		"outside/go.work":  "go 1.24.0\n",
+	})
+	if err := os.Symlink(filepath.Join(tmp, "outside", "go.work"), filepath.Join(root, "core", "go.work")); err != nil {
+		t.Skipf("symlink を作れない: %v", err)
+	}
+	vs, _, err := Check(root, DefaultRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"core/go.work:1: nested-go-work"}; !slices.Equal(keys(vs), want) {
 		t.Errorf("violations=%v (want %v)", keys(vs), want)
 	}
 }

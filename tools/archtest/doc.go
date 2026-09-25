@@ -20,6 +20,7 @@
 //   - non-go-source: Go が build に使う、.go 以外のソース (.s・.c・.h など)。
 //   - replace: go.mod / go.work の replace。
 //   - go-work-use: root の外・走査しないディレクトリ・go.mod の無いディレクトリを指す、go.work の use。
+//   - nested-go-work: root 直下以外の go.work。
 //   - linkname: //go:linkname。
 //   - vendor-mode: vendor/modules.txt。
 //
