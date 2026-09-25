@@ -35,7 +35,7 @@ main を base とする PR は、同じ repo の `develop` を head とするも
 - required check (develop と main の両方の ruleset): `ci.yml` の job `base` と `bwrap` を登録する。`ci.yml` の `pull_request` には `branches` の指定が無く、base ブランチを限定しない。
 - required check (main を対象とする設定にだけ): job 名 `only-from-develop` を登録する。`main-source-guard` は base が main の PR でしか動かないので、develop には登録しない (下の pending を参照)。
 - workflow が skip される (起動しない) と、その required check は pending のままになり、merge が塞がれる (docs の Troubleshooting required status checks の「Handling skipped but required checks」による)。そのため、登録は、対象の workflow (`ci.yml`、`main-source-guard`) が develop に入ってから行う。
-- required check は workflow を区別しない (docs の Troubleshooting rules の「Troubleshooting required status checks」は「workflow、matrix、event の種類を考慮しない」と述べる)。登録する job 名を、他の workflow で使わない。
+- required check は workflow を区別しない (docs の Troubleshooting rules の「Troubleshooting required status checks」は「workflow、matrix、event の種類を考慮しない」と述べる)。登録する job 名を、他の workflow で使わない。expected source (更新を受け付ける app) は GitHub Actions に固定する (docs の Available rules for rulesets は、rule を追加するとき app を選べると述べる。選択肢に GitHub Actions が出ることは未検証)。
 - 既定ブランチは `develop` とする (設定済み)。guard は既定ブランチの定義で動くので、guard が develop に入った時点で有効になり、最初の develop から main への PR も検査される。
 
 ## 帰結
