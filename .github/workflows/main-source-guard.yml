@@ -1,0 +1,36 @@
+# main への PR は、この repo の develop からのものだけを許す。
+#
+# pull_request_target を使う理由: main 向けの PR の中身で、その PR に対する検査を書き換えられないため (ADR 0002)。
+# checkout しない理由: pull_request_target のジョブは、GITHUB_TOKEN と secrets を使える。docs は、
+#   この trigger で信頼できない PR のコードを取得・実行すべきでないと述べている
+#   (Securely using pull_request_target)。permissions も空にしている。
+# head の情報を env 経由で渡す理由: ブランチ名は PR の作成者が決める。
+#   run に直接展開すると、ブランチ名でシェルにコマンドを注入されうる。
+name: main-source-guard
+
+on:
+  pull_request_target:
+    branches: [main]
+    # edited を含める理由と、実機で未検証の点は ADR 0002 を参照。
+    types: [opened, reopened, synchronize, edited]
+
+permissions: {}
+
+jobs:
+  # job 名 only-from-develop は、required check 名として固定する。変えると保守者の設定と食い違う。
+  only-from-develop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: head が同一 repo の develop であることを確認する
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" = "$THIS_REPO" ] && [ "$HEAD_REF" = "develop" ]; then
+            echo "OK: develop からの PR です。"
+            exit 0
+          fi
+          echo "エラー: main への PR は、この repo の develop からのものだけを許します (head: ${HEAD_REPO}:${HEAD_REF})。" >&2
+          exit 1
