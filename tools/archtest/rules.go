@@ -65,7 +65,8 @@ var DefaultRules = Rules{
 	},
 
 	Calls: []CallRule{
-		// I1: プロセス起動の関数。import 別名は解決して判定する。
+		// I1: プロセス起動の関数と、生 syscall (execve を番号で直接呼べる)。
+		// import 別名は解決して判定する。
 		{
 			ID: "exec-call",
 			Funcs: []Func{
@@ -73,8 +74,16 @@ var DefaultRules = Rules{
 				{Pkg: "syscall", Name: "Exec"},
 				{Pkg: "syscall", Name: "ForkExec"},
 				{Pkg: "syscall", Name: "StartProcess"},
+				{Pkg: "syscall", Name: "Syscall"},
+				{Pkg: "syscall", Name: "Syscall6"},
+				{Pkg: "syscall", Name: "RawSyscall"},
+				{Pkg: "syscall", Name: "RawSyscall6"},
 				{Pkg: "golang.org/x/sys/unix", Name: "Exec"},
 				{Pkg: "golang.org/x/sys/unix", Name: "ForkExec"},
+				{Pkg: "golang.org/x/sys/unix", Name: "Syscall"},
+				{Pkg: "golang.org/x/sys/unix", Name: "Syscall6"},
+				{Pkg: "golang.org/x/sys/unix", Name: "RawSyscall"},
+				{Pkg: "golang.org/x/sys/unix", Name: "RawSyscall6"},
 			},
 			OnlyIn: execAllowed,
 		},

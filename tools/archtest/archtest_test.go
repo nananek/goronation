@@ -66,10 +66,20 @@ func TestFixtures(t *testing.T) {
 		{"exec-prefix", 2, []string{
 			"sandboxx/x.go:3: exec-import",
 		}},
-		{"exec-call", 8, []string{
+		// raw.go は、生 syscall (execve を直接呼べる)。syscall と x/sys/unix の Syscall / Syscall6 /
+		// RawSyscall / RawSyscall6 を、それぞれ検出する。sandbox/raw_ok.go は許可の対照。
+		{"exec-call", 10, []string{
 			"egress/dot.go:3: exec-call",
 			"egress/os.go:6: exec-call",
 			"egress/paren.go:5: exec-call",
+			"egress/raw.go:10: exec-call",
+			"egress/raw.go:11: exec-call",
+			"egress/raw.go:12: exec-call",
+			"egress/raw.go:13: exec-call",
+			"egress/raw.go:14: exec-call",
+			"egress/raw.go:15: exec-call",
+			"egress/raw.go:16: exec-call",
+			"egress/raw.go:17: exec-call",
 			"egress/ref.go:5: exec-call",
 			"egress/sys.go:6: exec-call",
 			"egress/unix.go:6: exec-call",
@@ -198,6 +208,14 @@ func TestGoldenOutput(t *testing.T) {
 			`egress/dot.go:3: exec-call: import . "syscall" は呼び出しを判定できないため、sandbox/**, cmd/** 以外では使えない`,
 			`egress/os.go:6: exec-call: os.StartProcess は sandbox/**, cmd/** 以外では使えない`,
 			`egress/paren.go:5: exec-call: os.StartProcess は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:10: exec-call: syscall.Syscall は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:11: exec-call: syscall.Syscall6 は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:12: exec-call: syscall.RawSyscall は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:13: exec-call: syscall.RawSyscall6 は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:14: exec-call: golang.org/x/sys/unix.Syscall は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:15: exec-call: golang.org/x/sys/unix.Syscall6 は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:16: exec-call: golang.org/x/sys/unix.RawSyscall は sandbox/**, cmd/** 以外では使えない`,
+			`egress/raw.go:17: exec-call: golang.org/x/sys/unix.RawSyscall6 は sandbox/**, cmd/** 以外では使えない`,
 			`egress/ref.go:5: exec-call: syscall.ForkExec は sandbox/**, cmd/** 以外では使えない`,
 			`egress/sys.go:6: exec-call: syscall.Exec は sandbox/**, cmd/** 以外では使えない`,
 			`egress/unix.go:6: exec-call: golang.org/x/sys/unix.Exec は sandbox/**, cmd/** 以外では使えない`,
