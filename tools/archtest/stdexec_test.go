@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -36,7 +37,7 @@ func buildIgnored(f *ast.File) bool {
 
 // stdImports は、GOROOT/src の package (import path) ごとに、import する path の集合を返す。
 // 全ビルドタグ・_test.go 以外の全ファイルが対象 (archtest と同じ、os/exec は使わず go/parser で読む)。
-// cmd/ は import できないので除く。
+// cmd/ は import できないので除く。src/vendor (標準ライブラリが使う golang.org/x/...) は、中継として読む。
 func stdImports(src string) (map[string]map[string]bool, error) {
 	imports := map[string]map[string]bool{}
 	fset := token.NewFileSet()
@@ -50,7 +51,7 @@ func stdImports(src string) (map[string]map[string]bool, error) {
 		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel != "." && (skipDir(d.Name()) || rel == "cmd") {
+			if rel != "." && rel != "vendor" && (skipDir(d.Name()) || rel == "cmd") {
 				return filepath.SkipDir
 			}
 			return nil
@@ -111,6 +112,28 @@ func execDependents(imports map[string]map[string]bool) map[string]bool {
 		}
 	}
 	return deps
+}
+
+// TestStdImportsVendor は、GOROOT/src/vendor (標準ライブラリが使う golang.org/x/...) も走査し、
+// vendor の package を経由した os/exec への依存も数えることを確認する。走査しないと、標準ライブラリの
+// package が vendor の package 経由で os/exec に依存するようになっても、TestStdExecDependents は気づけない。
+func TestStdImportsVendor(t *testing.T) {
+	src := t.TempDir()
+	writeTree(t, src, map[string]string{
+		"os/exec/exec.go":            "package exec\n",
+		"vendor/golang.org/x/v/v.go": "package v\n\nimport _ \"os/exec\"\n",
+		"vendor/testdata/t/t.go":     "package t\n\nimport _ \"os/exec\"\n",
+		"p/p.go":                     "package p\n\nimport _ \"golang.org/x/v\"\n",
+		"q/q.go":                     "package q\n",
+	})
+	imports, err := stdImports(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := slices.Sorted(maps.Keys(execDependents(imports)))
+	if want := []string{"p", "vendor/golang.org/x/v"}; !slices.Equal(got, want) {
+		t.Errorf("os/exec に依存する package = %v, want %v", got, want)
+	}
 }
 
 // TestStdExecDependents は、標準ライブラリで os/exec に (推移的に) 依存する、import できる package が、
