@@ -1,0 +1,34 @@
+# main への PR は、この repo の develop からのものだけを許す。
+#
+# pull_request_target を使う理由: base 側 (main) の定義で動くため、
+#   PR 側から検査そのものを書き換えられない。
+# checkout しない理由: pull_request_target は書き込み権限のある文脈で動く。
+#   PR のコードを取得せず、信頼できないコードを持ち込まない。
+# head の情報を env 経由で渡す理由: ブランチ名は PR の作成者が決める。
+#   run に直接展開すると、ブランチ名でシェルにコマンドを注入されうる。
+name: main-source-guard
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+
+permissions: {}
+
+jobs:
+  only-from-develop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: head が同一 repo の develop であることを確認する
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" = "$THIS_REPO" ] && [ "$HEAD_REF" = "develop" ]; then
+            echo "OK: develop からの PR です。"
+            exit 0
+          fi
+          echo "エラー: main への PR は、この repo の develop からのものだけを許します (head: ${HEAD_REPO}:${HEAD_REF})。" >&2
+          exit 1
