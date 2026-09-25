@@ -20,6 +20,11 @@ const (
 	requireEnv = "GORO_REQUIRE_BWRAP"
 
 	smokeTimeout = 10 * time.Second
+
+	// waitDelay は、smokeTimeout で kill したあと、出力の pipe を待つ猶予。
+	// bwrap の子孫が pipe を握ったまま残ると、CombinedOutput はそれが閉じるまで
+	// 戻らず、timeout が実際には効かない (WaitDelay が無いと 10 秒が 30 秒になる)。
+	waitDelay = time.Second
 )
 
 // TestSmoke は、bwrap が起動して、檻の中で /bin/true を実行できることだけを確認する。
@@ -44,7 +49,9 @@ func TestSmoke(t *testing.T) {
 
 	// run は bwrap を実行し、出力を返す。timeout は使えないのではなく異常なので、常に fail にする。
 	run := func(args ...string) ([]byte, error) {
-		out, err := exec.CommandContext(ctx, bwrapPath, args...).CombinedOutput()
+		cmd := exec.CommandContext(ctx, bwrapPath, args...)
+		cmd.WaitDelay = waitDelay
+		out, err := cmd.CombinedOutput()
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			t.Fatalf("bwrap %v が %s で終わらない: %s", args, smokeTimeout, out)
 		}
