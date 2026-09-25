@@ -23,7 +23,7 @@ const (
 
 	// waitDelay は、smokeTimeout で kill したあと、出力の pipe を待つ猶予。
 	// bwrap の子孫が pipe を握ったまま残ると、CombinedOutput はそれが閉じるまで
-	// 戻らず、timeout が実際には効かない (WaitDelay が無いと 10 秒が 30 秒になる)。
+	// 戻らず、timeout が実際には効かない (WaitDelay が無いと、待ち時間に上限が無い)。
 	waitDelay = time.Second
 )
 
