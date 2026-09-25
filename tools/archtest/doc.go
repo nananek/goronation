@@ -37,7 +37,9 @@
 // vendor/modules.txt 1 つで、import も表の関数の参照も無しに、os/exec を使うコードを取り込める。
 // そのため、見えないコードを取り込める経路は、個別に検査せず、あるだけで禁止する (fail-closed)。
 // 同じ理由で、ディレクトリの symlink・解釈できない go.mod / go.work・構文解析できない .go は、
-// 黙って通さず error にする。
+// 黙って通さず error にする。名前が .go・go.mod・go.work で、通常のファイルではないもの (FIFO・デバイス・ソケット。
+// symlink の指す先も) も error にする (go は開いて読むが、writer が無いと止まるので、開かず、種別だけで判定する)。
+// vendor/modules.txt は、通常のファイルでなくても、あれば違反にする (go は開いて読む)。
 //
 // # 限界
 //

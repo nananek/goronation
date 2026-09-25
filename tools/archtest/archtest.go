@@ -132,6 +132,8 @@ type Rules struct {
 //
 // fail-closed: 走査した .go が 0 ファイルなら error を返す。構文解析できない .go や、
 // 読めないディレクトリ、辿れない symlink も error にする (見えないものを、違反なしとして扱わない)。
+// .go・go.mod・go.work の名前で、通常のファイルではないもの (FIFO・デバイス・ソケット。symlink の指す先を含む) も
+// error にする。go tool は開いて読むが、開くと writer が無いときに止まるため、開かず、種別だけで判定する。
 func Check(root string, rules Rules) (violations []Violation, scanned int, err error) {
 	violations, files, err := scan(root, rules)
 	return violations, len(files), err
@@ -191,15 +193,20 @@ func scan(root string, rules Rules) (violations []Violation, files []string, err
 				return fmt.Errorf("%s: ディレクトリの symlink は検査できない "+
 					"(go tool は明示的に import されると辿って build するため、辿らずに無視すると規則の抜け道になる。"+
 					"実体のディレクトリにする)", rel)
-			case !isModFile(d.Name()) && !strings.HasSuffix(d.Name(), ".go"):
+			case !isBuildInput(d.Name()):
 				return nil // build に使われない。壊れていてもよい
 			case err != nil:
 				return err
 			case !target.Mode().IsRegular():
-				return nil
+				return fmt.Errorf("%s: 通常のファイルではないもの (FIFO・デバイス・ソケットなど) を指す symlink は検査できない "+
+					"(go tool は開いて読み、build に使う。開くと writer が無いときに止まるため、開かずに error にする)", rel)
 			}
 		} else if !d.Type().IsRegular() {
-			return nil
+			if isBuildInput(d.Name()) {
+				return fmt.Errorf("%s: 通常のファイルではない (FIFO・デバイス・ソケットなど) ため検査できない "+
+					"(go tool は開いて読み、build に使う。開くと writer が無いときに止まるため、開かずに error にする)", rel)
+			}
+			return nil // build に使われない
 		}
 		switch {
 		case strings.HasSuffix(d.Name(), ".go"):
@@ -254,8 +261,10 @@ func (c *checker) checkVendorMode(p string) {
 	if filepath.Base(p) != "vendor" {
 		return
 	}
+	// go は、FIFO などの通常のファイルではないものでも、開いて modules.txt として読む。開かずに Stat だけで判定する。
+	// 無い (壊れた symlink を含む) か、ディレクトリ (go は読めずに失敗する) なら、vendor モードにならない。
 	modules := filepath.Join(p, "modules.txt")
-	if info, err := os.Stat(modules); err != nil || !info.Mode().IsRegular() {
+	if info, err := os.Stat(modules); err != nil || info.IsDir() {
 		return
 	}
 	rel, err := filepath.Rel(c.root, modules)
@@ -269,6 +278,12 @@ func (c *checker) checkVendorMode(p string) {
 // isModFile は、go が module の構成に使うファイルの名前か。
 func isModFile(name string) bool {
 	return name == "go.mod" || name == "go.work"
+}
+
+// isBuildInput は、go が開いて読み、build や module の解決に使うファイルの名前か (.go・go.mod・go.work)。
+// この名前で通常のファイルではないものは、黙って無視せず error にする。
+func isBuildInput(name string) bool {
+	return strings.HasSuffix(name, ".go") || isModFile(name)
 }
 
 func (c *checker) checkGo(file, rel string) error {
