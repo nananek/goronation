@@ -68,7 +68,7 @@ func TestFixtures(t *testing.T) {
 		}},
 		// raw.go は、生 syscall (execve を直接呼べる)。syscall と x/sys/unix の Syscall / Syscall6 /
 		// RawSyscall / RawSyscall6 と、syscall の AllThreadsSyscall / AllThreadsSyscall6 (linux) /
-		// Syscall9 (darwin・BSD) を、それぞれ検出する。sandbox/raw_ok.go は許可の対照。
+		// Syscall9 (darwin・BSD・linux/mips) を、それぞれ検出する。sandbox/raw_ok.go は許可の対照。
 		{"exec-call", 10, []string{
 			"egress/dot.go:3: exec-call",
 			"egress/os.go:6: exec-call",

@@ -39,8 +39,10 @@
 //   - 外部 module (require) のコードは走査しない。外部依存はいまは無く、go.mod / go.sum の変更はレビューで見る。
 //   - ツリーの外は見えない。環境変数 (GOFLAGS・GOWORK など) や、go の引数 (-overlay など) は、
 //     Makefile と CI の設定の変更として、レビューで見る。
-//   - 表に無い API は検出しない。x/sys/unix の生 syscall は Syscall / Syscall6 / RawSyscall / RawSyscall6 だけで、
-//     Syscall9 などは表に無い。標準ライブラリで os/exec に依存する package は、TestStdExecDependents が
-//     全数を確かめる (Go の更新で増えると、そのテストが赤になる)。
+//   - 表に無い API は検出しない。syscall の生 syscall は、Windows 以外の全 GOOS で、go doc syscall で数えた全部を
+//     表に持つ (Go 1.24 時点)。Windows 専用の API (CreateProcess・SyscallN、(*LazyProc).Call など。メソッドは
+//     照合できない) は、対応 OS (Linux・macOS) ではないため表に無い。x/sys/unix の生 syscall は
+//     Syscall / Syscall6 / RawSyscall / RawSyscall6 だけで、Syscall9 などは表に無い。標準ライブラリで os/exec に
+//     依存する package は、TestStdExecDependents が全数を確かめる (Go の更新で増えると、そのテストが赤になる)。
 //   - impl-only-from-cmd は、実装 package 自身の側の import も違反にする (docs/adr/0001 の帰結を参照)。
 package archtest

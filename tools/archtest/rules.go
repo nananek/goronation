@@ -80,7 +80,7 @@ var DefaultRules = Rules{
 				{Pkg: "syscall", Name: "RawSyscall6"},
 				{Pkg: "syscall", Name: "AllThreadsSyscall"}, // linux
 				{Pkg: "syscall", Name: "AllThreadsSyscall6"},
-				{Pkg: "syscall", Name: "Syscall9"}, // darwin・BSD
+				{Pkg: "syscall", Name: "Syscall9"}, // darwin・BSD・linux/mips
 				{Pkg: "golang.org/x/sys/unix", Name: "Exec"},
 				{Pkg: "golang.org/x/sys/unix", Name: "ForkExec"},
 				{Pkg: "golang.org/x/sys/unix", Name: "Syscall"},
