@@ -46,7 +46,7 @@ Issue #1 の構成図に無い `tools/archtest` module を追加する。検査�
 - **fail-closed**。root が見つからない、または走査した `.go` が 0 ファイルなら、テストは失敗する (空振りで緑にしない)。
 - `go.mod` の `module` 行が規約と一致することも検査する (`modpath`)。ずれると import 規則が黙って空振りするため。
 
-規則の一覧 (`exec-import` / `exec-call` / `cgo` / `dep-core` / `dep-agent-sandbox` / `impl-only-from-cmd` / `modpath` / `unscanned-dir-import`) のうち、表で持つものは `tools/archtest/rules.go` を正とする。`modpath` と `unscanned-dir-import` は、規則表ではなく検査器 (`tools/archtest/archtest.go`) に組み込んでいる。
+規則の一覧と説明は、`tools/archtest` の package doc と `rules.go` を正とする。
 
 ### 5. CI は同じ `make check` を 2 つの leg で回し、環境変数だけを変える
 
@@ -67,6 +67,7 @@ plan 6.1 は、走査から `testdata` / `vendor` / `.` または `_` で始ま�
 
 - リポジトリ内の import path が、走査しないディレクトリの名前のセグメントを含んだら違反にする (規則 `unscanned-dir-import`)。
 - 走査対象のツリー内のディレクトリの symlink は、辿らずに error にする (fail-closed)。走査しないディレクトリの名前の symlink は、実体のディレクトリと同じく走査せず、その import を上の規則が違反にする。
+- 同じ考え方で、archtest が見えないコードを取り込める経路 (.go 以外のソース、`replace`、`go.work` の `use`、`//go:linkname`、`vendor/modules.txt`) も、あるだけで禁止する (一覧は package doc)。
 
 理由: go tool の `./...` は、除外ディレクトリも symlink のディレクトリも列挙しない。しかし、明示的に import されれば、そこにある package を build する。plan のまま黙って無視すると、それらが規則の抜け道になる。実測 (`core` から import すると、`go build` が通り、`go list -deps` で `os/exec` に依存し、変更前の archtest は緑のままだった): `core/_hidden`、`core/.hidden`、`core/testdata`、`core/vendor`、`sandbox/` 配下へのディレクトリ symlink (`core/runner`)。変更後は、5 つとも archtest が赤になる。symlink の `.go` を link の位置で検査する (決定 4) のと同じ考え方である。
 
@@ -76,10 +77,8 @@ plan 6.1 は、走査から `testdata` / `vendor` / `.` または `_` で始ま�
 
 - 依存方向と I1 が、CI のテストで機械的に守られる。違反はビルドを落とす。
 - `go.mod` では依存方向が守れないため、archtest の規則表が唯一の防壁になる。規則表の変更は、レビューで特に注意して見る。
-- **既知の限界**: 静的検査なので、`//go:linkname`、`reflect`、生の `syscall.Syscall(SYS_EXECVE, ...)` などで回避できる。強制の主体は設計ルール 1 とレビューであり、このテストは **事故防止** である。悪意ある実装への防壁ではない。
+- **既知の限界**: 静的検査なので、このテストは **事故防止** である。悪意ある実装への防壁ではなく、強制の主体は設計ルール 1 とレビューである。個々の限界は `tools/archtest` の package doc に書く。
 - **既知の限界 (`impl-only-from-cmd`)**: 規則は plan の文言どおり「実装 package (`sandbox/bwrap/**` など) を import してよいのは `cmd/**` だけ」と置いている。そのため、実装 package 自身の側の import も違反になる (実測): 自 package 配下の `sandbox/bwrap/internal/*` の import、外部テストパッケージ (`package bwrap_test`) から `sandbox/bwrap` の import、`sandbox/conformance` から `sandbox/bwrap` の import。M0 の時点では該当するコードが無く、緑である。**M1 で実装 package が内部構造やテストを持った時点で、`tools/archtest/rules.go` の表の変更が要る** (自 package 配下と `sandbox/conformance` を許可に足す、など)。誤検出の側 (fail-closed) に倒れているので、いまは表を直さない。
-- **既知の限界 (規則表に無い起動 API)**: プロセス起動として検出するのは、`os/exec` の import と、`exec-call` の表にある関数 (`os.StartProcess` など) だけである。表に無い API は検出しない。実測: `net/http/cgi` は内部で `os/exec` を使って子プロセスを起動する (標準ライブラリの中の import なので `exec-import` の対象外) が、`core` から使っても、`go build` が通って `os/exec` に依存し、archtest は緑のままだった。`net/http/cgi` など、標準ライブラリの内部で子プロセスを起動する API は、未対応である。表に足せる (`rules.go`) が、網羅はできない。
-- **既知の限界 (`go.work` の `use` による、走査しないディレクトリの module)**: 決定 7 は、リポジトリ内の import path を見ている。`go.work` の `use` で走査しないディレクトリ (例: `core/_evil`) を module として取り込み、その `go.mod` に別の module path (例: `example.com/evil`) を付けると、その path はリポジトリ内の import path ではなく、中のコードも走査されない。実測: `core/_evil/evil.go` が `os/exec` を使い、`core` が `example.com/evil` を import しても、`go build` が通って `os/exec` に依存し、archtest は緑のままだった。`go.work` の変更として差分に現れるため、レビューで見る。閉じるなら、`go.work` の `use` を読み、走査しないディレクトリを指すものを違反にする、などが要る。
 - `-race` は cgo を要するため、ローカルに gcc が無いと `make test` が落ちる (Makefile のコメントに逃げ道を書く)。最終成果物は `CGO_ENABLED=0` でビルドする。
 - `sandbox/**` の許可範囲は Issue の文言どおりで広く、`sandbox/conformance` も含む。M1 で `bwrap` / `seatbelt` / `init` のみに絞れるか再検討する。
 - I1 の解釈は Issue #1 で未決である (入力が全てデーモン由来のものに限り、外部バイナリのホスト直実行を許すか)。この ADR は現行文言どおりの **厳格解釈** で規則を置く。解釈が緩和された場合は、ADR を書いて規則表を直す。

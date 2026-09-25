@@ -55,13 +55,13 @@ CI は同じ `make check` を 2 つの leg で回し、環境だけを変えま�
 `tools/archtest` は、Go のソースを構文解析して、次の規則を機械的に検査します (全ビルドタグ・全 `_test.go` が対象)。規則の表は `tools/archtest/rules.go` にあります。
 
 - `os/exec` (と、プロセス起動の呼び出し) を使ってよいのは `sandbox/**` と `cmd/**` だけ (不変条件 I1)。
-- `import "C"` は禁止 (単一バイナリ / `CGO_ENABLED=0`)。
+- `import "C"` と `plugin` は禁止 (単一バイナリ / `CGO_ENABLED=0`)。
 - `core` は他の module を import しない。`agent` と `sandbox` は互いに import しない。
 - bwrap / seatbelt / エージェントの実装を import してよいのは `cmd/**` だけ。
 - 各 `go.mod` の module path が規約どおりであること。
-- 走査しないディレクトリ (`testdata`・`vendor`・`.` や `_` で始まるもの) を import する、リポジトリ内の import path は禁止。ディレクトリの symlink はエラー (go tool は、明示的に import されるとこれらも build するため)。
+- archtest が見えないコードを取り込める経路は、あるだけで禁止: `.s` などの .go 以外のソース、`replace`、走査できないディレクトリを指す `go.work` の `use` と import、ディレクトリの symlink、`//go:linkname`、`vendor/modules.txt`。
 
-**限界**: 静的検査なので、`//go:linkname`、`reflect`、生の `syscall.Syscall(SYS_EXECVE, ...)` などで回避できます。規則表に無い起動 API (`net/http/cgi` など、標準ライブラリの内部で子プロセスを起動するもの) や、`go.work` の `use` で走査しないディレクトリの module を別の module path で取り込む迂回も、検出できません。強制の主体は設計ルールとレビューであり、このテストは **事故防止** です。悪意ある実装への防壁ではありません。詳細は [ADR 0001](docs/adr/0001-repository-layout.md) を参照してください。
+**限界**: 静的検査なので、このテストは **事故防止** です。悪意ある実装への防壁ではなく、強制の主体は設計ルールとレビューです。規則の一覧と個々の限界は `tools/archtest` の package doc に、判断の経緯は [ADR 0001](docs/adr/0001-repository-layout.md) にあります。
 
 ## ADR
 
