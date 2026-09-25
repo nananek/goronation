@@ -43,7 +43,7 @@ main を base とする PR は、同じ repo の `develop` を head とするも
 - GitHub には PR の取り込み元ブランチを制限する標準の設定が無いため、workflow による検査で代替する。
 - guard は `pull_request_target` で動くので、PR の head ではなく、リポジトリの**既定ブランチ**の workflow 定義が使われる (base ブランチの定義ではない。docs の Events that trigger workflows と、2025-12-08 から有効の changelog による: https://github.blog/changelog/2025-11-07-actions-pull_request_target-and-environment-branch-protections-changes/)。そのため、main 向けの PR の中身では、その PR に対する検査を書き換えられない。guard の定義は、develop に merge された内容で決まる。
 - guard 自身の変更を含む develop 向けの PR では、guard は動かない (base が main ではないため)。`.github/` の変更は、保守者が目で確認する。
-- `edited` を trigger に含めるのは、PR の base が後から main に変更された場合も検査するためである。docs の Webhook events and payloads は `edited` を「title か body の編集、または base ブランチの変更」と述べ、Events that trigger workflows は activity type の意味をそこに委ねている。ただし、base の変更でこの workflow が実際に起動し、`branches` が新しい base で評価されることは、実機で確かめておらず**未検証**である。起動しなくても、required check は pending のままになり、merge は塞がれる (決定 4 と同じ)。
+- `edited` を trigger に含めるのは、PR の base が後から main に変更された場合も検査するためである。docs の Webhook events and payloads は `edited` を「title か body の編集、または base ブランチの変更」と述べ、Events that trigger workflows は activity type の意味をそこに委ねている。ただし、base の変更でこの workflow が実際に起動し、`branches` が新しい base で評価されることは、実機で確かめておらず**未検証**である。起動しなくても、同名の成功の報告が無い限り、required check は pending のままで、merge は塞がれる (次の項も参照)。
 - guard は事故防止であり、悪意ある PR 作成者への防壁ではない。別の workflow が同名の job を success で報告した場合に required check が満たされうるかは、**未検証**である。
 - 反映の手間は、保守者が負う。
 
