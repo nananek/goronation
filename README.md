@@ -31,7 +31,7 @@ Go の multi-module workspace で、トップディレクトリ 1 つが 1 modul
 | `make check` | 下記をすべて実行する (CI が回すのはこれ) |
 | `make fmt-check` | `gofmt -l` の出力が空であること |
 | `make vet` | 全 module に `go vet ./...` |
-| `make test` | 全 module に `go test -race -count=1 ./...` |
+| `make test` | 全 module に `go test -race -count=1 ./...` (追加のフラグは `GO_TEST_EXTRA` で渡す) |
 | `make build` | `CGO_ENABLED=0` で `bin/goro` を作る (単一バイナリと cgo 禁止の裏取り) |
 | `make test-bwrap` | `GORO_REQUIRE_BWRAP=1` で `make test` を実行する |
 
@@ -39,7 +39,7 @@ workspace のルートでは `go build ./...` が使えません (`directory pre
 
 ## CI の leg
 
-CI は同じ `make check` を 2 つの leg で回し、環境だけを変えます。job 名 (`base` / `bwrap`) はブランチ保護の required check 名として固定です。
+CI は同じ `make check` を 2 つの leg で回し、環境だけを変えます。どちらも `GO_TEST_EXTRA=-v` を渡し、skip の理由と bwrap の版をログに出します (`go test` は `-v` が無いと出力しません)。job 名 (`base` / `bwrap`) はブランチ保護の required check 名として固定です。
 
 | leg | 環境 | 意味 |
 |---|---|---|

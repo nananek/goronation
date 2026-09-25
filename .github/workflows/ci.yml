@@ -1,0 +1,69 @@
+name: CI
+
+# job 名 (base / bwrap) は、ブランチ保護の required check 名として固定する。
+# 2 つの leg は同じ `make check` を回し、環境だけを変える。
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # skip の理由と bwrap の版を、ログに出す。
+  GO_TEST_EXTRA: -v
+
+jobs:
+  # 基盤なしの leg。bwrap が「無い」ことを保証して回す。
+  # bwrap を要するテストは skip される (理由がログに出る)。
+  base:
+    name: base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # TODO: 2 つの uses は commit SHA でピン留めする (sandbox 内で SHA を解決できず、tag 指定のまま)。
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache: false # 外部依存が無く、go.sum も無い
+      - name: bwrap が無いことを保証する
+        run: |
+          if dpkg -s bubblewrap >/dev/null 2>&1; then
+            sudo apt-get purge -y bubblewrap
+          fi
+          # `! test -e` は、bash -e では失敗しても止まらないため、`test ! -e` にする。
+          test ! -e /usr/bin/bwrap
+          echo "/usr/bin/bwrap は無い (base leg)"
+      - run: make check
+
+  # 実行層の leg。bwrap が使えなければ、skip ではなく fail する。
+  bwrap:
+    name: bwrap
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GORO_REQUIRE_BWRAP: "1"
+    steps:
+      # TODO: 2 つの uses は commit SHA でピン留めする (sandbox 内で SHA を解決できず、tag 指定のまま)。
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache: false # 外部依存が無く、go.sum も無い
+      - name: bubblewrap を入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          /usr/bin/bwrap --version
+      # ubuntu-24.04 は unprivileged user namespace を AppArmor が制限し、
+      # bwrap が "setting up uid map: Permission denied" で落ちることがある (未検証。ADR 0001)。
+      - name: unprivileged user namespace の制限を外す
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: make check

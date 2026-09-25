@@ -51,7 +51,9 @@ Issue #1 の構成図に無い `tools/archtest` module を追加する。検査�
 - `base` leg: bwrap が **無い** ことを保証して実行する。bwrap を要するテストは skip される。
 - `bwrap` leg: `GORO_REQUIRE_BWRAP=1` で実行する。bwrap が使えなければ skip ではなく **fail** する。実行層の leg が、黙って全 skip で緑になるのを防ぐ。
 
-job 名 `base` / `bwrap` はブランチ保護の required check 名として固定する。
+job 名 `base` / `bwrap` はブランチ保護の required check 名として固定する。どちらの leg も `GO_TEST_EXTRA=-v` を渡し、skip の理由と bwrap の版をログに残す。
+
+Actions (`actions/checkout`、`actions/setup-go`) は commit SHA でピン留めする方針である。**初版は未実施** で、tag 指定のまま `ci.yml` に TODO を残している (作成時の sandbox が GitHub の API を引けず、SHA を解決できなかったため)。SHA を解決できる環境で置き換える。
 
 ### 6. bwrap は固定パス `/usr/bin/bwrap` で呼ぶ
 

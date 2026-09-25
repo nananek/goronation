@@ -7,10 +7,14 @@
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 
+# 追加の go test フラグ。CI は -v を渡して、skip の理由と bwrap の版をログに出す
+# (go test は -v が無いと、skip の理由も t.Logf も出さない)。
+GO_TEST_EXTRA ?=
+
 # -race は cgo (gcc) を要する。ローカルに gcc が無い場合は、
 #   make test GO_TEST_FLAGS=-count=1
 # のように上書きして逃げる。CI (ubuntu runner) は既定のまま回す。
-GO_TEST_FLAGS ?= -race -count=1
+GO_TEST_FLAGS ?= -race -count=1 $(GO_TEST_EXTRA)
 
 # 全 module で $(1) を実行する。module が 1 つも見つからなければ失敗する
 # (空振りで緑にしない)。
