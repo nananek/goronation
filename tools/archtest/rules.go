@@ -43,6 +43,10 @@ var DefaultRules = Rules{
 		// (リポジトリの .so は archtest には見えない)。許可される場所は無い。
 		{ID: "plugin", Imports: []string{"plugin"}},
 
+		// unsafe は、実行可能メモリ (syscall.Mmap / Mprotect) に書いた機械語を、関数として呼べる (funcval を
+		// 自作する)。.s も .c も linkname も表の関数の呼び出しも要らない。os/exec と同じ場所にだけ許す。
+		{ID: "unsafe-import", Imports: []string{"unsafe"}, OnlyIn: execAllowed},
+
 		// 実装の配線 (build tag) は cmd/** だけが行う。
 		{
 			ID:      "impl-only-from-cmd",

@@ -11,6 +11,7 @@
 //     sandbox/** と cmd/** だけ。
 //   - exec-call: os.StartProcess・syscall.Exec 系・生 syscall (Syscall / RawSyscall など) の参照も、同じ場所だけ。
 //   - cgo・plugin: import "C" と "plugin" は、全面禁止。
+//   - unsafe-import: unsafe の import は、sandbox/** と cmd/** だけ (実行可能メモリに書いた機械語を、関数として呼べるため)。
 //   - dep-core・dep-agent-sandbox・impl-only-from-cmd: 依存方向。
 //
 // 検査器 (archtest.go) に組み込んだもの。許可される場所は無く、理由は各規則 ID の定数のコメントに書く:

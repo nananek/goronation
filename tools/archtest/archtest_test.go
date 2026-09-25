@@ -163,15 +163,29 @@ func TestFixtures(t *testing.T) {
 		}},
 		// //go:linkname は、名前を変えて表の関数 (os.StartProcess など) を参照でき、セレクタの検出をすり抜ける。
 		// 位置を問わず (字下げも) 違反にする。control.go は対照 (空白入り・ブロックコメント・文字列の中)。
-		{"linkname", 3, []string{
+		// //go:linkname には import _ "unsafe" が要るので、egress/x.go は unsafe-import の違反にもなる。
+		// sandbox/x.go は、unsafe を許す場所でも linkname は違反 (unsafe-import とは独立) の確認。
+		{"linkname", 4, []string{
 			"egress/indented.go:4: linkname",
+			"egress/x.go:5: unsafe-import",
 			"egress/x.go:8: linkname",
+			"sandbox/x.go:8: linkname",
 		}},
 		// plugin は、事前ビルドした .so を実行時にロードでき、os/exec も表の関数も要らない。
 		// 許可される場所は無い (sandbox/** でも使えない)。
 		{"plugin", 2, []string{
 			"core/x.go:3: plugin",
 			"sandbox/y.go:3: plugin",
+		}},
+		// unsafe は、実行可能メモリ (syscall.Mmap / Mprotect) に書いた機械語を、関数として呼べる (funcval を自作する)。
+		// .s も .c も linkname も表の関数の呼び出しも要らない。os/exec と同じ場所にだけ許す。別名・blank・dot の
+		// import も検出する。sandbox/ok.go と cmd/goro/ok.go は許可の対照。control.go は、名前が unsafe の
+		// 別の package (example.com/unsafe) の対照。
+		{"unsafe", 7, []string{
+			"core/alias.go:3: unsafe-import",
+			"core/blank.go:3: unsafe-import",
+			"core/dot.go:3: unsafe-import",
+			"core/plain.go:3: unsafe-import",
 		}},
 		// vendor/modules.txt があると、go は vendor の中の外部 module を build する (ネットワークも go.sum も要らない)。
 		// archtest は vendor を走査しないので、vendor/example.com/evil の os/exec を、core が使える。
@@ -282,11 +296,19 @@ func TestGoldenOutput(t *testing.T) {
 		}},
 		{"linkname", []string{
 			`egress/indented.go:4: linkname: //go:linkname は全面禁止 (名前を変えて、表の関数を参照できるため)`,
+			`egress/x.go:5: unsafe-import: import "unsafe" は sandbox/**, cmd/** 以外では使えない`,
 			`egress/x.go:8: linkname: //go:linkname は全面禁止 (名前を変えて、表の関数を参照できるため)`,
+			`sandbox/x.go:8: linkname: //go:linkname は全面禁止 (名前を変えて、表の関数を参照できるため)`,
 		}},
 		{"plugin", []string{
 			`core/x.go:3: plugin: import "plugin" は全面禁止`,
 			`sandbox/y.go:3: plugin: import "plugin" は全面禁止`,
+		}},
+		{"unsafe", []string{
+			`core/alias.go:3: unsafe-import: import "unsafe" は sandbox/**, cmd/** 以外では使えない`,
+			`core/blank.go:3: unsafe-import: import "unsafe" は sandbox/**, cmd/** 以外では使えない`,
+			`core/dot.go:3: unsafe-import: import "unsafe" は sandbox/**, cmd/** 以外では使えない`,
+			`core/plain.go:3: unsafe-import: import "unsafe" は sandbox/**, cmd/** 以外では使えない`,
 		}},
 		{"vendor-mode", []string{
 			`core/vendor/modules.txt:1: vendor-mode: vendor/modules.txt がある (go は vendor から外部 module を build するが、archtest は vendor を走査しない) ため、全面禁止`,
