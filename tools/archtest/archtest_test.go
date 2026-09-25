@@ -108,6 +108,11 @@ func TestFixtures(t *testing.T) {
 			"core/go.mod:3: modpath",
 			"egress/go.mod:1: modpath",
 		}},
+		// アセンブリ 1 ファイルで、import も表の関数の参照も無しに execve できる。.go しか見ないと、それに気づけない。
+		// scanned = 1 は、evil_amd64.s を .go として数えていない確認。testdata の中の .s は走査しない。
+		{"non-go-source", 1, []string{
+			"core/evil_amd64.s:1: non-go-source",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,6 +167,9 @@ func TestGoldenOutput(t *testing.T) {
 			`cmd/go.mod:1: modpath: module が "example.com/x" だが、"` + m + `/cmd" であるべき`,
 			`core/go.mod:3: modpath: module が "` + m + `/wrong" だが、"` + m + `/core" であるべき`,
 			`egress/go.mod:1: modpath: module 行が無い`,
+		}},
+		{"non-go-source", []string{
+			`core/evil_amd64.s:1: non-go-source: evil_amd64.s は、Go が build に使う .go 以外のソース (archtest は検査できない) のため、全面禁止`,
 		}},
 	}
 	for _, tc := range cases {
@@ -227,6 +235,50 @@ func TestParseErrorIsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "core/bad.go") {
 		t.Errorf("error に対象ファイルが含まれない: %v", err)
+	}
+}
+
+// TestNonGoSourceExts は、go/build が build に使う .go 以外のソースの拡張子を、全部検出することを確認する。
+// 一覧は、go/build の (*Context).matchFile の switch (GOROOT/src/go/build/build.go) と同じで、
+// 大文字小文字を区別する (.C や .CPP は Go が build に使わない)。symlink も、名前で検出する。
+func TestNonGoSourceExts(t *testing.T) {
+	exts := []string{
+		".c", ".cc", ".cpp", ".cxx", ".m", ".h", ".hh", ".hpp", ".hxx",
+		".f", ".F", ".for", ".f90", ".s", ".S", ".sx", ".swig", ".swigcxx", ".syso",
+	}
+	ignored := []string{".C", ".CPP", ".txt", ".sh", ".py", ".sy", ".swigc", ".gos", ".md", ""}
+
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "root")
+	files := map[string]string{"root/core/doc.go": "package core\n"}
+	var paths []string // Check は path の順に並べる
+	for _, e := range exts {
+		files["root/core/x"+e] = "\n"
+		paths = append(paths, "core/x"+e)
+	}
+	for _, e := range ignored {
+		files["root/core/y"+e] = "\n"
+	}
+	writeTree(t, tmp, files)
+	if err := os.Symlink(filepath.Join(tmp, "root", "core", "doc.go"), filepath.Join(root, "core", "link.s")); err != nil {
+		t.Skipf("symlink を作れない: %v", err)
+	}
+	paths = append(paths, "core/link.s")
+	slices.Sort(paths)
+	var want []string
+	for _, p := range paths {
+		want = append(want, p+":1: non-go-source")
+	}
+
+	vs, scanned, err := Check(root, DefaultRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned != 1 {
+		t.Errorf("scanned = %d, want 1 (.go 以外は数えない)", scanned)
+	}
+	if got := keys(vs); !slices.Equal(got, want) {
+		t.Errorf("違反が一致しない\ngot:\n%s\nwant:\n%s", lines(got), lines(want))
 	}
 }
 

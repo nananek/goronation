@@ -25,6 +25,18 @@ const ruleModPath = "modpath"
 // 走査しないまま import だけを許すと、そのディレクトリが規則の抜け道になる。
 const ruleUnscannedImport = "unscanned-dir-import"
 
+// ruleNonGoSource は、Go が build に使う、.go 以外のソース (アセンブリ・C など) の規則 ID。
+// archtest は .go の構文しか見ない。アセンブリ 1 ファイルで、import も表の関数の参照も無しに
+// execve でき、それを検査する手段も無い。そのため、見えないものは禁止し、許可される場所は無い。
+const ruleNonGoSource = "non-go-source"
+
+// nonGoSourceExts は、go/build が build に使う、.go 以外のソースの拡張子。
+// go/build の (*Context).matchFile の switch と同じで、大文字小文字を区別する。
+var nonGoSourceExts = []string{
+	".c", ".cc", ".cpp", ".cxx", ".m", ".h", ".hh", ".hpp", ".hxx",
+	".f", ".F", ".for", ".f90", ".s", ".S", ".sx", ".swig", ".swigcxx", ".syso",
+}
+
 // Violation は規則違反 1 件。
 type Violation struct {
 	Path   string // repo 相対、"/" 区切り
@@ -83,6 +95,8 @@ type Rules struct {
 // ディレクトリは除く。除いたディレクトリを import する、リポジトリ内の import path は
 // 違反にする (unscanned-dir-import)。symlink の .go と go.mod は link の位置のファイルとして
 // 検査し、symlink のディレクトリは辿らずに error にする (走査しないディレクトリの名前のものを除く)。
+// Go が build に使う .go 以外のソース (.s など。nonGoSourceExts) は、検査できないため、
+// あるだけで違反にする (non-go-source)。
 //
 // fail-closed: 走査した .go が 0 ファイルなら error を返す。構文解析できない .go や、
 // 読めないディレクトリ、辿れない symlink も error にする (見えないものを、違反なしとして扱わない)。
@@ -118,6 +132,9 @@ func Check(root string, rules Rules) (violations []Violation, scanned int, err e
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		if slices.Contains(nonGoSourceExts, path.Ext(d.Name())) {
+			c.add(rel, 1, ruleNonGoSource, d.Name()+" は、Go が build に使う .go 以外のソース (archtest は検査できない) のため、全面禁止")
+		}
 		if d.Type()&fs.ModeSymlink != 0 {
 			// go tool は、symlink の .go と go.mod を通常のファイルとして読むため、この 2 つの
 			// symlink は、指す先を link の位置のファイルとして検査する。壊れていたら error にする。
