@@ -52,5 +52,6 @@
 //     依存する package は、TestStdExecDependents が全数を確かめる (Go の更新で増えると、そのテストが赤になる)。
 //   - 実行可能メモリに書いた機械語を呼ぶ経路は、unsafe の import と Mmap / Mprotect で塞ぐ。reflect や、外部 module
 //     (x/sys/unix など) の同種の関数を経由する経路は、検出できるか確かめていない。
+//   - 手動で go test を回すときは -count=1 を付ける (module の外の変更は、テストの結果のキャッシュに反映されない。make check は付けている)。
 //   - impl-only-from-cmd は、実装 package 自身の側の import も違反にする (docs/adr/0001 の帰結を参照)。
 package archtest
