@@ -63,6 +63,9 @@ func (s *Store) Create(ctx context.Context, o CreateOptions) (sess *Session, err
 			return nil, fmt.Errorf("session: %w", err)
 		}
 	}
+	if err := writeRepoLabel(sess, repo); err != nil {
+		return nil, err
+	}
 	if err := s.runGit(ctx, s.cloneBinds(repo, sess), "clone", "--no-local", "--no-hardlinks",
 		"-c", "user.name="+name, "-c", "user.email="+email, "--", "/src", "/work"); err != nil {
 		return nil, err
