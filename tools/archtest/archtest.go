@@ -190,7 +190,12 @@ func scan(root string, rules Rules) (violations []Violation, files []string, err
 			// 読む実体と、go tool・gofmt・compile が読む実体が、別になりうるので、build に使われる名前では error にする。
 			// vendor (modules.txt を持つ vendor は、go が暗黙に使う) は、Stat の結果によらず (壊れた symlink でも、
 			// cwd によっては、別の場所に解決されうる)、checkVendorMode で判定する。
-			through := c.processDependent(p)
+			// 判定は、結果を使う名前 (.go・go.mod・go.work) だけにする。それ以外 (vendor は checkVendorMode が別に判定する)
+			// に、上限なしの時間を払わせない (build に使われない名前の symlink を連鎖で置くと、判定の時間が増幅された)。
+			through := ""
+			if isBuildInput(d.Name()) {
+				through = c.processDependent(p)
+			}
 			if d.Name() == "vendor" {
 				c.checkVendorMode(p)
 			}
@@ -206,7 +211,7 @@ func scan(root string, rules Rules) (violations []Violation, files []string, err
 			case !isBuildInput(d.Name()):
 				return nil // build に使われない。壊れていてもよい
 			case through != "":
-				return fmt.Errorf("%s: プロセスごとに別のものに解決される symlink (%s を通る) は検査できない "+
+				return fmt.Errorf("%s: プロセスごとに別のものに解決される symlink (%s) は検査できない "+
 					"(archtest が読む実体と、go tool・gofmt・compile が読む実体が、cwd などの違いでずれる)", rel, through)
 			case err != nil:
 				return err
@@ -284,7 +289,7 @@ func (c *checker) checkVendorMode(p string) {
 	// 見えない (無い) 場所を、go tool が読みうる。Stat の結果によらず、全面禁止にする。
 	if through := c.processDependent(modules); through != "" {
 		c.add(rel, 1, ruleVendorMode, fmt.Sprintf(
-			"vendor か vendor/modules.txt が、プロセスごとに別のものに解決される symlink (%s を通る) のため、全面禁止", through))
+			"vendor か vendor/modules.txt が、プロセスごとに別のものに解決される symlink (%s) のため、全面禁止", through))
 		return
 	}
 	// go は、FIFO などの通常のファイルではないものでも、開いて modules.txt として読む。開かずに Stat だけで判定する。
@@ -301,12 +306,19 @@ func (c *checker) checkVendorMode(p string) {
 // (実測: /proc/self/cwd/x を指す core/link.go で、archtest は無害な実体を検査して緑、go は os/exec を含む実体を build した)。
 var processDependentRoots = []string{"/proc", "/dev", "/sys"}
 
+// maxResolveSteps は、processDependent が 1 回の判定で処理する path の要素の数の上限。symlink の連鎖と、target の要素
+// (実在するディレクトリを出入りする "a/../a/../..." など) が増幅すると、判定の時間に上限が無くなる。実在する連鎖は、
+// これに遠く及ばない。超えたら、黙って通さず、プロセス依存として扱う (fail-closed)。
+const maxResolveSteps = 4096
+
 // processDependent は、symlink p を、1 段ずつ辿って解決する途中で、processDependentRoots の中に入ったら、
-// その path を返す。入らなければ空。root の中と、root の祖先は、それらの下にあっても対象にしない (root が /dev/shm の下でもよい)。
+// その説明 ("<path> を通る") を返す。入らなければ空。root の中と、root の祖先は、それらの下にあっても対象にしない
+// (root が /dev/shm の下でもよい)。
 //
 // filepath.EvalSymlinks は使わない。/proc/self/cwd を解決すると、いまのプロセスの cwd の実体の path が返り、/proc を
 // 通ったことが分からなくなる。".." は、字面で畳まずに、解決済みの親のディレクトリにする (symlink のディレクトリの
 // 先を通る連鎖を、OS と同じに解決する)。連鎖が深すぎる (輪) なら空を返し、Stat の失敗が error にする。
+// 処理する要素の数が maxResolveSteps を超えたら、その旨を返す (fail-closed。時間の上限)。
 func (c *checker) processDependent(p string) string {
 	abs, err := filepath.Abs(p)
 	if err != nil {
@@ -318,7 +330,10 @@ func (c *checker) processDependent(p string) string {
 	}
 	sep := string(filepath.Separator)
 	resolved, rest := sep, abs
-	for links := 0; rest != ""; {
+	for links, steps := 0, 0; rest != ""; {
+		if steps++; steps > maxResolveSteps {
+			return fmt.Sprintf("解決の手数が上限 (%d 要素) を超える", maxResolveSteps)
+		}
 		var elem string
 		elem, rest, _ = strings.Cut(rest, sep)
 		switch elem {
@@ -330,7 +345,7 @@ func (c *checker) processDependent(p string) string {
 		}
 		next := filepath.Join(resolved, elem)
 		if inProcessDependentRoots(next, root) {
-			return next
+			return next + " を通る"
 		}
 		if info, err := os.Lstat(next); err != nil || info.Mode()&os.ModeSymlink == 0 {
 			resolved = next

@@ -45,6 +45,8 @@
 // ものに解決され、archtest が読む実体と、go tool・gofmt・compile が読む実体が別になりうる (実測: /proc/self/cwd/x を指す
 // core/link.go で、archtest は無害な実体を検査して緑、go は os/exec を含む実体を build した)。名前が .go・go.mod・go.work なら
 // error に、vendor か vendor/modules.txt なら違反にする。root の中 (root が /dev/shm の下でもよい) は対象にしない。
+// 判定は、結果を使う名前 (と vendor) の symlink だけで行い、1 回の判定で処理する path の要素は 4096 まで。超える連鎖は、
+// 時間の上限のために、黙って通さず、同じ扱い (error か違反) にする (fail-closed)。
 //
 // # 限界
 //
