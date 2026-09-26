@@ -174,6 +174,53 @@ func TestBudgetIsShared(t *testing.T) {
 		if _, err := tr.readFile("big.go"); !errors.Is(err, errBudget) {
 			t.Errorf("1 バイト超は errBudget にすべき: %v", err)
 		}
+		if tr.bytes != 10 {
+			t.Errorf("bytes = %d: 上限を超えるファイルは、読む前に (宣言の大きさで) 断り、バイトを勘定に足さない", tr.bytes)
+		}
+	})
+
+	// 確認 (fstat) の後に、ファイルが伸びても、上限を超えては読まない (メモリも、勘定も)。
+	grow := func(t *testing.T, dir string) func(stage, name string) {
+		return func(stage, name string) {
+			if stage != stageBeforeRead {
+				return
+			}
+			f, err := os.OpenFile(filepath.Join(dir, name), os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			if _, err := f.WriteString(strings.Repeat("x", 30)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Run("読む間に、1 ファイルの上限を超えて伸びる", func(t *testing.T) {
+		lim := defaultLimits
+		lim.MaxFileBytes = 20
+		tr, dir := newTestTreeLimits(t, map[string]string{"a.go": strings.Repeat("a", 10)}, lim)
+		tr.hook = grow(t, dir)
+		if b, err := tr.readFile("a.go"); !errors.Is(err, errBudget) {
+			t.Errorf("errBudget にすべき: %d バイト, %v", len(b), err)
+		}
+	})
+	t.Run("読む間に伸びた分も、バイトの合計に足す", func(t *testing.T) {
+		lim := defaultLimits
+		lim.MaxTotalBytes = 15
+		tr, dir := newTestTreeLimits(t, map[string]string{"a.go": strings.Repeat("a", 10)}, lim)
+		tr.hook = func(stage, name string) {
+			if stage == stageBeforeRead { // 10 バイト → 20 バイト (1 ファイルの上限には収まるが、合計 15 を超える)
+				f, err := os.OpenFile(filepath.Join(dir, name), os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				f.WriteString(strings.Repeat("x", 10))
+			}
+		}
+		if b, err := tr.readFile("a.go"); !errors.Is(err, errBudget) {
+			t.Errorf("errBudget にすべき: %d バイト, %v", len(b), err)
+		}
 	})
 
 	t.Run("項目の数: listDir をまたいで共有し、上限を超えた時点で止まる", func(t *testing.T) {
@@ -210,6 +257,44 @@ func TestBudgetIsShared(t *testing.T) {
 		}
 		if tr.entries > 100+256 {
 			t.Errorf("entries = %d: 256 個の塊を超えて、先まで数えた", tr.entries)
+		}
+	})
+
+	t.Run("時間は、ファイルを触らない処理の合間にも確かめる", func(t *testing.T) {
+		files := scaffold(map[string]string{"core/doc.go": goodDoc("core")})
+		// 1 回目: 何回、時計を見るか (inventory と readSources の分) を数える。
+		count := func(t *testing.T, limit int) (int, error) {
+			tr, _ := newTestTree(t, files)
+			start := time.Now()
+			calls := 0
+			tr.now = func() time.Time {
+				calls++
+				if limit >= 0 && calls > limit {
+					return start.Add(time.Hour)
+				}
+				return start
+			}
+			tr.deadline = start.Add(time.Minute)
+			inv, err := tr.inventory()
+			if err != nil {
+				return 0, err
+			}
+			if limit < 0 {
+				if _, err := tr.readSources(inv); err != nil {
+					return 0, err
+				}
+				return calls, nil
+			}
+			_, err = tr.analyzeInventory(inv)
+			return calls, err
+		}
+		before, err := count(t, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// inventory と readSources の間は、期限内。その直後 (解析の最初) に、期限を過ぎる。
+		if _, err := count(t, before); !errors.Is(err, errBudget) {
+			t.Errorf("解析の途中で期限を過ぎたら、errBudget にすべき: %v", err)
 		}
 	})
 

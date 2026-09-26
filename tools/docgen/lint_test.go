@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -343,5 +344,52 @@ func TestFindingOutput(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestLintLinkMessages は、リンクの問題の種類 (host を指す //・絶対 path・repo の外・scheme) が、区別して報告されることを確認する。
+func TestLintLinkMessages(t *testing.T) {
+	exists := func(string) (bool, error) { return false, nil }
+	cases := map[string]string{
+		"//evil.example/x": "host を指す",
+		"/etc/passwd":      "絶対 path",
+		"../outside.md":    "repo の外",
+		"docs/../../x.md":  "repo の外",
+		"javascript:x":     "scheme",
+		"docs/none.md":     "リンク先 docs/none.md が無い",
+	}
+	for target, want := range cases {
+		fs, err := lintLinks("README.md", "[a]("+target+")\n", exists)
+		if err != nil || len(fs) != 1 || !strings.Contains(fs[0].Msg, want) {
+			t.Errorf("%s: %v, %v (want %q を含む 1 件)", target, fs, err, want)
+		}
+	}
+	// exists の error は、そのまま返す (予算超過を、リンク切れにしない)。
+	if _, err := lintLinks("README.md", "[a](x.md)\n", func(string) (bool, error) { return false, errBudget }); !errors.Is(err, errBudget) {
+		t.Errorf("exists の error を返すべき: %v", err)
+	}
+}
+
+// TestLintMarkdownChecksGeneratedLinks は、生成物 (res.Expected) の中の相対リンクも、検査されることを確認する
+// (レンダラに、リンクを壊す不具合があった場合の防御。いまの生成物には、doc comment 由来の相対リンクは出ない)。
+func TestLintMarkdownChecksGeneratedLinks(t *testing.T) {
+	tr, _ := newTestTree(t, scaffold(map[string]string{"core/doc.go": goodDoc("core")}))
+	res, err := tr.analyze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Expected["docs/reference/broken.md"] = "[a](none.md) [b](core.md)\n"
+	fs, err := tr.lintMarkdown(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range fs {
+		if f.Rule == ruleMDLink {
+			got = append(got, f.Path+": "+f.Msg)
+		}
+	}
+	if len(got) != 1 || !strings.HasPrefix(got[0], "docs/reference/broken.md: リンク先 none.md が無い") {
+		t.Errorf("生成物のリンク切れ = %q (none.md の 1 件だけ。core.md は生成物として実在する)", got)
 	}
 }

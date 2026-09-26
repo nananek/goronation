@@ -61,6 +61,9 @@ func (t *tree) analyzeInventory(inv *inventory) (*result, error) {
 		return nil, err
 	}
 	for _, p := range src.Pkgs {
+		if err := t.checkTime(); err != nil {
+			return nil, err
+		}
 		d, err := buildDoc(src, p)
 		if err != nil {
 			return nil, err

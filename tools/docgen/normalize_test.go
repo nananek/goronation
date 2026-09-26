@@ -272,6 +272,10 @@ func TestCheckSource(t *testing.T) {
 	if err := checkSource("a.go", []byte("package a\n\n// FF\x0c\n")); err == nil || !strings.Contains(err.Error(), "a.go:3:") {
 		t.Errorf("行番号が違う: %v", err)
 	}
+	// CRLF は、直し方 (LF にする) が分かる専用の文にする。
+	if err := checkSource("a.md", []byte("x\r\n")); err == nil || !strings.Contains(err.Error(), "CR") || !strings.Contains(err.Error(), "LF") {
+		t.Errorf("CR の error 文: %v", err)
+	}
 }
 
 func TestIsCJK(t *testing.T) {

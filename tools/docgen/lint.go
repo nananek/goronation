@@ -532,6 +532,9 @@ func (t *tree) lintMarkdown(res *result) ([]finding, error) {
 func (t *tree) lint(res *result) ([]finding, error) {
 	var out []finding
 	for _, p := range res.Src.Pkgs {
+		if err := t.checkTime(); err != nil {
+			return nil, err
+		}
 		fs, err := lintPackage(res.Src, p)
 		if err != nil {
 			return nil, err

@@ -75,7 +75,8 @@ type tree struct {
 // hook の stage。
 const (
 	stageBeforeOpen = "before-open"
-	stageAfterOpen  = "after-open" // open の後、fd と名前の確認の前
+	stageAfterOpen  = "after-open"  // open の後、fd と名前の確認の前
+	stageBeforeRead = "before-read" // 確認と勘定の後、読む前 (読む間に、ファイルが伸びる場面)
 )
 
 func (t *tree) stage(stage, name string) {
@@ -119,6 +120,12 @@ func (t *tree) tick() error {
 	if t.entries > t.lim.MaxEntries {
 		return fmt.Errorf("%w: 訪問した項目が %d を超えた", errBudget, t.lim.MaxEntries)
 	}
+	return t.checkTime()
+}
+
+// checkTime は、全体の時間の予算を確かめる。ファイルを触らない処理 (構文解析・文書の生成) の合間にも呼ぶ
+// (勘定の tick だけでは、巨大な入力の解析で長引くのを止められない)。
+func (t *tree) checkTime() error {
 	if t.now().After(t.deadline) {
 		return fmt.Errorf("%w: 全体の時間が %s を超えた", errBudget, t.lim.Timeout)
 	}
@@ -166,6 +173,7 @@ func (t *tree) readFile(name string) ([]byte, error) {
 	if err := t.chargeFile(name, info.Size()); err != nil {
 		return nil, err
 	}
+	t.stage(stageBeforeRead, name)
 	data, err := io.ReadAll(io.LimitReader(f, t.lim.MaxFileBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)

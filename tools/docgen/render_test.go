@@ -168,6 +168,19 @@ func TestInjection(t *testing.T) {
 		}
 	})
 
+	// 本文の自動リンクは、リンク定義とは別の経路 (comment.Link の Auto)。許可しない scheme は、error にする。
+	t.Run("本文の自動リンクも、許可しない scheme は error", func(t *testing.T) {
+		for _, u := range []string{"ftp://example.com/x", "mailto://a@example.com/", "gopher://example.com/x", "nntp://example.com/x"} {
+			md, err := corePage(t, docComment("Package core は、テスト。", "", u+" を見る。"))
+			if err == nil {
+				t.Errorf("自動リンク %q は error にすべき:\n%s", u, md)
+			}
+		}
+		if md, err := corePage(t, docComment("Package core は、テスト。", "", "http://example.com/x と https://example.com/y を見る。")); err != nil || !strings.Contains(md, "[http://example.com/x](http://example.com/x)") {
+			t.Errorf("http(s) の自動リンクは通すべき: %v\n%s", err, md)
+		}
+	})
+
 	t.Run("参照されないリンク定義も、検査する", func(t *testing.T) {
 		if _, err := corePage(t, docComment("Package core は、テスト。", "", "[unused]: file:///etc/passwd")); err == nil {
 			t.Error("参照されなくても、許可しない scheme は error にすべき")
@@ -488,5 +501,34 @@ func TestUnexportedIsNotRendered(t *testing.T) {
 	}
 	if !strings.Contains(page, "Shown") {
 		t.Error("exported の Shown が出ていない")
+	}
+}
+
+// TestListNumbers は、リスト項目の番号が、9 桁までの数字であることを確認する (CommonMark の上限。
+// go/doc/comment は、何桁の番号も受け入れる)。
+func TestListNumbers(t *testing.T) {
+	list := func(n string) string {
+		return docComment("Package core は、テスト。", "", "契約。", "", " "+n+". 項目。") + "package core\n"
+	}
+	if md, err := corePage(t, strings.TrimSuffix(list("123456789"), "package core\n")); err != nil || !strings.Contains(md, "123456789. 項目。") {
+		t.Errorf("9 桁は通すべき: %v\n%s", err, md)
+	}
+	for _, n := range []string{"1234567890", "99999999999999999999"} {
+		if _, err := corePage(t, strings.TrimSuffix(list(n), "package core\n")); err == nil {
+			t.Errorf("番号 %s (10 桁以上) は error にすべき", n)
+		}
+	}
+}
+
+// TestIndexSynopsisIsEscaped は、一覧 (表) に出る概要が、セルとしてエスケープされることを確認する。
+func TestIndexSynopsisIsEscaped(t *testing.T) {
+	res, err := analyzeFiles(t, map[string]string{"core/doc.go": docComment("Package core は、a|b と <b>x</b> と * _ を扱う。", "", "契約。") + "package core\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := res.Expected[refIndexPath]
+	want := `| Package core は、a\|b と \<b\>x\</b\> と \* \_ を扱う。 |`
+	if !strings.Contains(idx, want) {
+		t.Errorf("一覧の概要が、セルとしてエスケープされていない (want %s):\n%s", want, idx)
 	}
 }
