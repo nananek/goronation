@@ -319,3 +319,37 @@ func TestEveryRuleFires(t *testing.T) {
 		t.Errorf("問題の無い repo で、規則が報告された: %v", got)
 	}
 }
+
+func TestFirstDiffLine(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"a\nb\n", "a\nb\n", 0},
+		{"a\nb\n", "a\nc\n", 2},
+		{"a\nb\n", "x\nb\n", 1},
+		{"a\nb\nc\n", "a\nb\n", 3},
+		{"a\nb\n", "a\nb\nc\n", 3},
+		{"a\r\nb\n", "a\nb\n", 1},
+		{"a", "a\n", 2},
+	}
+	for _, tc := range cases {
+		if got := firstDiffLine(tc.a, tc.b); got != tc.want {
+			t.Errorf("firstDiffLine(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+// TestCheckReportsLine は、生成物が古いときに、最初に違う行が、path:行: の形で出ることを確認する。
+func TestCheckReportsLine(t *testing.T) {
+	root := generatedRepo(t, nil)
+	p := "docs/reference/core.md"
+	lines := strings.Split(readFileAt(t, root, p), "\n")
+	lines[4] = "手で変えた行 (同じ行数のまま)"
+	writeFileAt(t, root, p, strings.Join(lines, "\n"))
+	_, _, errs := checkIn(t, root)
+	if !strings.Contains(errs, "docs/reference/core.md:5: [gen-stale]") {
+		t.Errorf("行番号が出ていない:\n%s", errs)
+	}
+}

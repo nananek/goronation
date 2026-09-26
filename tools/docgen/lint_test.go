@@ -104,6 +104,7 @@ func TestLintPackageDoc(t *testing.T) {
 		{"規則以外の節の箇条書きは、見ない", map[string]string{doc: docComment("Package core は、テスト。", "", "契約。", "", "# 方針", "", "  - 説明だけの項目。") + "package core\n"}, nil},
 		{"規則の id が重複 (項目をまたぐ)", map[string]string{doc: docComment("Package core は、テスト。", "", "契約。", "", "# 規則", "", "  - a: 1。", "  - b: 2。", "  - a: 3。") + "package core\n"}, []string{doc + " pkg-doc-rule-dup"}},
 		{"規則の id が重複 (・ の中)", map[string]string{doc: docComment("Package core は、テスト。", "", "契約。", "", "# 規則", "", "  - a・a: 1。") + "package core\n"}, []string{doc + " pkg-doc-rule-dup"}},
+		{"規則の番号付きの項目 (id あり) は通る", map[string]string{doc: docComment("Package core は、テスト。", "", "契約。", "", "# 規則", "", " 1. alpha: 説明。", " 2. beta: 説明。") + "package core\n"}, nil},
 		{"規則の番号付きの項目も見る", map[string]string{doc: docComment("Package core は、テスト。", "", "契約。", "", "# 規則", "", " 1. 番号付きで、id が無い。") + "package core\n"}, []string{doc + " pkg-doc-rule-item"}},
 		{"一般の package は 30 行まで (境界)", map[string]string{doc: docWithLines("core", 30)}, nil},
 		{"一般の package が 31 行", map[string]string{doc: docWithLines("core", 31)}, []string{doc + " pkg-doc-length"}},

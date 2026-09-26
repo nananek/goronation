@@ -354,6 +354,13 @@ func TestNoPackageDoc(t *testing.T) {
 	if !strings.Contains(md, noPackageDoc) {
 		t.Errorf("package doc が無いことが、文書に出ていない:\n%s", md)
 	}
+	res, err := analyzeFiles(t, map[string]string{"core/doc.go": "package core\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx := res.Expected[refIndexPath]; !strings.Contains(idx, "| "+noPackageDoc+" |") {
+		t.Errorf("一覧の概要に、package doc が無いことが出ていない:\n%s", idx)
+	}
 }
 
 // TestDeterministic は、列挙の順序 (ファイルの並び・inventory の並び) によらず、生成物が同じことを確認する。

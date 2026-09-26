@@ -261,40 +261,43 @@ func TestBudgetIsShared(t *testing.T) {
 	})
 
 	t.Run("時間は、ファイルを触らない処理の合間にも確かめる", func(t *testing.T) {
+		// 1 package だけで、相対リンクも無い repo (analyze の途中で、ファイルの勘定 (tick) が起きない)。
 		files := scaffold(map[string]string{"core/doc.go": goodDoc("core")})
-		// 1 回目: 何回、時計を見るか (inventory と readSources の分) を数える。
-		count := func(t *testing.T, limit int) (int, error) {
+		start := time.Now()
+		prepare := func(t *testing.T) (*tree, *inventory) {
 			tr, _ := newTestTree(t, files)
-			start := time.Now()
-			calls := 0
+			inv, err := tr.inventory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			return tr, inv
+		}
+		// readSources が、時計を何回見るか。
+		tr, inv := prepare(t)
+		calls := 0
+		tr.now = func() time.Time { calls++; return start }
+		tr.deadline = start.Add(time.Minute)
+		if _, err := tr.readSources(inv); err != nil {
+			t.Fatal(err)
+		}
+		reads := calls
+
+		// readSources の直後の確認 (package ごとの構文解析の前) は reads + 1 回目、その次 (lint の前) は reads + 2 回目。
+		// そこで期限を過ぎたら、その確認が errBudget にする (後ろに、勘定の tick が無いので、確認が無ければ通ってしまう)。
+		for _, after := range []int{reads, reads + 1} {
+			tr, inv := prepare(t)
+			n := 0
 			tr.now = func() time.Time {
-				calls++
-				if limit >= 0 && calls > limit {
+				n++
+				if n > after {
 					return start.Add(time.Hour)
 				}
 				return start
 			}
 			tr.deadline = start.Add(time.Minute)
-			inv, err := tr.inventory()
-			if err != nil {
-				return 0, err
+			if _, err := tr.analyzeInventory(inv); !errors.Is(err, errBudget) {
+				t.Errorf("時計を %d 回見た後に期限を過ぎたら、errBudget にすべき: %v", after, err)
 			}
-			if limit < 0 {
-				if _, err := tr.readSources(inv); err != nil {
-					return 0, err
-				}
-				return calls, nil
-			}
-			_, err = tr.analyzeInventory(inv)
-			return calls, err
-		}
-		before, err := count(t, -1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		// inventory と readSources の間は、期限内。その直後 (解析の最初) に、期限を過ぎる。
-		if _, err := count(t, before); !errors.Is(err, errBudget) {
-			t.Errorf("解析の途中で期限を過ぎたら、errBudget にすべき: %v", err)
 		}
 	})
 
