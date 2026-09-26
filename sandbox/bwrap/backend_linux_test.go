@@ -3,7 +3,9 @@ package bwrap
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/nananek/goronation/core/sandbox"
@@ -85,5 +87,36 @@ func TestBackendStartTerminalUnsafe(t *testing.T) {
 	}
 	if errors.Is(err, sandbox.ErrTerminalUnsafe) {
 		t.Errorf("Terminal = false で、ErrTerminalUnsafe: %v", err)
+	}
+}
+
+// TestBackendStartRunsContractResolve は、Start が、契約の Resolve (symlink を辿った実体の検証) を、bwrap の検証とは別に通すことを確認する。
+// 契約の検証だけが知る機密 (bwrap 側の Host に無い path) を指す symlink は、bwrap の検証は通るが、契約の Resolve が断る。
+func TestBackendStartRunsContractResolve(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(dir, "secret")
+	link := filepath.Join(dir, "link")
+	if err := os.WriteFile(secret, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	b := New(adapterHost)
+	b.rules.Host.Secrets = []string{secret} // 契約の検証だけが、この path を機密として知っている
+	s := sandbox.Spec{Exec: "/usr/bin/true", System: true, Read: []sandbox.Mount{{HostPath: link, GuestPath: "/x"}}}
+	if _, err := b.Prepare(s); err != nil {
+		t.Fatalf("Prepare (字面だけ) が、symlink の HostPath を断った: %v", err)
+	}
+	c, err := b.Start(context.Background(), s)
+	if c != nil {
+		_ = c.Wait() // 契約の Resolve が働かないと、起動してしまう
+		t.Error("契約の Resolve が、機密を指す symlink を断らなかった")
+	}
+	if !errors.Is(err, sandbox.ErrRejected) {
+		t.Errorf("Start = %v, want ErrRejected", err)
 	}
 }
