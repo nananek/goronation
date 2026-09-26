@@ -52,8 +52,8 @@
 // 生成は exported だけで、出力は名前の順に決まる。var と const の複数行の初期値は、... に省く。
 // 出力の正規化は normalize の 1 関数に集め、文章 (Markdown の特殊文字をエスケープ)・コード (fence は、内容の
 // 連続バッククォート数 + 1)・識別子・URL (http(s) と相対だけ)・path (英数字と . _ / - だけ)・文書の全体・診断が通る。
-// 制御文字 (C0・C1・DEL)・書式制御文字 (Cf: 双方向制御・ゼロ幅・BOM・タグ文字など。見えない)・U+2028/2029・不正な UTF-8・CR は、
-// 除去せず error にする。
+// 制御文字 (C0・C1・DEL)・書式制御文字 (Cf: 双方向制御・ゼロ幅・BOM・タグ文字など。見えない)・見た目が空白の 4 文字
+// (Hangul filler U+3164・U+FFA0、点字の空白 U+2800、CGJ U+034F)・U+2028/2029・不正な UTF-8・CR は、除去せず error にする。
 // これらは、構文解析の前の、生のバイト列でも調べる (doc comment の解析は、行末の FF などを黙って取り除くため)。
 //
 // 敵対入力として読む。root は cwd の 2 つ上に固定し (go.work を上向きに探さず、symlink は error)、
@@ -69,9 +69,9 @@
 // TestEmptyPackageDocPassesThrough が、通ることを固定している)。
 //
 //   - 文体、限界の質、「1 つの事実は 1 か所」、指示に見える文、中身の無い一文の package doc。
-//   - 見えない文字の検査は、書式制御文字 (Cf) までで、Cf でない見えない文字 (Hangul filler・点字の空白など) は通す。異体字セレクタ・
-//     結合文字は、絵文字・異体字・NFD の日本語に使うので、通す。逆に、ZWJ でつなぐ絵文字など、正当な Cf も error にする
-//     (TestForbiddenRune・TestInvisibleNonFormatPassesThrough が固定している)。
+//   - 見えない文字の検査は、Cf と、Cf でない見た目が空白の 4 文字 (Hangul filler・点字の空白・CGJ) までで、異体字セレクタ
+//     (U+FE00〜FE0F・U+E0100〜E01EF。絵文字と漢字の異体字に使う) は、見えないが通す。逆に、ZWJ でつなぐ絵文字など、
+//     正当な Cf も error にする (TestForbiddenRune・TestInvisibleNonFormat が固定している)。
 //   - 書き込みは非原子的 (os.Root に Rename が無い)。書く前に、内容・予算・既存の項目との衝突を確かめる (checkPlan)。
 //     書き始めた後に残る失敗は、入出力の失敗 (ディスクの空きなど) と時間の予算で、壊れた出力が残るが、-check が検出する。
 //   - os.Root は、bind mount・/proc・デバイスファイルを禁止しない。名前そのものの、open の間の差し替えは、読む・切り詰める前の

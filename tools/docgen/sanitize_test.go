@@ -49,7 +49,9 @@ func TestForbiddenRune(t *testing.T) {
 	forbidden := []rune{0x00, 0x01, 0x07, 0x08, 0x0b, 0x0c, '\r', 0x1b, 0x1f, 0x7f, 0x80, 0x85, 0x9f,
 		0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0x2028, 0x2029,
 		// 書式制御文字 (Cf): 見えない。ゼロ幅・soft hyphen・word joiner・BOM・タグ文字 (ASCII を隠せる)。
-		0x00AD, 0x200B, 0x200C, 0x200D, 0x2060, 0x2064, 0xFEFF, 0xE0001, 0xE0041, 0xE007F}
+		0x00AD, 0x200B, 0x200C, 0x200D, 0x2060, 0x2064, 0xFEFF, 0xE0001, 0xE0041, 0xE007F,
+		// Cf ではないが、見た目が空白の 4 文字 (invisibleBlanks)。
+		0x034F, 0x2800, 0x3164, 0xFFA0}
 	for _, r := range forbidden {
 		if !forbiddenRune(r) {
 			t.Errorf("forbiddenRune(U+%04X) = false, want true", r)
@@ -69,12 +71,28 @@ func TestForbiddenRune(t *testing.T) {
 	}
 }
 
-// TestInvisibleNonFormatPassesThrough は、限界を固定する (doc.go の「限界」)。見えないが、Cf (書式制御文字) ではない文字
-// (Hangul filler・点字の空白・結合書記素ジョイナー) は、禁止しない。直して禁止したら、この期待を反転する。
-func TestInvisibleNonFormatPassesThrough(t *testing.T) {
+// TestInvisibleNonFormat は、Cf ではない、見えない文字の扱いを固定する (doc.go の「限界」)。見た目が空白の 4 文字
+// (Hangul filler・点字の空白・結合書記素接合子) は、禁止する (どの入口でも error)。異体字セレクタ (絵文字と漢字の異体字に
+// 使う) は、見えないが、禁止しない (限界)。直して禁止したら、通る側の期待を反転し、doc.go の「限界」も直す。
+func TestInvisibleNonFormat(t *testing.T) {
 	for _, r := range []rune{0x034F, 0x2800, 0x3164, 0xFFA0} {
+		s := "a" + string(r) + "b"
+		if !forbiddenRune(r) {
+			t.Errorf("forbiddenRune(U+%04X) = false, want true", r)
+		}
+		if _, err := normalize(kindText, s); err == nil {
+			t.Errorf("normalize(kindText, U+%04X) が error にならない", r)
+		}
+		if err := checkSource("x/a.go", []byte("package a\n// "+s+"\n")); err == nil {
+			t.Errorf("checkSource が、コメントの中の U+%04X を見逃した", r)
+		}
+	}
+	for _, r := range []rune{0xFE00, 0xFE0F, 0xE0100, 0xE01EF} {
 		if forbiddenRune(r) {
-			t.Errorf("forbiddenRune(U+%04X) = true: 限界が直った (doc.go の「限界」も直す)", r)
+			t.Errorf("forbiddenRune(U+%04X) = true: 限界が直った (異体字セレクタを禁止した。doc.go の「限界」も直す)", r)
+		}
+		if _, err := normalize(kindText, "a"+string(r)+"b"); err != nil {
+			t.Errorf("normalize(kindText, U+%04X): %v", r, err)
 		}
 	}
 }

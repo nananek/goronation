@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/token"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -83,7 +84,8 @@ func normalize(k kind, s string) (string, error) {
 
 // forbiddenRune は、文書にも診断にも出さない文字か。改行とタブ以外の制御文字 (C0・DEL・C1)、書式制御文字 (Cf。
 // 表示の向きを変える双方向制御 (Trojan Source)・ゼロ幅の文字・BOM・タグ文字など。見えないので、レビューで読めない
-// 内容を隠せる)、行・段落の区切り (U+2028・U+2029) を含む。
+// 内容を隠せる)、行・段落の区切り (U+2028・U+2029)、Cf ではないが見た目が空白の 4 文字 (invisibleBlanks) を含む。
+// 異体字セレクタ (U+FE00〜FE0F・U+E0100〜E01EF) は、絵文字と漢字の異体字に正当に使うので、禁止しない (doc.go の限界)。
 func forbiddenRune(r rune) bool {
 	switch {
 	case r == '\n' || r == '\t':
@@ -93,8 +95,12 @@ func forbiddenRune(r rune) bool {
 	case r == 0x2028 || r == 0x2029:
 		return true
 	}
-	return false
+	return slices.Contains(invisibleBlanks, r)
 }
+
+// invisibleBlanks は、Cf ではないが、見た目が空白の文字。Hangul filler (U+3164・U+FFA0)・点字の空白 (U+2800)・
+// 結合書記素接合子 (CGJ。U+034F)。日本語の文書には要らず、並べて内容を隠せる。
+var invisibleBlanks = []rune{0x034F, 0x2800, 0x3164, 0xFFA0}
 
 // checkRunes は、s が正しい UTF-8 で、forbiddenRune を含まないことを確かめる。
 func checkRunes(s string) error {
