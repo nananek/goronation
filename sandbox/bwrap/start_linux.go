@@ -17,6 +17,9 @@ import (
 // tiocstiPath は、TIOCSTI (端末の入力に、キーを注入する ioctl) を有効にするかを決める sysctl (Linux 6.2 以降)。
 var tiocstiPath = "/proc/sys/dev/tty/legacy_tiocsti"
 
+// closeInheritedFDs は、Start が起動の前に行う、継承した fd (3 以降) の close-on-exec 化。できなければ、起動しない。テストが差し替える。
+var closeInheritedFDs = func() error { return closeOnExecFrom(3) }
+
 // waitDelay は、コンテキストを取り消して bwrap を kill したあと、標準入出力の中継を待つ猶予。
 const waitDelay = 2 * time.Second
 
@@ -28,6 +31,7 @@ type Cmd struct {
 // Start は、s を検証し (symlink を辿った実際の path も、同じ規則で検証する)、檻を起動する。
 // bwrap には、環境変数を渡さない (檻の環境変数は、s.Env だけ)。NewSession が false で、標準入出力のどれかが端末か、
 // 呼び手が制御端末を持つなら、TIOCSTI が無効なことを確かめ、そうでなければ起動しない。
+// 呼び手が継承した fd (3 以降) は、close-on-exec にして、檻に渡さない (呼び手のプロセス全体に効く。標準入出力は 0〜2)。
 func Start(ctx context.Context, s Spec) (*Cmd, error) {
 	if err := s.validate(); err != nil {
 		return nil, err
@@ -40,6 +44,9 @@ func Start(ctx context.Context, s Spec) (*Cmd, error) {
 	r, err := s.withResolvedSrcs()
 	if err != nil {
 		return nil, err
+	}
+	if err := closeInheritedFDs(); err != nil {
+		return nil, fmt.Errorf("bwrap: 継承した fd を close-on-exec にできない (檻に届いてしまう): %w", err)
 	}
 	argv := r.argv()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)

@@ -16,12 +16,14 @@
 //   - bind-dst: Dst は絶対・クリーンで、重複せず、/・/proc・/dev の中は使えない。
 //   - env: 檻の環境変数は、Spec.Env に書いたものだけ。資格情報らしい名前 (SSH_AUTH_SOCK・*_TOKEN・AWS_* など) は error。
 //   - tty: NewSession が false (既定) で、端末に直結して (標準入出力のどれかが端末か、制御端末を持つ) 起動するとき、TIOCSTI が無効と確かめられなければ、起動しない。
+//   - inherited-fd: Start は、呼び手が継承した fd (3 以降) を close-on-exec にして、檻に渡さない。close-on-exec にできなければ、起動しない。
 //
 // # 限界
 //
 //   - seccomp・cap-drop・cgroup の制限は未実装 (uid 0 で起動すると、檻の中に capability が残る)。pty 中継も未実装で、
 //     端末に直結する檻は制御端末を共有し、TIOCSTI は kernel の設定に頼る。
 //   - 検証は path の字面と、Start が解決した実体だけ (解決の後の差し替えは見ない)。値の中身は見ない。檻の / は tmpfs で、書けるが揮発する。
+//   - fd を close-on-exec にするのは、呼び手のプロセス全体に効く (後で起動する別の子にも、継承した fd は渡らない)。
 //
 // # 関連
 //
