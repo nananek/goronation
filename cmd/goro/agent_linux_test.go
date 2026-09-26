@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nananek/goronation/cmd/internal/session"
 	"github.com/nananek/goronation/egress"
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
@@ -142,6 +143,11 @@ func TestParseRunArgsAgent(t *testing.T) {
 		{"大文字", []string{"--agent", "OpenCode", "--repo", "r"}, runOptions{}, "claude か opencode"},
 		{"opencode に --claude", []string{"--agent", "opencode", "--claude", "/c", "--repo", "r"}, runOptions{}, "--claude は、--agent claude のときだけ"},
 		{"claude に --opencode", []string{"--opencode", "/o", "--repo", "r"}, runOptions{}, "--opencode は、--agent opencode のときだけ"},
+		{"--login で省略は claude", []string{"--login"}, runOptions{agent: "claude"}, ""},
+		{"--session で省略は、空 (セッションを作ったエージェントで動かす)", []string{"--session", "x"}, runOptions{agent: ""}, ""},
+		{"--session と --agent claude", []string{"--session", "x", "--agent", "claude"}, runOptions{agent: "claude"}, ""},
+		{"--session で省略: 動かす側が未定なので、--opencode は、ここでは断らない (doRun が断る)", []string{"--session", "x", "--opencode", "/o"}, runOptions{agent: "", opencode: "/o"}, ""},
+		{"--session と --agent claude に --opencode", []string{"--session", "x", "--agent", "claude", "--opencode", "/o"}, runOptions{}, "--opencode は、--agent opencode のときだけ"},
 		{"-- の後ろの --agent は、flag ではない", []string{"--repo", "r", "--", "--agent", "opencode"}, runOptions{agent: "claude"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -482,6 +488,83 @@ func TestPrintRunSummaryDenyNotes(t *testing.T) {
 	// 別の agent の説明は、効かない (opencode の説明が、claude の拒否に付かない)。
 	if out := summary(claudeProfile, []deniedTarget{models}, 0); strings.Contains(out, "許可しなくてよい") {
 		t.Errorf("claude の拒否に、opencode の説明が付いた:\n%s", out)
+	}
+}
+
+// pickAgent: --session は、セッションを作ったエージェント (記録。無ければ claude) で動かす。--agent の省略は記録に従い、
+// 記録と違う --agent は断る。--session でなければ、--agent (省略は claude) のまま。
+func TestPickAgent(t *testing.T) {
+	state := shortDir(t)
+	store, err := session.NewStore(state, bwrap.Host{Home: "/home/u"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(id, record string, clone bool) {
+		t.Helper()
+		dir := filepath.Join(state, "sessions", id)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if clone {
+			if err := os.Mkdir(filepath.Join(dir, "clone"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if record != "" {
+			if err := os.WriteFile(filepath.Join(dir, "agent"), []byte(record), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mk("20260926-120000-aaaaaa", "", true) // 記録なし (エージェントを記録する前)
+	mk("20260926-120001-bbbbbb", "claude\n", true)
+	mk("20260926-120002-cccccc", "opencode\n", true)
+	mk("20260926-120003-dddddd", "codex\n", true)     // この goro の知らないエージェント
+	mk("20260926-120004-eeeeee", "Bad Agent\n", true) // 壊れた記録
+	mk("20260926-120005-ffffff", "opencode\n", false) // clone が無い
+
+	for _, tc := range []struct {
+		name string
+		o    runOptions
+		want string // 空なら error
+		err  string
+	}{
+		{"--session でない: 既定", runOptions{repo: "r"}, "claude", ""},
+		{"--session でない: --agent", runOptions{repo: "r", agent: "opencode"}, "opencode", ""},
+		{"--login", runOptions{login: true, agent: "opencode"}, "opencode", ""},
+		{"記録なし・省略は claude", runOptions{session: "20260926-120000-aaaaaa"}, "claude", ""},
+		{"記録なし・--agent claude", runOptions{session: "20260926-120000-aaaaaa", agent: "claude"}, "claude", ""},
+		{"記録なし・--agent opencode は断る", runOptions{session: "20260926-120000-aaaaaa", agent: "opencode"}, "", "このセッションは claude で作られた"},
+		{"claude・省略", runOptions{session: "20260926-120001-bbbbbb"}, "claude", ""},
+		{"claude・--agent opencode は断る", runOptions{session: "20260926-120001-bbbbbb", agent: "opencode"}, "", "--agent opencode では使えない"},
+		{"opencode・省略", runOptions{session: "20260926-120002-cccccc"}, "opencode", ""},
+		{"opencode・--agent opencode", runOptions{session: "20260926-120002-cccccc", agent: "opencode"}, "opencode", ""},
+		{"opencode・--agent claude は断る", runOptions{session: "20260926-120002-cccccc", agent: "claude"}, "", "このセッションは opencode で作られた"},
+		{"知らないエージェントの記録", runOptions{session: "20260926-120003-dddddd"}, "", `"codex" を、この goro は知らない`},
+		{"壊れた記録", runOptions{session: "20260926-120004-eeeeee"}, "", "エージェントの記録"},
+		{"壊れた記録・--agent claude でも断る", runOptions{session: "20260926-120004-eeeeee", agent: "claude"}, "", "エージェントの記録"},
+		{"clone が無い", runOptions{session: "20260926-120005-ffffff"}, "", "セッションを使えない"},
+		{"存在しない", runOptions{session: "20260101-000000-aaaaaa"}, "", "セッションを使えない"},
+		{"形が違う ID", runOptions{session: "../x"}, "", "セッションを使えない"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, sess, err := pickAgent(tc.o, store)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("pickAgent = %q, %v, want error に %q", p.name, err, tc.err)
+				}
+				if tc.o.session != "" && strings.Contains(tc.err, "で作られた") && !strings.Contains(err.Error(), "--repo から新しいセッションを作ってください") {
+					t.Errorf("エラーに、次の手 (--repo から新しいセッション) が無い: %v", err)
+				}
+				return
+			}
+			if err != nil || p.name != tc.want {
+				t.Fatalf("pickAgent = %q, %v, want %q", p.name, err, tc.want)
+			}
+			if (tc.o.session != "") != (sess != nil) || (sess != nil && sess.ID != tc.o.session) {
+				t.Errorf("セッション = %+v (--session %q)", sess, tc.o.session)
+			}
+		})
 	}
 }
 

@@ -14,7 +14,8 @@ import (
 
 const sessionsUsage = `使い方: goro sessions [--state-dir DIR]
 
-セッション (goro run --repo が作った private clone) の一覧を、古い順に表示する: ID・作成日時・元の repo 名。
+セッション (goro run --repo が作った private clone) の一覧を、古い順に表示する: ID・作成日時・エージェント・元の repo 名。
+エージェントは、セッションを作ったもの (記録の無い古いセッションは claude。記録を読めないものは ?)。goro run --session は、そのエージェントで動かす。
 
   --state-dir DIR   状態を置く場所 (goro run と同じ。既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
 `
@@ -54,7 +55,7 @@ func runSessions(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// printSessions は、セッションの一覧を w に出す (ID・作成日時 (ローカル時刻)・元の repo 名)。
+// printSessions は、セッションの一覧を w に出す (ID・作成日時 (ローカル時刻)・エージェント・元の repo 名)。
 func printSessions(w io.Writer, list []session.Info) {
 	if len(list) == 0 {
 		fmt.Fprintln(w, "セッションは無い")
@@ -65,6 +66,10 @@ func printSessions(w io.Writer, list []session.Info) {
 		if repo == "" {
 			repo = "-"
 		}
-		fmt.Fprintf(w, "%s  %s  %s\n", in.ID, in.Created.Local().Format("2006-01-02 15:04:05"), repo)
+		agent := in.Agent
+		if agent == "" {
+			agent = claudeProfile.name // エージェントを記録する前に作ったセッションは、claude で作られた
+		}
+		fmt.Fprintf(w, "%s  %s  %s  %s\n", in.ID, in.Created.Local().Format("2006-01-02 15:04:05"), agent, repo)
 	}
 }

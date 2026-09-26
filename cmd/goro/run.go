@@ -26,7 +26,7 @@ const runUsage = `使い方: goro run (--repo PATH | --session ID | --login) [--
 
   --agent NAME      動かすエージェント: claude (既定) か opencode。ログイン状態・会話の履歴は、エージェントごとに別の檻専用の HOME に残る
   --repo PATH       PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
-  --session ID      前の goro run のセッションを再開する (同じ clone が見える。エージェントは、--agent で選び直す)
+  --session ID      前の goro run のセッションを再開する (同じ clone が見える)。エージェントは、そのセッションを作ったもの (--agent は省略できる。別のエージェントは断る)
   --login           repo・clone 無しで、空の作業ディレクトリでエージェントのログインを行う (ログイン状態は、檻専用の HOME に残る)。
                     claude は対話起動する (初回の onboarding = テーマ・ログイン・Security notes を通す)。opencode は auth login を起動する
   --name N          clone の user.name (--repo のとき。既定は goro)
@@ -89,7 +89,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	flags.StringVar(&o.name, "name", "", "")
 	flags.StringVar(&o.email, "email", "", "")
 	flags.StringVar(&o.stateDir, "state-dir", "", "")
-	flags.StringVar(&o.agent, "agent", "claude", "")
+	flags.StringVar(&o.agent, "agent", "", "") // 空 = 省略
 	flags.StringVar(&o.claude, "claude", "", "")
 	flags.StringVar(&o.opencode, "opencode", "", "")
 	flags.Var(&allow, "allow", "")
@@ -97,6 +97,8 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 		return o, err // flag が、理由と使い方を出している
 	}
 	o.allow, o.agentArgs = allow, tail
+	agentSet := false // --agent が書かれたか (省略と、空の値を区別する)
+	flags.Visit(func(f *flag.Flag) { agentSet = agentSet || f.Name == "agent" })
 
 	fail := func(format string, a ...any) (runOptions, error) {
 		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
@@ -118,13 +120,17 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	if (o.name != "" || o.email != "") && o.repo == "" {
 		return fail("--name と --email は、--repo のときだけ使える (clone の名義)")
 	}
-	agent, ok := agentByName(o.agent)
-	if !ok {
-		return fail("--agent は %s: %q", agentNames(), o.agent)
+	switch {
+	case agentSet:
+		if _, ok := agentByName(o.agent); !ok {
+			return fail("--agent は %s: %q", agentNames(), o.agent)
+		}
+	case o.session == "":
+		o.agent = claudeProfile.name // 既定。--session で省略したときは、空のまま: セッションを作ったエージェントで動かす (doRun が決める)
 	}
-	for _, other := range agents { // 動かさないエージェントの実行ファイルを指しても、効かない: 黙って無視せず、断る
-		if other.name != agent.name && o.exeOption(other) != "" {
-			return fail("--%s は、--agent %s のときだけ使える (--agent は %s。実行ファイルを指すのは --%s)", other.name, other.name, agent.name, agent.name)
+	if o.agent != "" {
+		if err := o.checkExeOptions(o.profile()); err != nil {
+			return fail("%v", err)
 		}
 	}
 	if err := checkAllow(o.allow); err != nil {
@@ -139,6 +145,17 @@ func (o runOptions) profile() agentProfile {
 		return p
 	}
 	return claudeProfile
+}
+
+// checkExeOptions は、動かさないエージェントの実行ファイルを指すオプション (--claude・--opencode) が無いことを確かめる:
+// 効かないオプションを、黙って無視せず、断る。
+func (o runOptions) checkExeOptions(agent agentProfile) error {
+	for _, other := range agents {
+		if other.name != agent.name && o.exeOption(other) != "" {
+			return fmt.Errorf("--%s は、--agent %s のときだけ使える (動かすエージェントは %s。実行ファイルを指すのは --%s)", other.name, other.name, agent.name, agent.name)
+		}
+	}
+	return nil
 }
 
 // exeOption は、エージェント p の実行ファイルを指すオプション (--claude・--opencode) の値。
@@ -253,8 +270,42 @@ type runTarget struct {
 	runDir string // /run/goro に見せる
 }
 
+// pickAgent は、この goro run で動かすエージェントと、--session で再開する既存のセッション (--session でなければ nil) を決める。
+//
+// --session は、セッションを作ったエージェント (セッションの記録。記録の無い、エージェントを記録する前のセッションは claude) で
+// 動かす。clone には、エージェントが置いた設定 (.claude/settings.json・opencode.json・.opencode/ など) が残り、次にそこで動く
+// エージェントが起動時に読んで実行する。別のエージェント (別の HOME の認証情報と、別の許可宛先を持つ) で使い回すと、
+// 片方の檻が置いたものが、もう片方の檻で動く。--agent を省略したときは、記録のエージェントで動き、記録と違う --agent は断る。
+func pickAgent(o runOptions, store *session.Store) (agentProfile, *session.Session, error) {
+	if o.session == "" {
+		return o.profile(), nil, nil
+	}
+	sess, err := store.Get(o.session)
+	if err == nil {
+		err = requireDir(sess.Clone)
+	}
+	if err != nil {
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %w", err)
+	}
+	name, err := store.Agent(sess)
+	if err != nil {
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %w", err)
+	}
+	if name == "" {
+		name = claudeProfile.name
+	}
+	recorded, ok := agentByName(name)
+	if !ok {
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: 記録されたエージェント %q を、この goro は知らない", name)
+	}
+	if o.agent != "" && o.agent != recorded.name {
+		return agentProfile{}, nil, fmt.Errorf("このセッションは %s で作られた。--agent %s では使えない。別のエージェントで使うには、--repo から新しいセッションを作ってください",
+			recorded.name, o.agent)
+	}
+	return recorded, sess, nil
+}
+
 func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) int {
-	agent := o.profile()
 	fail := func(format string, a ...any) int {
 		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
 		return 1
@@ -267,6 +318,19 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if err := checkSockPath(sockPathFor(stateDir, o)); err != nil {
 		return fail("%v", err)
 	}
+	host := bwrap.CurrentHost()
+	store, err := session.NewStore(stateDir, host)
+	if err != nil {
+		return fail("%v", err)
+	}
+	// エージェントは、実行ファイルと HOME を決める前に知る (--session は、記録のエージェントで動かす)。
+	agent, existing, err := pickAgent(o, store)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if err := o.checkExeOptions(agent); err != nil { // --session で --agent を省略したとき、parseRunArgs は、まだ断れない
+		return fail("%v", err)
+	}
 	agentExe, err := resolveAgentExe(agent, o.exeOption(agent), os.Getenv(agent.exeEnv()), exec.LookPath)
 	if err != nil {
 		return fail("%v", err)
@@ -277,11 +341,6 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	}
 	if err != nil {
 		return fail("goro 自身の実行ファイルを決められない: %v", err)
-	}
-	host := bwrap.CurrentHost()
-	store, err := session.NewStore(stateDir, host)
-	if err != nil {
-		return fail("%v", err)
 	}
 	agentHome := filepath.Join(stateDir, agent.homeName)
 	if err := ensureDir(agentHome); err != nil {
@@ -299,21 +358,13 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 			}
 		}
 	default:
-		var sess *session.Session
+		sess := existing
 		if o.repo != "" {
-			sess, err = store.Create(ctx, session.CreateOptions{Repo: o.repo, Name: o.name, Email: o.email})
+			sess, err = store.Create(ctx, session.CreateOptions{Repo: o.repo, Name: o.name, Email: o.email, Agent: agent.name})
 			if err != nil {
 				return fail("セッションを作れない: %v", err)
 			}
 			fmt.Fprintf(stderr, "goro run: セッション %s を作った\n", sess.ID)
-		} else {
-			sess, err = store.Get(o.session)
-			if err == nil {
-				err = requireDir(sess.Clone)
-			}
-			if err != nil {
-				return fail("セッションを使えない: %v", err)
-			}
 		}
 		if err := os.MkdirAll(sess.Run, 0o700); err != nil {
 			return fail("run dir を作れない: %v", err)

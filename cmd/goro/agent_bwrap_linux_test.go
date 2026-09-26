@@ -164,28 +164,149 @@ func TestRunOpenCodeEgress(t *testing.T) {
 	}
 }
 
-// セッション (clone) は、エージェントによらず同じ: claude が作ったセッションを、opencode で再開できる (同じ clone が見える)。
-// opencode の案内の再開のコマンドには、--agent opencode が付く。
+// opencode が作ったセッションは、opencode で再開できる (同じ clone が見える)。--agent は省略できる。案内の再開のコマンドには、
+// --agent opencode が付く。claude が作ったセッションを opencode で使う場合は、TestRunSessionKeepsItsAgent。
 func TestRunOpenCodeResumesSession(t *testing.T) {
 	f := newRunFixture(t)
-	run1 := f.goro(t, "run", "--repo", f.repo, "--", "commit", "hello.txt", "hi there", "add hello").mustOK(t)
+	run1 := f.goro(t, "run", "--agent", "opencode", "--repo", f.repo, "--", "commit", "hello.txt", "hi there", "add hello").mustOK(t)
 	id := sessionID(t, run1)
-	if strings.Contains(run1.stderr, "--agent") {
-		t.Errorf("claude の案内に --agent が出ている:\n%s", run1.stderr)
+	if !strings.Contains(run1.stderr, "goro run --agent opencode --session "+id+"\n") {
+		t.Errorf("opencode の新しいセッションの案内:\n%s", run1.stderr)
 	}
-	run2 := f.goro(t, "run", "--agent", "opencode", "--session", id, "--", "gitlog", "hello.txt").mustOK(t)
-	if !strings.Contains(run2.stdout, `file="hi there"`) {
-		t.Errorf("opencode で再開した clone に、claude の commit が見えない:\n%s", run2)
+	for _, args := range [][]string{
+		{"run", "--agent", "opencode", "--session", id, "--", "gitlog", "hello.txt"},
+		{"run", "--session", id, "--", "gitlog", "hello.txt"}, // --agent を省略: 記録のエージェントで動く
+	} {
+		run2 := f.goro(t, args...).mustOK(t)
+		if !strings.Contains(run2.stdout, `file="hi there"`) {
+			t.Errorf("%v: 再開した clone に、前の commit が見えない:\n%s", args, run2)
+		}
+		if !strings.Contains(run2.stderr, "goro run --agent opencode --session "+id+"\n") ||
+			!strings.Contains(run2.stderr, "goro export "+id+"\n") || !strings.Contains(run2.stderr, "/sessions で選ぶ") {
+			t.Errorf("%v: opencode の終了後の案内:\n%s", args, run2.stderr)
+		}
 	}
-	if !strings.Contains(run2.stderr, "goro run --agent opencode --session "+id+"\n") ||
-		!strings.Contains(run2.stderr, "goro export "+id+"\n") || !strings.Contains(run2.stderr, "/sessions で選ぶ") {
-		t.Errorf("opencode の終了後の案内:\n%s", run2.stderr)
+}
+
+// セッションは、作ったエージェントで動かす。clone には、エージェントが置いた設定 (.claude/settings.json・opencode.json など) が
+// 残り、次にそこで動くエージェントが読んで実行する: 別のエージェント (別の HOME の認証情報と許可宛先を持つ) で使い回さない。
+//   - 作ったエージェントは、セッションのディレクトリに記録される (檻に見えない場所)。
+//   - --session で --agent を省略すると、記録のエージェントで動く (HOME・環境変数・許可宛先も、そのエージェントのもの)。
+//   - 記録と違う --agent は、檻を起動せず (HOME も作らず)、原因の分かるエラーで断る。どちらの向きも。
+//   - 記録の無い (エージェントを記録する前の) セッションは、claude。記録が壊れていれば、断る。
+func TestRunSessionKeepsItsAgent(t *testing.T) {
+	f := newRunFixture(t)
+	cage := func(t *testing.T, args ...string) (kv map[string]string, r goroResult) {
+		t.Helper()
+		r = f.goro(t, args...).mustOK(t)
+		kv, _ = parseOut(r.stdout)
+		return kv, r
 	}
-	// opencode で新しく作ったセッションの案内も、同じ形。
-	run3 := f.goro(t, "run", "--agent", "opencode", "--repo", f.repo, "--", "exit", "0").mustOK(t)
-	if id3 := sessionID(t, run3); !strings.Contains(run3.stderr, "goro run --agent opencode --session "+id3+"\n") {
-		t.Errorf("opencode の新しいセッションの案内:\n%s", run3.stderr)
+	hasEnv := func(kv map[string]string, name string) bool { return strings.Contains(","+kv["env"]+",", ","+name+",") }
+	refused := func(t *testing.T, r goroResult, want ...string) {
+		t.Helper()
+		if r.code != 1 || r.stdout != "" || strings.Contains(r.stderr, "再開:") {
+			t.Errorf("断られていない (終了コード 1・檻を起動しない・案内なし のはず):\n%s", r)
+		}
+		for _, w := range want {
+			if !strings.Contains(r.stderr, w) {
+				t.Errorf("エラーに %q が無い:\n%s", w, r.stderr)
+			}
+		}
 	}
+	agentFile := func(id string) string { return filepath.Join(f.stateDir(), "sessions", id, "agent") }
+
+	// claude が作ったセッション (--agent を省略)。記録は、セッションのディレクトリの直下にあり、clone・run の中には無い。
+	cid := sessionID(t, f.goro(t, "run", "--repo", f.repo, "--", "exit", "0").mustOK(t))
+	if b, err := os.ReadFile(agentFile(cid)); err != nil || string(b) != "claude\n" {
+		t.Fatalf("claude のセッションの記録 = %q, %v", b, err)
+	}
+	// opencode でその再開を頼むと、断る。opencode の HOME も作らない (檻を起動する前に断る)。
+	r := f.goro(t, "run", "--agent", "opencode", "--session", cid, "--", "info")
+	refused(t, r, "このセッションは claude で作られた", "--agent opencode では使えない", "--repo から新しいセッションを作ってください")
+	if _, err := os.Lstat(f.homeOf("home-opencode")); err == nil {
+		t.Error("断ったのに、opencode の HOME が作られた")
+	}
+	// --opencode を付けても、同じ (opencode では動かさない)。--agent を省略した --session に、動かさない側の実行ファイルを指すと断る。
+	refused(t, f.goro(t, "run", "--session", cid, "--opencode", f.exe, "--", "info"), "--opencode は、--agent opencode のときだけ使える", "動かすエージェントは claude")
+
+	// opencode が作ったセッション。
+	oid := sessionID(t, f.goro(t, "run", "--agent", "opencode", "--repo", f.repo, "--", "exit", "0").mustOK(t))
+	if b, err := os.ReadFile(agentFile(oid)); err != nil || string(b) != "opencode\n" {
+		t.Fatalf("opencode のセッションの記録 = %q, %v", b, err)
+	}
+	refused(t, f.goro(t, "run", "--agent", "claude", "--session", oid, "--", "info"), "このセッションは opencode で作られた", "--agent claude では使えない")
+	refused(t, f.goro(t, "run", "--session", oid, "--claude", f.exe, "--", "info"), "--claude は、--agent claude のときだけ使える", "動かすエージェントは opencode")
+
+	// --agent の省略・記録と同じ --agent: 記録のエージェントで動く。
+	for _, args := range [][]string{{"--session", cid}, {"--agent", "claude", "--session", cid}} {
+		kv, r := cage(t, append(append([]string{"run"}, args...), "--", "info")...)
+		if !hasEnv(kv, "DISABLE_TELEMETRY") || hasEnv(kv, "OPENCODE_DISABLE_AUTOUPDATE") || strings.Contains(r.stderr, "--agent opencode") {
+			t.Errorf("%v: claude の檻になっていない (env=%s):\n%s", args, kv["env"], r.stderr)
+		}
+	}
+	for _, args := range [][]string{{"--session", oid}, {"--agent", "opencode", "--session", oid}} {
+		kv, r := cage(t, append(append([]string{"run"}, args...), "--", "info")...)
+		if !hasEnv(kv, "OPENCODE_DISABLE_AUTOUPDATE") || hasEnv(kv, "DISABLE_TELEMETRY") || !strings.Contains(r.stderr, "goro run --agent opencode --session "+oid) {
+			t.Errorf("%v: opencode の檻になっていない (env=%s):\n%s", args, kv["env"], r.stderr)
+		}
+	}
+	// 省略時の許可宛先も、記録のエージェントのもの。
+	_, conn := cage(t, "run", "--session", oid, "--", "connect", "opencode.ai:443", "api.anthropic.com:443")
+	_, res := parseOut(conn.stdout)
+	if res["opencode.ai:443"] == "403" || res["api.anthropic.com:443"] != "403" {
+		t.Errorf("--agent を省略した opencode のセッションの許可宛先: %v", res)
+	}
+
+	// 一覧: エージェントの名前が出る。
+	ss := f.goro(t, "sessions").mustOK(t)
+	for id, want := range map[string]string{cid: "  claude  repo", oid: "  opencode  repo"} {
+		if line := lineWith(ss.stdout, id); !strings.HasSuffix(line, want) {
+			t.Errorf("sessions の %s の行 = %q, want 末尾 %q", id, line, want)
+		}
+	}
+
+	// 記録の無い (エージェントを記録する前の) セッションは、claude。省略でも、--agent claude でも動き、opencode は断る。
+	if err := os.Remove(agentFile(cid)); err != nil {
+		t.Fatal(err)
+	}
+	if kv, _ := cage(t, "run", "--session", cid, "--", "info"); !hasEnv(kv, "DISABLE_TELEMETRY") {
+		t.Errorf("記録の無いセッションが、claude で動かない (env=%s)", kv["env"])
+	}
+	refused(t, f.goro(t, "run", "--agent", "opencode", "--session", cid, "--", "info"), "このセッションは claude で作られた")
+	if line := lineWith(f.goro(t, "sessions").mustOK(t).stdout, cid); !strings.HasSuffix(line, "  claude  repo") {
+		t.Errorf("記録の無いセッションの一覧の行 = %q, want claude", line)
+	}
+
+	// 記録が壊れている (形が違う・通常のファイルでない) セッションは、断る (黙って claude や opencode にしない)。一覧は ? を出す。
+	for name, mk := range map[string]func() error{
+		"形が違う": func() error { return os.WriteFile(agentFile(cid), []byte("Not An Agent\n"), 0o600) },
+		"symlink": func() error {
+			os.Remove(agentFile(cid))
+			return os.Symlink(agentFile(oid), agentFile(cid)) // 先は、形の正しい opencode の記録。読まれたら opencode で動いてしまう
+		},
+	} {
+		os.Remove(agentFile(cid))
+		if err := mk(); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{{"--session", cid}, {"--agent", "claude", "--session", cid}, {"--agent", "opencode", "--session", cid}} {
+			refused(t, f.goro(t, append(append([]string{"run"}, args...), "--", "info")...), "セッションを使えない", "エージェントの記録")
+		}
+		if line := lineWith(f.goro(t, "sessions").mustOK(t).stdout, cid); !strings.HasSuffix(line, "  ?  repo") {
+			t.Errorf("%s: 壊れた記録の一覧の行 = %q, want ?", name, line)
+		}
+	}
+}
+
+// lineWith は、out の行のうち、substr を含む最初の行 (無ければ空)。
+func lineWith(out, substr string) string {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, substr) {
+			return l
+		}
+	}
+	return ""
 }
 
 // --login の作業ディレクトリ (/work) と run dir は、エージェントごとに別: 片方の --login の檻が /work に置いたものが、もう片方の

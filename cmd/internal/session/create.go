@@ -23,6 +23,10 @@ type CreateOptions struct {
 	Repo string
 	// Name・Email は、clone の user.name・user.email (空なら既定)。
 	Name, Email string
+	// Agent は、このセッションで動かすエージェントの名前 (小文字・数字・- の、32 文字以下)。セッションのディレクトリに記録し、
+	// Store.Agent で読める。空なら記録しない。clone は、エージェントが rw で使い、そこに置かれた設定 (.claude/・opencode.json など) は、
+	// 次にそこで動くエージェントに読まれる。別のエージェントで使い回さないための、呼び手の判断の材料にする。
+	Agent string
 }
 
 // Create は、Repo の private clone を持つ新しいセッションを作る。
@@ -38,6 +42,11 @@ func (s *Store) Create(ctx context.Context, o CreateOptions) (sess *Session, err
 	name, email, err := identity(o.Name, o.Email)
 	if err != nil {
 		return nil, err
+	}
+	if o.Agent != "" {
+		if err := checkAgent(o.Agent); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := os.Stat(gitBin); err != nil {
 		return nil, fmt.Errorf("session: git を使えない (%s): %w", gitBin, err)
@@ -65,6 +74,13 @@ func (s *Store) Create(ctx context.Context, o CreateOptions) (sess *Session, err
 	}
 	if err := writeRepoLabel(sess, repo); err != nil {
 		return nil, err
+	}
+	// エージェントの記録は、clone を作る前 (檻を起動する前) に書く: 書けなければ、ここで失敗し、ディレクトリごと消える。
+	// 後で書くと、書けなかったセッションが、記録の無い (= 古い) セッションとして、別のエージェントで使われうる。
+	if o.Agent != "" {
+		if err := writeAgent(sess, o.Agent); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.runGit(ctx, s.cloneBinds(repo, sess), "clone", "--no-local", "--no-hardlinks",
 		"-c", "user.name="+name, "-c", "user.email="+email, "--", "/src", "/work"); err != nil {

@@ -27,6 +27,8 @@ type Info struct {
 	Created time.Time
 	// Repo は、元の repo のディレクトリ名。記録が無い・読めないときは空。
 	Repo string
+	// Agent は、セッションを作ったエージェントの名前。記録が無いときは空。読めない・正しくないときは UnknownAgent。
+	Agent string
 }
 
 // List は、セッションを、古い順に返す。名前が ID の形でないもの、本物のディレクトリでないもの (symlink を含む) は、数えない。
@@ -45,7 +47,12 @@ func (s *Store) List() ([]Info, error) {
 		if err != nil {
 			continue
 		}
-		out = append(out, Info{ID: id, Created: created, Repo: readRepoLabel(filepath.Join(s.root, id))})
+		dir := filepath.Join(s.root, id)
+		agent, err := readAgent(dir)
+		if err != nil {
+			agent = UnknownAgent
+		}
+		out = append(out, Info{ID: id, Created: created, Repo: readRepoLabel(dir), Agent: agent})
 	}
 	slices.SortFunc(out, func(a, b Info) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil
