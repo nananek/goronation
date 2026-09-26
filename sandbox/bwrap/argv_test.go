@@ -257,6 +257,7 @@ func TestArgvRejectsSecretSrc(t *testing.T) {
 		testHome + "/.codex", testHome + "/.copilot", testHome + "/.commandcode",
 		testHome + "/.config/gh", testHome + "/.config/gh/hosts.yml", testHome + "/.config/git", testHome + "/.config/gcloud",
 		testHome + "/.config/op", testHome + "/.local/share/keyrings",
+		testHome + "/.local/share/opencode", testHome + "/.local/share/opencode/auth.json", testHome + "/.config/opencode", testHome + "/.config/opencode/opencode.json",
 		// 機密を含む親 (HOME 自体は上で見る)。
 		testHome + "/.config", testHome + "/.local/share",
 	} {
@@ -442,6 +443,8 @@ func TestArgvAccepts(t *testing.T) {
 		{Src: "/tmp/work", RW: true}, {Src: "/tmp/x/y/z", RW: true}, {Src: "/var/tmp/work"}, {Src: "/data/work", RW: true},
 		{Src: "/srv/clone", RW: true}, {Src: "/mnt/clone", RW: true},
 		{Src: testHome + "/.local/share/claude/versions/2.1.283", InHome: true},
+		{Src: testHome + "/.opencode/bin/opencode", InHome: true}, // opencode の公式 install script の置き場 (機密ではない)
+		{Src: testHome + "/.local/share/opencode-cli/opencode", InHome: true}, // 名前が .local/share/opencode に似ているだけ
 		{Src: testHome + "/work", RW: true, InHome: true}, {Src: testHome + "/.local/state/goro", RW: true, InHome: true},
 		{Src: testHome + "/.config/goro", InHome: true}, {Src: testHome + "/.cache/goro/x", RW: true, InHome: true},
 		// 名前が、拒否する path の接頭辞に似ているだけの path は、拒否しない (path の要素の単位で比べる)。
@@ -463,7 +466,8 @@ func TestArgvAccepts(t *testing.T) {
 	for _, e := range []EnvVar{
 		{"PATH", "/usr/bin:/bin"}, {"HTTPS_PROXY", "http://127.0.0.1:3128"}, {"SSL_CERT_FILE", "/etc/ssl/certs/ca.crt"},
 		{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"}, {"DISABLE_TELEMETRY", "1"}, {"DISABLE_ERROR_REPORTING", "1"},
-		{"DISABLE_AUTOUPDATER", "1"}, {"TERM", "xterm-256color"}, {"LANG", "C.UTF-8"}, {"_x9", "a=b c"}, {"a", ""},
+		{"DISABLE_AUTOUPDATER", "1"}, {"OPENCODE_DISABLE_AUTOUPDATE", "1"}, {"OPENCODE_DISABLE_SHARE", "1"},
+		{"OPENCODE_DISABLE_MODELS_FETCH", "1"}, {"OPENCODE_DISABLE_LSP_DOWNLOAD", "1"}, {"TERM", "xterm-256color"}, {"LANG", "C.UTF-8"}, {"_x9", "a=b c"}, {"a", ""},
 		{"NO_PROXY", "127.0.0.1,localhost"}, {"CLAUDE_CONFIG_DIR", "/home/goro/.claude"},
 	} {
 		s := cageSpec()
