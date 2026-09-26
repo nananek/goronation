@@ -53,6 +53,14 @@ func TestConformanceMutant2Inner(t *testing.T) {
 			}
 			return nil
 		}
+	case "fd-10plus":
+		// 継承した fd を、10〜1023 だけ close-on-exec にする (3〜9 は、檻に届く)。
+		closeInheritedFDs = func() error {
+			for fd := 10; fd <= 1023; fd++ {
+				syscall.CloseOnExec(fd)
+			}
+			return nil
+		}
 	case "declared-cred-env":
 		nb = func(h contract.Host) sandbox.Backend { return declaresCredEnv{New(h)} }
 	case "leaks-cred-env":
@@ -68,6 +76,7 @@ func TestConformanceCatchesMutants2(t *testing.T) {
 	needBwrap(t)
 	for mutant, item := range map[string]string{
 		"fd-3to255":         "inherited-fd", // 固定の範囲だけを閉じる実装 (256 以降の fd が届く)
+		"fd-10plus":         "inherited-fd", // 低い番号の fd (3〜9) を閉じ忘れる実装
 		"declared-cred-env": "env-clean",    // 資格情報らしい名前を、ExtraEnv に宣言しても許されない
 		"leaks-cred-env":    "env-clean",    // ホストの資格情報を、檻に渡す
 	} {
