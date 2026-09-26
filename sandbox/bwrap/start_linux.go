@@ -26,13 +26,13 @@ type Cmd struct {
 }
 
 // Start は、s を検証し (symlink を辿った実際の path も、同じ規則で検証する)、檻を起動する。
-// bwrap には、環境変数を渡さない (檻の環境変数は、s.Env だけ)。NewSession が false で、標準入出力のどれかが
-// 端末なら、TIOCSTI が無効なことを確かめ、そうでなければ起動しない。
+// bwrap には、環境変数を渡さない (檻の環境変数は、s.Env だけ)。NewSession が false で、標準入出力のどれかが端末か、
+// 呼び手が制御端末を持つなら、TIOCSTI が無効なことを確かめ、そうでなければ起動しない。
 func Start(ctx context.Context, s Spec) (*Cmd, error) {
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
-	if !s.NewSession && stdioIsTerminal(s.Stdin, s.Stdout, s.Stderr) {
+	if !s.NewSession && (stdioIsTerminal(s.Stdin, s.Stdout, s.Stderr) || controllingTerminal()) {
 		if err := checkTIOCSTI(); err != nil {
 			return nil, err
 		}
@@ -111,18 +111,34 @@ func evalOrSelf(p string) string {
 }
 
 // checkTIOCSTI は、TIOCSTI が無効 (legacy_tiocsti が 0) なことを確かめる。確かめられなければ error にする。
-// 端末に直結した檻は、制御端末を共有するので、TIOCSTI が有効だと、檻がホストの端末に、キーを注入できる。
+// 端末に直結した檻は、呼び手の制御端末を共有するので、TIOCSTI が有効だと、檻がホストの端末に、キーを注入できる。
 func checkTIOCSTI() error {
 	b, err := os.ReadFile(tiocstiPath)
 	if err != nil {
-		return fmt.Errorf("bwrap: 端末に直結して起動するが、TIOCSTI が無効なことを確かめられない (%w)。"+
+		return fmt.Errorf("bwrap: 端末 (標準入出力か制御端末) に直結して起動するが、TIOCSTI が無効なことを確かめられない (%w)。"+
 			"kernel を 6.2 以降にして %s を 0 にするか、NewSession を使う", err, tiocstiPath)
 	}
 	if v := strings.TrimSpace(string(b)); v != "0" {
-		return fmt.Errorf("bwrap: 端末に直結して起動するが、TIOCSTI が有効 (%s = %q)。"+
+		return fmt.Errorf("bwrap: 端末 (標準入出力か制御端末) に直結して起動するが、TIOCSTI が有効 (%s = %q)。"+
 			"sysctl dev.tty.legacy_tiocsti=0 にするか、NewSession を使う", tiocstiPath, v)
 	}
 	return nil
+}
+
+// controllingTerminal は、Start を呼んだプロセスが制御端末を持つか。TIOCSTI が効く相手は、標準入出力ではなく制御端末で、
+// bwrap は --new-session が無いと setsid しないので、檻も同じ制御端末を持つ。標準入出力が pipe やファイルでも、
+// 制御端末を持てば、`goro run > log 2>&1 < /dev/null` の形でも、檻はホストの端末に届く。テストが差し替える。
+var controllingTerminal = func() bool { return terminalAt("/dev/tty") }
+
+// terminalAt は、path (/dev/tty) を開いて、制御端末を持つかを調べる。開けなくても、理由が ENXIO (制御端末が無い)・
+// ENOENT (/dev/tty が無い) 以外なら、持つとみなす (fail-closed: 確かめられないのに、持たないとはしない)。
+func terminalAt(path string) bool {
+	fd, err := syscall.Open(path, syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_CLOEXEC, 0)
+	if err == nil {
+		syscall.Close(fd)
+		return true
+	}
+	return err != syscall.ENXIO && err != syscall.ENOENT
 }
 
 // stdioIsTerminal は、標準入出力のどれかが、端末の *os.File か。*os.File 以外は、bwrap への pipe 越しになるので、端末ではない。

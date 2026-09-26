@@ -653,6 +653,8 @@ func TestStartChecksTIOCSTIOnTerminal(t *testing.T) {
 }
 
 // TestStartWithTerminal は、TIOCSTI が無効なら、端末に直結して起動できること・NewSession なら確認しないことを確認する。
+// 「端末でなければ (標準入出力も制御端末も) 確認しない」は、制御端末を持たない子プロセスが要るので、
+// TestStartWithoutTerminalDoesNotCheckTIOCSTI (ctty_linux_test.go) が確かめる。
 func TestStartWithTerminal(t *testing.T) {
 	needBwrap(t)
 	tty := openPtmx(t)
@@ -660,20 +662,15 @@ func TestStartWithTerminal(t *testing.T) {
 	for name, tc := range map[string]struct {
 		tiocsti    string
 		newSession bool
-		notTTY     bool
 	}{
-		"TIOCSTI 無効 (0)":    {"0\n", false, false},
-		"NewSession は確認しない": {"1\n", true, false},
-		"端末でなければ確認しない":      {"1\n", false, true},
+		"TIOCSTI 無効 (0)":    {"0\n", false},
+		"NewSession は確認しない": {"1\n", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			setTIOCSTI(t, tc.tiocsti)
 			s := probeSpec(t, fh.host(), t.TempDir(), t.TempDir(), "-noop")
 			s.NewSession = tc.newSession
 			s.Stdin, s.Stdout, s.Stderr = tty, tty, tty
-			if tc.notTTY {
-				s.Stdin, s.Stdout, s.Stderr = nil, io.Discard, io.Discard
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			c, err := Start(ctx, s)

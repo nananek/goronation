@@ -15,7 +15,7 @@
 //     HOME の下は、InHome を明示した作業用 dir だけ。システムの path は ro だけ。Start は、symlink を辿った実体にも同じ規則をかける。
 //   - bind-dst: Dst は絶対・クリーンで、重複せず、/・/proc・/dev の中は使えない。
 //   - env: 檻の環境変数は、Spec.Env に書いたものだけ。資格情報らしい名前 (SSH_AUTH_SOCK・*_TOKEN・AWS_* など) は error。
-//   - tty: NewSession が false (既定) で、端末に直結して起動するとき、TIOCSTI が無効と確かめられなければ、起動しない。
+//   - tty: NewSession が false (既定) で、端末に直結して (標準入出力のどれかが端末か、制御端末を持つ) 起動するとき、TIOCSTI が無効と確かめられなければ、起動しない。
 //
 // # 限界
 //

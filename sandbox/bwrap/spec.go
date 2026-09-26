@@ -29,8 +29,8 @@ type Spec struct {
 	// Cmd は、檻の中で実行するコマンド。Cmd[0] は絶対 path (PATH は検索しない)。
 	Cmd []string
 	// NewSession は、--new-session (setsid) を付けるか。既定 (false) は付けない。付けると制御端末を失い、
-	// 端末のサイズ変更 (SIGWINCH) が届かない。付けないとき、端末に直結して起動するなら、Start は
-	// TIOCSTI が無効なことを確かめる。
+	// 端末のサイズ変更 (SIGWINCH) が届かない。付けないとき、端末に直結して (標準入出力のどれかが端末か、
+	// 呼び手が制御端末を持つ) 起動するなら、Start は TIOCSTI が無効なことを確かめる。
 	NewSession bool
 	// Stdin・Stdout・Stderr は、檻のコマンドの標準入出力。nil なら、入力は空、出力は捨てる。*os.File 以外を渡すと、
 	// os/exec が pipe 越しに中継する (Stdin は、EOF になるまで、Cmd.Wait が戻らない)。

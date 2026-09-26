@@ -25,6 +25,10 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	// このプロセスのテストは、実行した端末に依らないようにする (制御端末を持つと、Start は TIOCSTI の sysctl を見る)。
+	// 制御端末の判定そのものは、制御端末の有る子プロセスと、無い子プロセスで、実物を確かめる (ctty_linux_test.go)。
+	// init() で役を演じる子プロセス (tiocsti_ctty_linux_test.go・ctty_linux_test.go) は、TestMain より前に動くので、実物のまま。
+	controllingTerminal = func() bool { return false }
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case probeArg:
