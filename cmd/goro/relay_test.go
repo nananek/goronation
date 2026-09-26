@@ -140,16 +140,30 @@ func TestRelayResetReleasesConnection(t *testing.T) {
 	sock := tempSock(t)
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	var conns atomic.Int32
-	startUpstream(t, sock, func(c net.Conn) {
-		defer c.Close()
-		if conns.Add(1) == 1 {
-			io.Copy(io.Discard, c)
-			<-release // EOF の後も、閉じずに開いておく
-			return
+	// 1 本目 (reset する接続) だけ、閉じずに開いておく。1 本目かどうかは、accept の順で決める。
+	// handler の goroutine の中で数えると、起動順が不定で、2 本目が先に「1 本目」になり、echo が返らない。
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for first := true; ; first = false {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			if !first {
+				go echo(c)
+				continue
+			}
+			go func() {
+				defer c.Close()
+				io.Copy(io.Discard, c)
+				<-release // EOF の後も、閉じずに開いておく
+			}()
 		}
-		echo(c)
-	})
+	}()
 	addr := startRelay(t, sock, 1)
 
 	c1 := dialTCP(t, addr)
