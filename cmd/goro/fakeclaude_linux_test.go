@@ -16,7 +16,8 @@ import (
 	"unsafe"
 )
 
-// 檻の中では、テストバイナリが、実際の goro (/opt/goro/goro) と、偽の claude (/opt/claude/claude) の代わりに動く:
+// 檻の中では、テストバイナリが、実際の goro (/opt/goro/goro) と、偽の claude (/opt/claude/claude)・偽の opencode
+// (/opt/opencode/opencode。同じ偽のエージェント) の代わりに動く:
 // bwrap は、起動するコマンドを、その path を argv[0] にして実行するので、名前で選ぶ。init は、テストバイナリの
 // TestMain より先に走る。syscall.Exit は、-race のバイナリの、終了時の 1 秒の待ち (atexit_sleep_ms) を避ける
 // (檻に環境変数は渡らないので、GORACE では避けられない)。
@@ -24,15 +25,15 @@ func init() {
 	switch filepath.Base(os.Args[0]) {
 	case "goro":
 		syscall.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr))
-	case "claude":
+	case "claude", "opencode":
 		syscall.Exit(fakeClaude(os.Args[1:]))
 	}
 }
 
-// fakeClaude は、偽の claude。最初の引数が、場面の名前で、結果を、標準出力に "キー=値" か "操作 => 結果" の行で出す
+// fakeClaude は、偽のエージェント (claude・opencode)。最初の引数が、場面の名前で、結果を、標準出力に "キー=値" か "操作 => 結果" の行で出す
 // (goro run は、標準入出力を、檻の中の claude に直結する)。場面は次の通り。
 //
-//	auth ...              --login のときの起動 (claude auth login)。引数と環境を出し、HOME にログインの目印を作る
+//	auth ...              opencode の --login のときの起動 (auth login)。引数と環境を出し、HOME にログインの目印を作る
 //	info                  引数・作業ディレクトリ・HOME・環境変数の名前・/work の中身を出す
 //	probe OP...           OP (stat:PATH・write:PATH・dial:ADDR・mnt:PATH) を試して、結果を出す。mnt は、PATH の mount が ro か rw か
 //	connect TARGET...     HTTPS_PROXY へ、TARGET の CONNECT を送り、応答の状態コードを出す

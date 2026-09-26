@@ -30,8 +30,9 @@ type agentProfile struct {
 	loginGuide string
 	// resumeNote は、セッションの案内 (再開・取り出し) の後ろに出す 1 行 (空なら出さない)。
 	resumeNote string
-	// benign は、拒否されても、動作に影響しない宛先と、その説明。終了後の一覧には出すが、説明を添え、--allow の例には使わない。
-	benign map[string]string
+	// denyNotes は、拒否されたときに、説明を添える宛先 (と、その説明)。終了後の一覧には出し (隠さない)、説明を添えて、--allow の
+	// 例には使わない。許可しなくてよいもの (動作に影響しない) と、許可より先に直すべきものを書く。
+	denyNotes map[string]string
 }
 
 // exeEnv は、実行ファイルを指す環境変数の名前 (--<name> と同じ効果。テストにも使う)。
@@ -61,4 +62,59 @@ var claudeProfile = agentProfile{
 	loginArgs: nil,
 	loginGuide: "ログイン用に claude を対話起動する。テーマを選び、出た URL をホストのブラウザで開いてコードを貼り、" +
 		"Security notes で Enter を押したら、/exit で終える (onboarding を最後まで通らないと、次の起動が、ログイン画面からやり直しになる)",
+}
+
+// opencodeProfile は、opencode (OpenCode Zen を使う) の profile。実測 (opencode 1.18.32・檻の中) に基づく。
+var opencodeProfile = agentProfile{
+	name:       "opencode",
+	exeExample: "~/.opencode/bin/opencode",
+	jailExe:    "/opt/opencode/opencode",
+	homeName:   "home-opencode", // claude の HOME (home) とは別: ログイン状態 (auth.json)・会話の履歴 (DB) を混ぜない
+	// 通信を止める変数 (実在は、binary の RuntimeFlags で確認):
+	//   OPENCODE_DISABLE_AUTOUPDATE   更新の確認 (api.github.com) を止める (実測)
+	//   OPENCODE_DISABLE_MODELS_FETCH モデル一覧の取得 (models.opencode.ai) を止める。同梱の一覧で動く (実測: 一覧は、取得を許しても同じ)
+	//   OPENCODE_DISABLE_SHARE        会話の共有 (share) を止める。project の設定に share: auto があっても、共有しない
+	//   OPENCODE_DISABLE_LSP_DOWNLOAD LSP サーバーの自動 download (github.com) を止める
+	// 止められないもの: プラグインの依存の install (registry.npmjs.org。失敗しても動く)。denyNotes に書く。
+	env: []bwrap.EnvVar{
+		{Key: "OPENCODE_DISABLE_AUTOUPDATE", Value: "1"},
+		{Key: "OPENCODE_DISABLE_MODELS_FETCH", Value: "1"},
+		{Key: "OPENCODE_DISABLE_SHARE", Value: "1"},
+		{Key: "OPENCODE_DISABLE_LSP_DOWNLOAD", Value: "1"},
+	},
+	hosts: egress.OpenCodeHosts,
+	// opencode に onboarding は無い (認証を保存すれば、次の起動は、そのまま使える)。--login は、auth login (provider を選び、
+	// Zen なら API キーを貼る) を起動する: 終わると、自分で終了する。
+	loginArgs: []string{"auth", "login"},
+	loginGuide: "ログイン用に opencode の auth login を起動する。provider を選び (Zen なら OpenCode Zen)、https://opencode.ai/auth で作った " +
+		"API キーを貼ると、檻専用の HOME に保存されて終わる (OAuth の provider は、ホストのブラウザの localhost に戻れないので、使えない)",
+	resumeNote: "opencode の会話は、この --agent の檻専用の HOME に残る。続きは、起動後に /sessions で選ぶ (-- --continue は、同じ repo の直近の会話を開く)",
+	denyNotes: map[string]string{
+		"registry.npmjs.org:443": "opencode が、起動のたびに、プラグインの依存 (@opencode-ai/plugin) の install を試す。失敗しても動くので、許可しなくてよい",
+		"models.opencode.ai:443": "auth login が、provider の一覧を取ろうとする。同梱の一覧で動くので、許可しなくてよい",
+		"github.com:443": "grep ツールが使う ripgrep (rg) を、opencode が download しようとした (PATH に rg が無い)。ホストに rg を入れる " +
+			"(Arch: pacman -S ripgrep。檻の /usr に見える)。github.com は許可しないほうがよい",
+	},
+}
+
+// agents は、--agent に指定できるエージェント。先頭が既定。
+var agents = []agentProfile{claudeProfile, opencodeProfile}
+
+// agentByName は、name (--agent の値) のエージェント。無ければ ok が false。
+func agentByName(name string) (p agentProfile, ok bool) {
+	for _, a := range agents {
+		if a.name == name {
+			return a, true
+		}
+	}
+	return agentProfile{}, false
+}
+
+// agentNames は、--agent に指定できる名前を、"claude か opencode" の形に並べる (エラーの文言用)。
+func agentNames() string {
+	names := make([]string, len(agents))
+	for i, a := range agents {
+		names[i] = a.name
+	}
+	return strings.Join(names, " か ")
 }

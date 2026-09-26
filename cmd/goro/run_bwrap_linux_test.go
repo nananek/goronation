@@ -52,8 +52,10 @@ func newRunFixture(t *testing.T) *runFixture {
 	dir := shortDir(t)
 	f := &runFixture{dir: dir, home: filepath.Join(dir, "home"), repo: filepath.Join(dir, "repo"), exe: exe}
 	for path, content := range map[string]string{
-		filepath.Join(f.home, ".ssh", "id_test"):             "PRIVATE-KEY-MARKER\n",
-		filepath.Join(f.home, ".claude", "credentials.json"): "TOKEN-MARKER\n",
+		filepath.Join(f.home, ".ssh", "id_test"):                          "PRIVATE-KEY-MARKER\n",
+		filepath.Join(f.home, ".claude", "credentials.json"):              "TOKEN-MARKER\n",
+		filepath.Join(f.home, ".local", "share", "opencode", "auth.json"): "OPENCODE-AUTH-MARKER\n",
+		filepath.Join(f.home, ".config", "opencode", "opencode.json"):     "OPENCODE-CONFIG-MARKER\n",
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
@@ -62,7 +64,7 @@ func newRunFixture(t *testing.T) *runFixture {
 			t.Fatal(err)
 		}
 	}
-	f.env = []string{"HOME=" + f.home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "TERM=xterm-256color", "GORO_CLAUDE=" + exe}
+	f.env = []string{"HOME=" + f.home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "TERM=xterm-256color", "GORO_CLAUDE=" + exe, "GORO_OPENCODE=" + exe}
 	if err := os.Mkdir(f.repo, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -19,28 +19,33 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-const runUsage = `使い方: goro run (--repo PATH | --session ID | --login) [オプション] [-- claudeへの引数...]
+const runUsage = `使い方: goro run (--repo PATH | --session ID | --login) [--agent claude|opencode] [オプション] [-- エージェントへの引数...]
 
-claude を、檻 (ネットワークの無い bwrap) の中で、ホストの repo の private clone の上で動かす。
-ホストの作業ツリー・.git・~/.claude・~/.ssh・環境変数は、檻から見えない。clone されるのはコミット済みの内容だけ。
+エージェント (claude か opencode) を、檻 (ネットワークの無い bwrap) の中で、ホストの repo の private clone の上で動かす。
+ホストの作業ツリー・.git・~/.claude・~/.local/share/opencode・~/.ssh・環境変数は、檻から見えない。clone されるのはコミット済みの内容だけ。
 
-  --repo PATH       PATH (ローカルの repo) の private clone を作り、その中で claude を起動する
-  --session ID      前の goro run のセッションを再開する (同じ clone が見える)
-  --login           repo・clone 無しで、空の作業ディレクトリで claude を対話起動する (初回の onboarding = テーマ・ログイン・Security notes を通す。ログイン状態は、檻専用の HOME に残る)
+  --agent NAME      動かすエージェント: claude (既定) か opencode。ログイン状態・会話の履歴は、エージェントごとに別の檻専用の HOME に残る
+  --repo PATH       PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
+  --session ID      前の goro run のセッションを再開する (同じ clone が見える。エージェントは、--agent で選び直す)
+  --login           repo・clone 無しで、空の作業ディレクトリでエージェントのログインを行う (ログイン状態は、檻専用の HOME に残る)。
+                    claude は対話起動する (初回の onboarding = テーマ・ログイン・Security notes を通す)。opencode は auth login を起動する
   --name N          clone の user.name (--repo のとき。既定は goro)
   --email E         clone の user.email (--repo のとき)
   --state-dir DIR   状態 (セッション・檻専用の HOME) を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
-  --claude PATH     claude の実行ファイル (既定は環境変数 GORO_CLAUDE か、PATH の claude)
-  --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は api.anthropic.com:443 と platform.claude.com:443)
-  -- ARGS...        claude に渡す引数
+  --claude PATH     claude の実行ファイル (既定は環境変数 GORO_CLAUDE か、PATH の claude。--agent claude のとき)
+  --opencode PATH   opencode の実行ファイル (既定は環境変数 GORO_OPENCODE か、PATH の opencode。--agent opencode のとき)
+  --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は claude が api.anthropic.com:443 と platform.claude.com:443、opencode が opencode.ai:443)
+  -- ARGS...        エージェントに渡す引数 (--login のときは、opencode の auth login の後ろに付く)
 
 例:
   goro run --login                    初回。テーマを選び、出た URL をホストのブラウザで開いてコードを貼り、Security notes で Enter を押したら、/exit で終える
   goro run --repo ~/work/foo          foo の private clone の中で claude と対話する
   goro run --session ID -- --resume   再開する (-- の後ろは claude への引数)
+  goro run --agent opencode --login   opencode の初回。provider (Zen なら OpenCode Zen) を選び、https://opencode.ai/auth で作った API キーを貼る
+  goro run --agent opencode --repo ~/work/foo   foo の private clone の中で opencode と対話する (opencode の実行ファイルは PATH の opencode)
   goro export ID                      成果 (コミット) を bundle にして、取り込みのコマンドを表示する
 
-起動後の Ctrl-C は、claude の中断として効く (goro run 自身は終了しない)。止めるときは、claude の終了操作か、別の端末から goro run に SIGTERM。
+起動後の Ctrl-C は、エージェントの中断として効く (goro run 自身は終了しない)。止めるときは、エージェントの終了操作 (どちらも /exit) か、別の端末から goro run に SIGTERM。
 終わると、セッション ID・再開と取り出しのコマンド・拒否された宛先を表示する。
 `
 
@@ -50,7 +55,9 @@ type runOptions struct {
 	login         bool
 	name, email   string
 	stateDir      string // 空なら既定
+	agent         string // 動かすエージェント (claude・opencode)。空は claude
 	claude        string // 空なら GORO_CLAUDE か PATH
+	opencode      string // 空なら GORO_OPENCODE か PATH
 	allow         []string
 	agentArgs     []string // エージェントへの引数 (-- の後ろ)
 }
@@ -82,7 +89,9 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	flags.StringVar(&o.name, "name", "", "")
 	flags.StringVar(&o.email, "email", "", "")
 	flags.StringVar(&o.stateDir, "state-dir", "", "")
+	flags.StringVar(&o.agent, "agent", "claude", "")
 	flags.StringVar(&o.claude, "claude", "", "")
+	flags.StringVar(&o.opencode, "opencode", "", "")
 	flags.Var(&allow, "allow", "")
 	if err := flags.Parse(head); err != nil {
 		return o, err // flag が、理由と使い方を出している
@@ -109,10 +118,35 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	if (o.name != "" || o.email != "") && o.repo == "" {
 		return fail("--name と --email は、--repo のときだけ使える (clone の名義)")
 	}
+	agent, ok := agentByName(o.agent)
+	if !ok {
+		return fail("--agent は %s: %q", agentNames(), o.agent)
+	}
+	for _, other := range agents { // 動かさないエージェントの実行ファイルを指しても、効かない: 黙って無視せず、断る
+		if other.name != agent.name && o.exeOption(other) != "" {
+			return fail("--%s は、--agent %s のときだけ使える (--agent は %s。実行ファイルを指すのは --%s)", other.name, other.name, agent.name, agent.name)
+		}
+	}
 	if err := checkAllow(o.allow); err != nil {
 		return fail("%v", err)
 	}
 	return o, nil
+}
+
+// profile は、o のエージェントの profile。--agent の値は、parseRunArgs が確かめてある (空は claude)。
+func (o runOptions) profile() agentProfile {
+	if p, ok := agentByName(o.agent); ok {
+		return p
+	}
+	return claudeProfile
+}
+
+// exeOption は、エージェント p の実行ファイルを指すオプション (--claude・--opencode) の値。
+func (o runOptions) exeOption(p agentProfile) string {
+	if p.name == opencodeProfile.name {
+		return o.opencode
+	}
+	return o.claude
 }
 
 func indexOf(s []string, v string) int {
@@ -220,7 +254,7 @@ type runTarget struct {
 }
 
 func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) int {
-	agent := claudeProfile
+	agent := o.profile()
 	fail := func(format string, a ...any) int {
 		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
 		return 1
@@ -233,7 +267,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if err := checkSockPath(sockPathFor(stateDir, o)); err != nil {
 		return fail("%v", err)
 	}
-	agentExe, err := resolveAgentExe(agent, o.claude, os.Getenv(agent.exeEnv()), exec.LookPath)
+	agentExe, err := resolveAgentExe(agent, o.exeOption(agent), os.Getenv(agent.exeEnv()), exec.LookPath)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -289,7 +323,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if o.login {
 		fmt.Fprintln(stderr, "goro run: "+agent.loginGuide)
 	}
-	sum := runSummary{id: tgt.id, stateDir: stateDir, stateDirGiven: o.stateDir != "", agentHome: agentHome}
+	sum := runSummary{id: tgt.id, stateDir: stateDir, stateDirGiven: o.stateDir != "", agentHome: agentHome, agent: agent}
 	code := runCage(ctx, o, agent, sw, tgt, cageConfig{
 		Host: host, Agent: agent, AgentExe: agentExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
 		RunDir: tgt.runDir, AgentHome: agentHome, Work: tgt.work, Term: os.Getenv("TERM"), Args: cageArgs(o, agent),
@@ -407,8 +441,9 @@ type runSummary struct {
 	stateDir      string
 	stateDirGiven bool // --state-dir を指定したか (再開のコマンドに含める)
 	agentHome     string
-	started       bool   // 檻を起動できたか
-	logPath       string // egress の監査ログ (起動できなかったときは空)
+	agent         agentProfile // 空 (ゼロ値) は claude として扱う
+	started       bool         // 檻を起動できたか
+	logPath       string       // egress の監査ログ (起動できなかったときは空)
 	denied        []deniedTarget
 	deniedMore    int
 	dropped       int64 // 捨てた監査の行
@@ -425,27 +460,45 @@ func printRunSummary(w io.Writer, s runSummary) {
 	if s.stateDirGiven {
 		stateFlag = " --state-dir " + shellQuote(s.stateDir)
 	}
+	agentFlag := "" // 既定 (claude) 以外は、再開のコマンドにも --agent が要る
+	if s.agent.name != "" && s.agent.name != claudeProfile.name {
+		agentFlag = " --agent " + s.agent.name
+	}
 	fmt.Fprintln(w)
 	if s.id == "" {
 		fmt.Fprintf(w, "檻専用の HOME (ログイン状態が残る): %s\n", sanitize(s.agentHome))
-		fmt.Fprintf(w, "  次は: goro run%s --repo PATH\n", stateFlag)
+		fmt.Fprintf(w, "  次は: goro run%s%s --repo PATH\n", agentFlag, stateFlag)
 	} else {
 		fmt.Fprintf(w, "セッション: %s\n", s.id)
-		fmt.Fprintf(w, "  再開:         goro run%s --session %s\n", stateFlag, s.id)
+		fmt.Fprintf(w, "  再開:         goro run%s%s --session %s\n", agentFlag, stateFlag, s.id)
 		fmt.Fprintf(w, "  成果の取り出し: goro export%s %s\n", stateFlag, s.id)
+		if s.agent.resumeNote != "" {
+			fmt.Fprintf(w, "  (%s)\n", s.agent.resumeNote)
+		}
 	}
 	if s.logPath != "" {
 		fmt.Fprintf(w, "egress の監査ログ: %s\n", sanitize(s.logPath))
 	}
 	if len(s.denied) > 0 {
 		fmt.Fprintln(w, "許可の一覧に無く、拒否された宛先 (最大 10 件):")
+		example := "" // --allow の例には、説明のある宛先 (許可しなくてよい・先に直すもの) を使わない
 		for _, d := range s.denied {
 			fmt.Fprintf(w, "  %s (%d 回)\n", sanitize(d.Target), d.Count)
+			if note, ok := s.agent.denyNotes[d.Target]; ok {
+				fmt.Fprintf(w, "    → %s\n", note)
+			} else if example == "" {
+				example = d.Target
+			}
 		}
 		if s.deniedMore > 0 {
 			fmt.Fprintf(w, "  ほか %d 件 (監査ログを見る)\n", s.deniedMore)
 		}
-		fmt.Fprintf(w, "  必要な宛先は、--allow HOST:PORT を付けて、もう一度起動する (例: --allow %s)\n", sanitize(s.denied[0].Target))
+		if example != "" || s.deniedMore > 0 {
+			if example == "" {
+				example = "HOST:PORT"
+			}
+			fmt.Fprintf(w, "  必要な宛先は、--allow HOST:PORT を付けて、もう一度起動する (例: --allow %s)\n", sanitize(example))
+		}
 	}
 	if s.dropped > 0 {
 		fmt.Fprintf(w, "注意: 監査の行を %d 行、書けずに捨てた (監査ログが欠けている)\n", s.dropped)
