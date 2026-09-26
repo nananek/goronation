@@ -41,8 +41,8 @@ var rootMethods = []string{"OpenFile", "Open", "Create", "Mkdir", "Remove", "Lst
 // import を足す変更が、このテストの変更として、レビューに見える。
 func allowedImport(file, path string) bool {
 	switch path {
-	case "errors", "fmt", "io", "io/fs", "os", "path", "path/filepath", "slices", "sort", "strings", "time", "unicode", "unicode/utf8",
-		"go/ast", "go/doc", "go/doc/comment", "go/parser", "go/printer", "go/token", "regexp", "strconv", "bytes", "net/url", "cmp", "maps":
+	case "bytes", "errors", "fmt", "io", "io/fs", "net/url", "os", "path", "path/filepath", "regexp", "slices", "strconv", "strings",
+		"time", "unicode", "unicode/utf8", "go/ast", "go/doc", "go/doc/comment", "go/parser", "go/printer", "go/token":
 		return true
 	case "syscall":
 		return file == "open_unix.go" // O_NONBLOCK・O_DIRECTORY の定数だけ
@@ -135,6 +135,13 @@ func TestSourceHygiene(t *testing.T) {
 							}
 						}
 					}
+					// ファイルへ書く・消す入口は、それぞれ 1 か所だけ (writeOutput が、書く内容の全体を normalize に通す)。
+					if sel == "writeFile" && where != "build.go:writeOutput" {
+						t.Errorf("%s: writeFile は、writeOutput 以外から呼ばない (%s)", pos, where)
+					}
+					if sel == "remove" && where != "build.go:writeOutputs" {
+						t.Errorf("%s: remove は、writeOutputs 以外から呼ばない (%s)", pos, where)
+					}
 					// os.X の形は、上で見た。ここは、値のメソッド (t.root.OpenFile など) の呼び出し。
 					if id, isIdent := x.X.(*ast.Ident); (!isIdent || id.Name != "os") && slices.Contains(rootMethods, sel) {
 						if !(name == "walk.go" && treeMethod) && where != "root.go:openRepo" {
@@ -144,6 +151,62 @@ func TestSourceHygiene(t *testing.T) {
 				}
 				return true
 			})
+		}
+	}
+}
+
+// gateCalls は、source の関数 fn (ファイル file) の中の、normalize(kind..., ...) の呼び出しの、種類の名前の集合。
+func gateCalls(t *testing.T, file, fn string) map[string]bool {
+	t.Helper()
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := parser.ParseFile(token.NewFileSet(), file, b, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	seenFn := false
+	for _, d := range f.Decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok || fd.Name.Name != fn {
+			continue
+		}
+		seenFn = true
+		ast.Inspect(fd, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "normalize" {
+				if k, ok := call.Args[0].(*ast.Ident); ok {
+					found[k.Name] = true
+				}
+			}
+			return true
+		})
+	}
+	if !seenFn {
+		t.Fatalf("%s に関数 %s が無い", file, fn)
+	}
+	return found
+}
+
+// TestGatesExist は、出口の関門が、消えていないことを確認する。
+// 診断の出口 (emit) は kindDiag、ファイルへ書く入口 (writeOutput) と、文書を組み立てる 2 か所は kindDocument で、
+// normalize を通る。
+func TestGatesExist(t *testing.T) {
+	cases := []struct{ file, fn, kind string }{
+		{"main.go", "emit", "kindDiag"},
+		{"build.go", "writeOutput", "kindDocument"},
+		{"render.go", "render", "kindDocument"},
+		{"render.go", "renderRefIndex", "kindDocument"},
+		{"render.go", "decl", "kindGoBlock"},
+	}
+	for _, c := range cases {
+		if !gateCalls(t, c.file, c.fn)[c.kind] {
+			t.Errorf("%s の %s が、normalize(%s, ...) を通らない", c.file, c.fn, c.kind)
 		}
 	}
 }

@@ -51,7 +51,8 @@ func main() {
 
 // run は docgen の本体。終了コードを返す (0: 成功、1: error か検査の失敗、2: 使い方の誤り)。
 func run(args []string, stdout, stderr io.Writer, getwd func() (string, error)) int {
-	if _, err := parseArgs(args); err != nil {
+	m, err := parseArgs(args)
+	if err != nil {
 		emit(stderr, "docgen: "+err.Error())
 		emit(stderr, usage)
 		return 2
@@ -69,12 +70,21 @@ func run(args []string, stdout, stderr io.Writer, getwd func() (string, error)) 
 	defer root.Close()
 
 	t := newTree(root, defaultLimits)
-	inv, err := t.inventory()
+	res, err := t.analyze()
 	if err != nil {
 		emit(stderr, "docgen: "+err.Error())
 		return 1
 	}
-	emit(stdout, fmt.Sprintf("docgen: .go %d 個・go.mod %d 個・.md %d 個を読む (生成は、まだ無い)",
-		len(inv.Go), len(inv.Mod), len(inv.Markdown)))
+	if m == modeCheck {
+		emit(stderr, "docgen: -check は、まだ実装していない")
+		return 2
+	}
+	written, unchanged, err := t.writeOutputs(res)
+	if err != nil {
+		emit(stderr, "docgen: "+err.Error())
+		return 1
+	}
+	emit(stdout, fmt.Sprintf("docgen: %d 個の package から、生成物 %d 個を作った (書いた %d・変更なし %d)",
+		len(res.Docs), len(res.Expected), written, unchanged))
 	return 0
 }

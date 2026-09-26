@@ -68,14 +68,23 @@ func TestRunRefusesWrongCwd(t *testing.T) {
 	}
 }
 
-func TestRunInventory(t *testing.T) {
-	root := fixtureRepo(t, map[string]string{"core/doc.go": "package core\n", "core/go.mod": "module m\n", "README.md": "# x\n"})
-	code, out, errs := runIn(t, filepath.Join(root, "tools", "docgen"))
+func TestRunGenerate(t *testing.T) {
+	root := fixtureRepo(t, scaffold(map[string]string{"core/doc.go": "// Package core は、テスト。\npackage core\n", "README.md": "# x\n"}))
+	cwd := filepath.Join(root, "tools", "docgen")
+	code, out, errs := runIn(t, cwd)
 	if code != 0 || errs != "" {
-		t.Fatalf("code = %d, stderr = %q", code, errs)
+		t.Fatalf("code = %d, stdout = %q, stderr = %q", code, out, errs)
 	}
-	if !strings.Contains(out, ".go 1 個") || !strings.Contains(out, "go.mod 2 個") || !strings.Contains(out, ".md 1 個") {
+	if !strings.Contains(out, "1 個の package") {
 		t.Errorf("stdout = %q", out)
+	}
+	got := readTree(t, filepath.Join(root, "docs"))
+	if got["reference/core.md"] == "" || got["reference/README.md"] == "" {
+		t.Errorf("生成物が無い: %v", sortedKeys(got))
+	}
+	// 2 回目は、何も書かない。
+	if code, out, _ := runIn(t, cwd); code != 0 || !strings.Contains(out, "書いた 0") {
+		t.Errorf("2 回目: code = %d, stdout = %q", code, out)
 	}
 }
 
