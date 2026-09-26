@@ -443,7 +443,7 @@ func TestArgvAccepts(t *testing.T) {
 		{Src: "/tmp/work", RW: true}, {Src: "/tmp/x/y/z", RW: true}, {Src: "/var/tmp/work"}, {Src: "/data/work", RW: true},
 		{Src: "/srv/clone", RW: true}, {Src: "/mnt/clone", RW: true},
 		{Src: testHome + "/.local/share/claude/versions/2.1.283", InHome: true},
-		{Src: testHome + "/.opencode/bin/opencode", InHome: true}, // opencode の公式 install script の置き場 (機密ではない)
+		{Src: testHome + "/.opencode/bin/opencode", InHome: true},             // opencode の公式 install script の置き場 (機密ではない)
 		{Src: testHome + "/.local/share/opencode-cli/opencode", InHome: true}, // 名前が .local/share/opencode に似ているだけ
 		{Src: testHome + "/work", RW: true, InHome: true}, {Src: testHome + "/.local/state/goro", RW: true, InHome: true},
 		{Src: testHome + "/.config/goro", InHome: true}, {Src: testHome + "/.cache/goro/x", RW: true, InHome: true},
