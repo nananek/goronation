@@ -5,4 +5,5 @@ use (
 	./core
 	./sandbox
 	./tools/archtest
+	./tools/docgen
 )
