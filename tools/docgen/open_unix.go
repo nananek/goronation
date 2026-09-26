@@ -7,6 +7,15 @@ import (
 	"syscall"
 )
 
+// linkCount は、ファイルのハードリンクの数 (同じ inode を指す名前の数) を返す。取れなければ false。
+func linkCount(fi os.FileInfo) (uint64, bool) {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return uint64(st.Nlink), true
+}
+
 // open のフラグ。いずれも O_NONBLOCK を付ける: 種別の確認 (fstat) の前に、FIFO を開いても、
 // writer (書き込みなら reader) を待って止まらない。実測: 付けないと、writer の無い FIFO の open が止まる。
 // O_DIRECTORY は、ディレクトリ以外 (FIFO を含む) を開かせない。

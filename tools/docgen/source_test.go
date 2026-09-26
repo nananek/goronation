@@ -130,7 +130,7 @@ func TestSourceHygiene(t *testing.T) {
 								t.Errorf("%s: fmt.%s は、出口 (emit 以外は、normalize を通らない)", pos, sel)
 							}
 						case "syscall":
-							if sel != "O_NONBLOCK" && sel != "O_DIRECTORY" {
+							if sel != "O_NONBLOCK" && sel != "O_DIRECTORY" && sel != "Stat_t" { // Stat_t は、リンク数 (linkCount)
 								t.Errorf("%s: syscall.%s は使わない", pos, sel)
 							}
 						}

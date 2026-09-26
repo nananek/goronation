@@ -215,7 +215,10 @@ func (t *tree) writeFile(name string, data []byte) error {
 		return err
 	}
 	t.stage(stageAfterOpen, name)
-	_, err = t.verifySame(f, name, entRegular)
+	fi, err := t.verifySame(f, name, entRegular)
+	if err == nil {
+		err = checkNotHardLinked(name, fi)
+	}
 	if err == nil {
 		err = f.Truncate(0)
 	}
@@ -229,6 +232,33 @@ func (t *tree) writeFile(name string, data []byte) error {
 		return fmt.Errorf("%s を書けない: %w", name, err)
 	}
 	return nil
+}
+
+// checkNotHardLinked は、書き込み先の通常のファイル (info) が、ハードリンクで他の名前と共有されていない (リンク数 1) ことを
+// 確かめる。共有していると、切り詰めて書くことで、同じ inode の別の名前のファイル (root の外にありうる) も書き換わる
+// (os.Root は、名前の解決が root の外へ出ることを防ぐだけで、inode の共有は防がない。verifySame も、同じ inode なら通す)。
+// 読み取りには使わない (ハードリンクの入力は、通常のファイルとして読む)。git はハードリンクを保存しないので、
+// 作れるのは、ツリーに書けるローカルの攻撃者だけ。リンク数が取れない環境 (unix 以外) では、検出しない。
+func checkNotHardLinked(name string, fi os.FileInfo) error {
+	if n, ok := linkCount(fi); ok && n > 1 {
+		return fmt.Errorf("%s: ハードリンク (リンク数 %d) なので、書かない (同じファイルの別の名前が、root の外にありうる。消してから、再生成する)", name, n)
+	}
+	return nil
+}
+
+// checkUnshared は、name (通常のファイル。無ければ何もしない) が、書き込み先にできる (ハードリンクでない) ことを、
+// 開かずに確かめる (checkPlan が、書く前に呼ぶ)。勘定は足さない (writeFile の勘定と一致させる)。
+func (t *tree) checkUnshared(name string) error {
+	li, err := t.root.Lstat(name)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case kindOf(li.Mode()) != entRegular:
+		return nil // 通常のファイルでないものは、writeFile が、書かずに error にする
+	}
+	return checkNotHardLinked(name, li)
 }
 
 // mkdirAll は、dir とその親を、1 つずつ作る (os.Root に MkdirAll は無い)。途中に、ディレクトリ以外

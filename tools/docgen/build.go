@@ -161,7 +161,7 @@ func extraEntries(ref []refEntry, expected map[string]string) []refEntry {
 
 // checkPlan は、書く予定 (writes) と消す予定 (removes) のすべてを、何かを書く前に確かめる。書き始めた後に、
 // 予算や、既存の項目との衝突で止まると、一部だけが書かれた出力が残るため。確かめるのは、書く内容の検査、
-// 既存の項目との衝突 (書く path がディレクトリ・その親が通常のファイル)、予算 (書く・消すときと同じ勘定を、
+// 既存の項目との衝突 (書く path がディレクトリ・その親が通常のファイル・書き込み先がハードリンク)、予算 (書く・消すときと同じ勘定を、
 // tree のコピーに足して試す)。isFile と isDir は、生成物の置き場の、既存の項目。
 func (t *tree) checkPlan(expected map[string]string, writes []string, removes []refEntry, isFile, isDir map[string]bool) error {
 	c := *t
@@ -176,6 +176,9 @@ func (t *tree) checkPlan(expected map[string]string, writes []string, removes []
 			if isFile[d] {
 				return fmt.Errorf("%s: 親の %s が通常のファイル (ディレクトリにする。消してから、再生成する)", p, d)
 			}
+		}
+		if err := t.checkUnshared(p); err != nil { // 既存のファイルが、ハードリンクなら、書く前に止める
+			return err
 		}
 		if err := c.tick(); err != nil {
 			return err
