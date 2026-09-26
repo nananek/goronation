@@ -16,11 +16,12 @@ Go の multi-module workspace で、トップディレクトリ 1 つが 1 modul
 |---|---|
 | `core/` | domain 型と ports。backend / adapter の実装を import しない |
 | `sandbox/` | サンドボックスのバックエンド (`sandbox/bwrap` など) |
+| `hostfs/` | 檻が書いたファイル (敵対入力) を、ホストが安全に読む (`os.Root`・fd 固定・通常ファイルだけ・大きさの上限) |
 | `cmd/` | 実行ファイル (`cmd/goro`)。実装の配線はここだけで行う |
 | `tools/archtest/` | import 制約テスト (依存方向と不変条件 I1 を機械的に強制する) |
 | `docs/adr/` | ADR (設計判断の記録) |
 
-`spec/`・`control/`・`agent/`・`egress/`・`vault/`・`hostfs/`・`gateway/`・`web/` は、最初に必要になった時点で作ります。全体像は Issue #1 の構成図を参照してください。
+`spec/`・`control/`・`agent/`・`egress/`・`vault/`・`gateway/`・`web/` は、最初に必要になった時点で作ります。全体像は Issue #1 の構成図を参照してください。
 
 ## 開発コマンド
 
