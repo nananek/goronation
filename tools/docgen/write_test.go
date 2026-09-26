@@ -282,6 +282,16 @@ func TestWriteOutputsWritesNothingWhenPlanFails(t *testing.T) {
 		}
 	})
 
+	t.Run("生成物の祖先 (親の親) のディレクトリと同じ名前の、通常のファイルがある", func(t *testing.T) {
+		tr, dir := writeRepo(t, map[string]string{
+			"core/sub/deep/doc.go": "// Package deep は、テスト。\npackage deep\n", // docs/reference/core/sub/deep.md を作る (core/sub は無い)
+			"docs/reference/core":  "邪魔\n",
+		})
+		if err := run(t, tr, dir); !strings.Contains(err.Error(), "通常のファイル") {
+			t.Errorf("error 文: %v", err)
+		}
+	})
+
 	t.Run("既存の生成物が、1 ファイルの上限を超える (比べるための読み取りが失敗する)", func(t *testing.T) {
 		tr, dir := writeRepo(t, map[string]string{"docs/reference/core.md": strings.Repeat("x", int(defaultLimits.MaxFileBytes)+1)})
 		if err := run(t, tr, dir); !errors.Is(err, errBudget) {
