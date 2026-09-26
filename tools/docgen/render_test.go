@@ -473,12 +473,15 @@ func TestPackageErrors(t *testing.T) {
 	}
 }
 
-// TestOutputPathCollisions は、出力の path が (大文字小文字を区別しない環境でも) 衝突する package を、error にする。
+// TestOutputPathCollisions は、出力の path が (大文字小文字を区別しない環境でも) 衝突する package と、ファイルとディレクトリで
+// 衝突する package を、error にする (書く途中でしか分からないと、一部だけが書かれた出力が残る)。
 func TestOutputPathCollisions(t *testing.T) {
 	doc := func(n string) string { return "// Package " + n + " は、テスト。\npackage " + n + "\n" }
 	cases := map[string]map[string]string{
 		"大文字小文字だけが違う": {"core/x/doc.go": doc("x"), "core/X/doc.go": doc("x")},
 		"索引と同じ名前":     {"README/doc.go": doc("readme"), "README/go.mod": "module example.com/m/README\n"},
+		// core の文書 core.md はファイルで、core.md/sub の文書 core.md/sub.md は、core.md をディレクトリにする。
+		"ファイルとディレクトリ": {"core/doc.go": doc("core"), "core.md/go.mod": "module example.com/m/coremd\n", "core.md/sub/doc.go": doc("sub")},
 	}
 	for name, extra := range cases {
 		t.Run(name, func(t *testing.T) {

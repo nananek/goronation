@@ -64,29 +64,12 @@ func (t *tree) compare(res *result) ([]finding, error) {
 		}
 	}
 
-	wantDirs := map[string]bool{}
-	for p := range res.Expected {
-		for d := parentDir(p); strings.HasPrefix(d, referenceDir+"/"); d = parentDir(d) {
-			wantDirs[d] = true
+	for _, e := range extraEntries(ref, res.Expected) {
+		msg := "生成物の置き場に、生成物ではないファイルがある (make docs で消える。手で書いた文書は、docs/reference に置けない)"
+		if e.Dir {
+			msg = "生成物の置き場に、生成物ではないディレクトリがある (make docs で消える)"
 		}
-	}
-	for _, e := range ref {
-		switch {
-		case e.Dir && !wantDirs[e.Path]:
-			out = append(out, finding{Path: e.Path, Rule: ruleGenExtra, Msg: "生成物の置き場に、生成物ではないディレクトリがある (make docs で消える)"})
-		case !e.Dir:
-			if _, ok := res.Expected[e.Path]; !ok {
-				out = append(out, finding{Path: e.Path, Rule: ruleGenExtra, Msg: "生成物の置き場に、生成物ではないファイルがある (make docs で消える。手で書いた文書は、docs/reference に置けない)"})
-			}
-		}
+		out = append(out, finding{Path: e.Path, Rule: ruleGenExtra, Msg: msg})
 	}
 	return out, nil
-}
-
-// parentDir は、"/" 区切りの path の、親のディレクトリ。
-func parentDir(p string) string {
-	if i := strings.LastIndex(p, "/"); i >= 0 {
-		return p[:i]
-	}
-	return "."
 }

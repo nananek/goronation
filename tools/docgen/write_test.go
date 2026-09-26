@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,12 @@ import (
 
 // writeRepo は、scaffold の repo (package core と ADR 1 つ) を作り、tree を返す。
 func writeRepo(t *testing.T, extra map[string]string) (*tree, string) {
+	t.Helper()
+	return writeRepoLimits(t, extra, defaultLimits)
+}
+
+// writeRepoLimits は、writeRepo と同じ repo を、予算 lim の tree で開く。
+func writeRepoLimits(t *testing.T, extra map[string]string, lim limits) (*tree, string) {
 	t.Helper()
 	files := map[string]string{
 		"core/doc.go":        "// Package core は、テスト。\npackage core\n",
@@ -21,7 +28,7 @@ func writeRepo(t *testing.T, extra map[string]string) (*tree, string) {
 	for k, v := range extra {
 		files[k] = v
 	}
-	return newTestTree(t, scaffold(files))
+	return newTestTreeLimits(t, scaffold(files), lim)
 }
 
 func TestWriteOutputsRemovesStale(t *testing.T) {
@@ -192,4 +199,86 @@ func TestGenerateWithSymlinkedDocs(t *testing.T) {
 	if got := readTree(t, filepath.Join(root, "elsewhere")); len(got) != 1 {
 		t.Errorf("symlink の先に、ファイルができた: %v", sortedKeys(got))
 	}
+}
+
+// TestWriteOutputsWritesNothingWhenPlanFails は、書く前に分かる失敗 (予算・既存の項目との衝突) があれば、何も書かず、
+// 何も消さず、ディレクトリも作らないことを確認する (一部だけが書かれた出力が残らない)。
+// どの場面も、解析 (読む) は通り、書く段階で失敗する。書く予定の先頭は ADR の README (区間が古い) なので、
+// 確かめる前に書き始める実装は、それを書き換えてしまう。
+func TestWriteOutputsWritesNothingWhenPlanFails(t *testing.T) {
+	stale := map[string]string{"docs/reference/old.md": "消える\n"} // 余剰の削除も、書く予定に入る
+	// run は、解析が通り、writeOutputs が error になること、何も変わっていないことを確かめて、error を返す。
+	run := func(t *testing.T, tr *tree, dir string) error {
+		t.Helper()
+		before := readTree(t, dir)
+		_, refBefore := os.Lstat(filepath.Join(dir, "docs", "reference"))
+		res, err := tr.analyze()
+		if err != nil {
+			t.Fatalf("解析は通るはず (書く段階で失敗する場面): %v", err)
+		}
+		_, _, err = tr.writeOutputs(res)
+		if err == nil {
+			t.Fatal("error にすべき")
+		}
+		if after := readTree(t, dir); !reflect.DeepEqual(before, after) {
+			t.Errorf("error なのに、ファイルを書き換えた・消した (before %v, after %v)", sortedKeys(before), sortedKeys(after))
+		}
+		if _, refAfter := os.Lstat(filepath.Join(dir, "docs", "reference")); (refBefore == nil) != (refAfter == nil) {
+			t.Error("error なのに、docs/reference ができた・消えた")
+		}
+		return err
+	}
+
+	// 予算は、全体を成功させて勘定を測り、その 1 つ手前を上限にする。解析は足りて、最後の 1 つを書くところで足りなくなる。
+	full, _ := writeRepo(t, stale)
+	res, err := full.analyze()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := full.writeOutputs(res); err != nil {
+		t.Fatal(err)
+	}
+	for name, set := range map[string]func(l *limits){
+		"項目の数":   func(l *limits) { l.MaxEntries = full.entries - 1 },
+		"ファイルの数": func(l *limits) { l.MaxFiles = full.files - 1 },
+		"バイトの合計": func(l *limits) { l.MaxTotalBytes = full.bytes - 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			lim := defaultLimits
+			set(&lim)
+			tr, dir := writeRepoLimits(t, stale, lim)
+			if err := run(t, tr, dir); !errors.Is(err, errBudget) {
+				t.Errorf("errBudget にすべき: %v", err)
+			}
+		})
+	}
+
+	t.Run("生成物が、1 ファイルの上限を超える", func(t *testing.T) {
+		// 入力は上限に収まるが、エスケープで、出力が大きくなる (* は \* になる)。
+		lim := defaultLimits
+		lim.MaxFileBytes = 1500
+		tr, dir := writeRepoLimits(t, map[string]string{
+			"core/doc.go": docComment("Package core は、テスト。", "", strings.Repeat("*", 900)) + "package core\n",
+		}, lim)
+		if err := run(t, tr, dir); !errors.Is(err, errBudget) {
+			t.Errorf("errBudget にすべき: %v", err)
+		}
+	})
+
+	t.Run("生成物と同じ名前のディレクトリがある", func(t *testing.T) {
+		tr, dir := writeRepo(t, map[string]string{"docs/reference/core.md/keep.txt": "x\n"})
+		if err := run(t, tr, dir); !strings.Contains(err.Error(), "同じ名前のディレクトリ") {
+			t.Errorf("error 文: %v", err)
+		}
+	})
+
+	t.Run("生成物の親のディレクトリと同じ名前の、通常のファイルがある", func(t *testing.T) {
+		tr, dir := writeRepo(t, map[string]string{
+			"core/sub/doc.go":     "// Package sub は、テスト。\npackage sub\n", // docs/reference/core/sub.md を作る
+			"docs/reference/core": "邪魔\n",
+		})
+		if err := run(t, tr, dir); !strings.Contains(err.Error(), "通常のファイル") {
+			t.Errorf("error 文: %v", err)
+		}
+	})
 }
