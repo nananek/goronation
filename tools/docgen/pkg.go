@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"path"
 	"slices"
@@ -156,7 +159,7 @@ func parsePackage(s *sources, p *pkgSource) (*parsedPkg, error) {
 	for _, name := range p.Files {
 		f, err := parser.ParseFile(pp.Fset, name, s.Go[name], parser.ParseComments)
 		if err != nil {
-			return nil, fmt.Errorf("%s を構文解析できない: %w", name, err)
+			return nil, fmt.Errorf("%s を構文解析できない: %w", name, rawParseError(s.Go[name], err))
 		}
 		if pp.Name == "" {
 			pp.Name = f.Name.Name
@@ -166,4 +169,26 @@ func parsePackage(s *sources, p *pkgSource) (*parsedPkg, error) {
 		pp.Files = append(pp.Files, f)
 	}
 	return pp, nil
+}
+
+// lineOf は、pos の (実際の) 行番号。token.FileSet.Position は、//line ディレクティブで補正した行番号を返し、
+// コメントの 1 行で、行数の上限・診断の行・複数行の値の判定を偽れる。補正しない PositionFor(pos, false) で求める。
+// 行番号は、必ずこの関数で求める (Position は使わない。source_test.go の自己検査が見つける)。
+func lineOf(fset *token.FileSet, pos token.Pos) int { return fset.PositionFor(pos, false).Line }
+
+// rawParseError は、go/parser の構文の error を、実際の行で書き直す。parser の error の位置 (ファイル名と行) は、
+// //line ディレクティブで補正されるので、そのままだと、存在しないファイルと行を指せる。バイトの位置 (Offset) は
+// 補正されないので、そこから実際の行を数える。位置以外の error は、そのまま返す。
+func rawParseError(src []byte, err error) error {
+	var list scanner.ErrorList
+	if !errors.As(err, &list) || len(list) == 0 {
+		return err
+	}
+	first := list[0]
+	line := 1 + bytes.Count(src[:min(max(first.Pos.Offset, 0), len(src))], []byte("\n"))
+	msg := fmt.Sprintf("%d 行目: %s", line, first.Msg)
+	if len(list) > 1 {
+		msg += fmt.Sprintf(" (ほか %d 件)", len(list)-1)
+	}
+	return errors.New(msg)
 }

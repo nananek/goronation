@@ -42,7 +42,7 @@ var rootMethods = []string{"OpenFile", "Open", "Create", "Mkdir", "Remove", "Lst
 func allowedImport(file, path string) bool {
 	switch path {
 	case "bytes", "errors", "fmt", "io", "io/fs", "net/url", "os", "path", "path/filepath", "regexp", "slices", "strconv", "strings",
-		"time", "unicode", "unicode/utf8", "go/ast", "go/doc", "go/doc/comment", "go/parser", "go/printer", "go/token":
+		"time", "unicode", "unicode/utf8", "go/ast", "go/doc", "go/doc/comment", "go/parser", "go/printer", "go/scanner", "go/token":
 		return true
 	case "syscall":
 		return file == "open_unix.go" // O_NONBLOCK・O_DIRECTORY の定数だけ
@@ -134,6 +134,13 @@ func TestSourceHygiene(t *testing.T) {
 								t.Errorf("%s: syscall.%s は使わない", pos, sel)
 							}
 						}
+					}
+					// 行番号は lineOf (補正しない PositionFor) で求める。Position は //line ディレクティブで補正した行を返す。
+					if sel == "Position" {
+						t.Errorf("%s: .Position は、//line で補正した行を返す。lineOf を使う (%s)", pos, where)
+					}
+					if sel == "PositionFor" && where != "pkg.go:lineOf" {
+						t.Errorf("%s: .PositionFor は、lineOf の中だけ (%s)", pos, where)
 					}
 					// ファイルへ書く・消す入口は、それぞれ 1 か所だけ (writeOutput が、書く内容の全体を normalize に通す)。
 					if sel == "writeFile" && where != "build.go:writeOutput" {

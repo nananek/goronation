@@ -267,7 +267,7 @@ func (r *renderer) elideValues(node ast.Node) {
 			continue
 		}
 		for i, v := range vs.Values {
-			if r.d.Fset.Position(v.Pos()).Line != r.d.Fset.Position(v.End()).Line {
+			if lineOf(r.d.Fset, v.Pos()) != lineOf(r.d.Fset, v.End()) {
 				vs.Values[i] = &ast.Ident{Name: "..."}
 			}
 		}

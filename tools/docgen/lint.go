@@ -128,8 +128,8 @@ func lintPackage(s *sources, p *pkgSource) ([]finding, error) {
 func lintPackageDoc(pp *parsedPkg, i int, p *pkgSource, add func(string, int, rule, string, ...any)) {
 	file := p.Files[i]
 	cg := pp.Files[i].Doc
-	start := pp.Fset.Position(cg.Pos()).Line
-	lines := pp.Fset.Position(cg.End()).Line - start + 1
+	start := lineOf(pp.Fset, cg.Pos())
+	lines := lineOf(pp.Fset, cg.End()) - start + 1
 	limit := pkgDocMaxLines
 	enforcer := slices.Contains(enforcerPackages, p.Dir)
 	if enforcer {
@@ -254,7 +254,7 @@ func lintExported(pp *parsedPkg, add func(string, int, rule, string, ...any)) {
 	for i, f := range pp.Files {
 		file := pp.Src.Files[i]
 		report := func(pos ast.Node, name string, cg *ast.CommentGroup, mustStart bool) {
-			line := pp.Fset.Position(pos.Pos()).Line
+			line := lineOf(pp.Fset, pos.Pos())
 			switch {
 			case cg == nil:
 				add(file, line, ruleExportedDoc, "exported の %s に doc が無い (「%s は〜。」で書く)", name, name)
@@ -299,7 +299,7 @@ func lintExported(pp *parsedPkg, add func(string, int, rule, string, ...any)) {
 						case cg == nil:
 							report(sp, names[0], nil, false)
 						case own && !slices.ContainsFunc(names, func(n string) bool { return strings.HasPrefix(cg.Text(), n+" は") }):
-							add(file, pp.Fset.Position(sp.Pos()).Line, ruleExportedDoc, "%s の doc が「%s は」で始まらない", names[0], names[0])
+							add(file, lineOf(pp.Fset, sp.Pos()), ruleExportedDoc, "%s の doc が「%s は」で始まらない", names[0], names[0])
 						}
 					}
 				}
