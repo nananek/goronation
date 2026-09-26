@@ -13,14 +13,14 @@ description: goro run に、新しいエージェント (claude・opencode の�
 ## 手順
 
 1. **使い捨ての spike** (コミットしない。scratchpad で行う)。`--bin` で任意の実行ファイルを檻で動かし、`--allow` を 1 つずつ足して、次を実測する。
-   - **原則: エージェントの TUI を解釈・模倣しない**。ログインと操作は、エージェント自身の画面で行い、goro は端末に直結する (画面の手順を goro や skill に写すと、版が変わって嘘になる)。
+   - **原則: エージェントの TUI を解釈・模倣しない**。ログインと操作は、エージェント自身の画面で行い、goro は端末に直結する (画面の手順を goro や skill に写すと、版が変わって嘘になる。opencode 2 系で、実際に食い違った)。
    - 起動・ログイン・1 往復に要る宛先 (既定の許可は、これだけにする。拒否された宛先は、要るかを確かめてから足す)。
    - 通信を止める環境変数。**名前の実在 (binary の文字列) と、効くか (`egress.log` の拒否が消えるか) は別**。存在しても効かないものが、既にあった。変数ごとに測るか、測っていないと書く。
-   - HOME のどこに書くか / `HTTPS_PROXY` を尊重するか / ログインが檻の中で完結するか (ホストのブラウザの localhost に戻る方式は、檻に届かない)。
+   - HOME のどこに書くか / `HTTPS_PROXY` を尊重するか (檻の中のプロセス同士の loopback 通信が、proxy に流れて拒否されないか。goro init が、loopback を `NO_PROXY` で外す) / ログインが檻の中で完結するか (ホストのブラウザの localhost に戻る方式は、檻に届かない)。
    - **初回の落とし穴**: ログインの直後、次の起動が onboarding からやり直しにならないか (何のキーが判定するか)。claude で踏んだ (`.claude.json` の `hasCompletedOnboarding`)。
    - 要る道具 (`rg`・`git`・`bash`)。無いなら、ホストに入れる (檻の `/usr` に見える)。
    - 実際の資格情報が要る確認は、利用者に頼む。資格情報は、読まない・貼らない・ログに残さない。確かめられなかった部分は、PR 本文に「未確認」と書く。
-2. **profile を 1 行足す**: `agents` 表に、name・bin (PATH で探す名前)・exeExample・env (通信を止めるもの)・hosts (`egress.<Name>Hosts()`。呼ぶたび新しい slice を返す)・loginArgs・loginGuide・loginUsage・exitHint・denyNotes を書く。各フィールドの意味は、`agentProfile` の doc comment が正。
+2. **profile を 1 行足す**: `agents` 表に、name・bin (PATH で探す名前)・exeExample・env (通信を止めるもの)・hosts (`egress.<Name>Hosts()`。呼ぶたび新しい slice を返す)・loginArgs・loginUsage (理由・制約・API キーの取得 URL だけ。画面の項目名・手順は書かない)・exitHint・resumeUsage・denyNotes (宛先の後ろに添える短い一言) を書く。`--login` の案内文 (`loginGuide()`) は、エージェント共通で、終了操作だけを添える。各フィールドの意味は、`agentProfile` の doc comment が正。
 3. **ホスト側の実際の設定・資格情報の dir を、`sandbox/bwrap/argv.go` の `homeSecrets` に足す** (opencode の `.local/share/opencode`・`.config/opencode` が例)。足りないと、利用者の実際の資格情報を、檻に bind できる。テストは `sandbox/bwrap/argv_test.go` の、opencode の例と同じ形で足す。
 4. **テスト**: `TestRunThirdAgent` (表に足すだけで通る作りになっている。通らなければ、分岐を書いた印)・golden (`TestCageSpecGoldenOpenCode` と同じ形で、argv を固定する)・`GORO_REQUIRE_BWRAP=1 make check`。変異 (分岐・許可・環境変数を壊して、テストが落ちるか) も見る。
 5. **攻撃者視点のレビューを 1 回**受ける (`attack-review`)。檻の Spec・許可宛先・環境変数・エージェント間の隔離 (不変条件 I2) に触るので、省かない。
