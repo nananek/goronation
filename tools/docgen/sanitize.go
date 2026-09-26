@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/token"
 	"net/url"
-	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -83,24 +82,34 @@ func normalize(k kind, s string) (string, error) {
 }
 
 // forbiddenRune は、文書にも診断にも出さない文字か。改行とタブ以外の制御文字 (C0・DEL・C1)、書式制御文字 (Cf。
-// 表示の向きを変える双方向制御 (Trojan Source)・ゼロ幅の文字・BOM・タグ文字など。見えないので、レビューで読めない
-// 内容を隠せる)、行・段落の区切り (U+2028・U+2029)、Cf ではないが見た目が空白の 4 文字 (invisibleBlanks) を含む。
-// 異体字セレクタ (U+FE00〜FE0F・U+E0100〜E01EF) は、絵文字と漢字の異体字に正当に使うので、禁止しない (doc.go の限界)。
+// 表示の向きを変える双方向制御 (Trojan Source)・ゼロ幅の文字・BOM・タグ文字など)、行・段落の区切り (U+2028・U+2029)、
+// 見えない文字 (isDefaultIgnorable)、点字の空白 (U+2800。見た目が空白) を含む。見えないので、レビューで読めない内容を
+// 隠せる (2 種類の見えない文字の並びで、任意のデータを書ける)。
 func forbiddenRune(r rune) bool {
 	switch {
 	case r == '\n' || r == '\t':
 		return false
 	case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
 		return true
-	case r == 0x2028 || r == 0x2029:
+	case r == 0x2028 || r == 0x2029, r == 0x2800:
 		return true
 	}
-	return slices.Contains(invisibleBlanks, r)
+	return isDefaultIgnorable(r)
 }
 
-// invisibleBlanks は、Cf ではないが、見た目が空白の文字。Hangul filler (U+3164・U+FFA0)・点字の空白 (U+2800)・
-// 結合書記素接合子 (CGJ。U+034F)。日本語の文書には要らず、並べて内容を隠せる。
-var invisibleBlanks = []rune{0x034F, 0x2800, 0x3164, 0xFFA0}
+// isDefaultIgnorable は、Unicode の Default_Ignorable_Code_Point (DerivedCoreProperties.txt。表示しない、見えない文字) の
+// うち、Cf (forbiddenRune が、別に全部禁止する) 以外を禁止するかを返す。DerivedCoreProperties の定義は、
+// Other_Default_Ignorable_Code_Point + Cf + Variation_Selector から、White_Space などを除いたもの。表は、Go の unicode
+// パッケージ (PropList.txt から生成。unicode.Version は、Go 1.24 で 15.0.0) の Other_Default_Ignorable_Code_Point (Hangul
+// filler U+115F・U+1160・U+3164・U+FFA0、CGJ U+034F、Khmer U+17B4・U+17B5、未割当の U+2065・U+FFF0〜FFF8・U+E0000 台) と
+// Variation_Selector (Mongolian の U+180B〜180D・180F と、異体字セレクタ) を使い、個別の文字を並べない。
+// 除くのは、異体字セレクタ U+FE00〜FE0F (絵文字) と U+E0100〜E01EF (漢字の異体字 IVS。日本語で正当に使う) だけ。
+func isDefaultIgnorable(r rune) bool {
+	if 0xFE00 <= r && r <= 0xFE0F || 0xE0100 <= r && r <= 0xE01EF {
+		return false
+	}
+	return unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || unicode.Is(unicode.Variation_Selector, r)
+}
 
 // checkRunes は、s が正しい UTF-8 で、forbiddenRune を含まないことを確かめる。
 func checkRunes(s string) error {
