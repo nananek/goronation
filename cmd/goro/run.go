@@ -25,16 +25,16 @@ claude を、檻 (ネットワークの無い bwrap) の中で、ホストの re
 
   --repo PATH       PATH (ローカルの repo) の private clone を作り、その中で claude を起動する
   --session ID      前の goro run のセッションを再開する (同じ clone が見える)
-  --login           repo・clone 無しで、空の作業ディレクトリで claude auth login を起動する (ログイン状態は、檻専用の HOME に残る)
+  --login           repo・clone 無しで、空の作業ディレクトリで claude を対話起動する (初回の onboarding = テーマ・ログイン・Security notes を通す。ログイン状態は、檻専用の HOME に残る)
   --name N          clone の user.name (--repo のとき。既定は goro)
   --email E         clone の user.email (--repo のとき)
   --state-dir DIR   状態 (セッション・檻専用の HOME) を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
   --claude PATH     claude の実行ファイル (既定は環境変数 GORO_CLAUDE か、PATH の claude)
   --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は api.anthropic.com:443 と platform.claude.com:443)
-  -- ARGS...        claude に渡す引数 (--login のときは、claude auth login の後ろに付く)
+  -- ARGS...        claude に渡す引数
 
 例:
-  goro run --login                    初回。出た URL をホストのブラウザで開き、出たコードを貼る
+  goro run --login                    初回。テーマを選び、出た URL をホストのブラウザで開いてコードを貼り、Security notes で Enter を押したら、/exit で終える
   goro run --repo ~/work/foo          foo の private clone の中で claude と対話する
   goro run --session ID -- --resume   再開する (-- の後ろは claude への引数)
   goro export ID                      成果 (コミット) を bundle にして、取り込みのコマンドを表示する
@@ -161,7 +161,23 @@ func resolveClaude(flagVal, envVal string, lookPath func(string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("claude (%s) を使えない: %w", p, err)
 	}
+	if isScript(real) {
+		return "", fmt.Errorf("claude (%s) はスクリプト (先頭が #!) です。檻の中では、スクリプトが呼ぶ実体が見えず、動きません。"+
+			"実体の実行ファイルを --claude か GORO_CLAUDE で指定してください (例: /opt/claude-code/bin/claude)", real)
+	}
 	return real, nil
+}
+
+// isScript は、path のファイルの先頭が #! か (読めなければ false。実行できるかは、resolveExe が確かめた)。
+func isScript(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var head [2]byte // 短いファイルは、残りが 0 のままで、#! に一致しない
+	_, _ = io.ReadFull(f, head[:])
+	return head[0] == '#' && head[1] == '!'
 }
 
 // ensureDir は、自分が使う dir を 0700 で作る (あれば、権限を 0700 にする)。
@@ -267,6 +283,10 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 		tgt = runTarget{id: sess.ID, work: sess.Clone, runDir: sess.Run}
 	}
 
+	if o.login {
+		fmt.Fprintln(stderr, "goro run: ログイン用に claude を対話起動する。テーマを選び、出た URL をホストのブラウザで開いてコードを貼り、"+
+			"Security notes で Enter を押したら、/exit で終える (onboarding を最後まで通らないと、次の起動が、ログイン画面からやり直しになる)")
+	}
 	sum := runSummary{id: tgt.id, stateDir: stateDir, stateDirGiven: o.stateDir != "", agentHome: agentHome}
 	code := runCage(ctx, o, sw, tgt, cageConfig{
 		Host: host, ClaudeExe: claudeExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
@@ -287,11 +307,10 @@ func sockPathFor(stateDir string, o runOptions) string {
 	return filepath.Join(stateDir, "sessions", sampleSessionID, "run", proxySockName)
 }
 
-// cageArgs は、claude への引数: --login なら auth login の後ろに、利用者の引数を付ける。
+// cageArgs は、claude への引数 (利用者の引数だけ)。--login も、claude auth login ではなく、素の対話起動にする: 初回の onboarding
+// (テーマ・ログイン・Security notes) を通ると、claude が、認証情報と、onboarding の完了 (.claude.json の hasCompletedOnboarding)
+// を保存する。claude auth login は、認証情報しか保存せず、次の対話起動が、onboarding (ログイン画面を含む) からやり直しになる。
 func cageArgs(o runOptions) []string {
-	if o.login {
-		return append([]string{"auth", "login"}, o.claudeArgs...)
-	}
 	return o.claudeArgs
 }
 
