@@ -57,6 +57,8 @@
 // U+E0100〜E01EF だけを除く)・点字の空白 (U+2800)・U+2028/2029・不正な UTF-8・CR は、除去せず error にする。
 // これらは、構文解析の前の、生のバイト列でも調べる (doc comment の解析は、行末の FF などを黙って取り除くため)。
 //
+// 行番号は、//line ディレクティブで補正されない (lineOf)。構文の error の位置も、実際の行に書き直す。
+//
 // 敵対入力として読む。root は cwd の 2 つ上に固定し (go.work を上向きに探さず、symlink は error)、
 // 読み書きは os.Root の内側で、生成物は tree.writeFile を通る唯一の入口 (writeOutput) が書く。
 // ツリーの中の symlink は、辿らず error (辿らない名前 (testdata など) で、読む名前でもないものだけは、無視する)。
@@ -83,9 +85,14 @@
 //   - os.Root は、bind mount・/proc・デバイスファイルを禁止しない。名前そのものの、open の間の差し替えは、読む・切り詰める前の
 //     確認で見る。確認の後の差し替えと、途中のディレクトリを root の中の別の場所への symlink に替える差し替えは、見えない
 //     (os.Root が、root の外へ出ることは防ぐ)。ツリーを、docgen の実行中に書き換えられる攻撃者は、想定しない。
-//   - ビルドタグは見ず、全 .go を 1 つの package として扱う (同名の定義が重なる場合の出力は未検証)。
-//   - .git・testdata・vendor と、. や _ で始まるディレクトリの .md は、辿らないので検査しない。
-//   - リンクの解析は簡易 (アンカーと外部 URL は見ない)。GitHub での描画 (<a id> の anchor) と、Go の版による出力の差は、未検証。
+//   - ビルドタグは見ず、全 .go を 1 つの package として扱う。build されない (//go:build ignore) ファイルの宣言も文書に出る。
+//     同名の定義が重なると、出るのは一方の doc だけで、どちらかは決まらない (関数は go/doc が map の順に読むので、実行ごとに
+//     変わり、docs-check が不安定になりうる)。TestBuildTagExcludedDeclarationsAreDocumented が固定している。
+//   - .git・testdata・vendor と、. や _ で始まるディレクトリの .md は、辿らないので検査しない。.md と .markdown 以外の拡張子
+//     (.mdx・.txt など) の文書も、置き場と大きさを見ない (TestMarkdownPlacementLimitsPassThrough が固定している)。
+//   - リンクの解析は簡易 (アンカーと外部 URL は見ない)。autolink (<javascript:…>)・生の HTML・文字参照を使ったリンク先も見ない
+//     (TestMarkdownLinkLimitsPassThrough が固定している。GitHub は、描画のときに sanitize する)。GitHub での描画 (<a id> の
+//     anchor) と、Go の版による出力の差は、未検証。
 //   - メモリは、構文解析する .go の合計 (12 MiB) で抑えるだけで、メモリそのものの上限ではない。ピークは、入力の形で変わる
 //     (最悪の形で、約 0.9 GB。値を上げるときは、二項式を並べた入力で測り直す。TestDefaultGoBytes)。
 //   - 時間の予算が効かない止まり方 (ファイルシステムの停止) は、10 秒の猶予の後に強制終了する (main の watchdog)。
