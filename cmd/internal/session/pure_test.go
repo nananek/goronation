@@ -267,8 +267,11 @@ func TestGitSpecIsValid(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Argv: %v", err)
 				}
-				if spec.Cmd[0] != gitBin || spec.NewSession || spec.Stdin != nil {
-					t.Errorf("Cmd[0] = %q NewSession=%v", spec.Cmd[0], spec.NewSession)
+				if spec.Cmd[0] != gitBin || !spec.NewSession || spec.Stdin != nil {
+					t.Errorf("Cmd[0] = %q NewSession=%v, want git・NewSession (制御端末を持たせない)", spec.Cmd[0], spec.NewSession)
+				}
+				if !slices.Contains(argv, "--new-session") {
+					t.Error("argv に --new-session が無い")
 				}
 				if slices.Contains(argv, "--share-net") {
 					t.Error("ネットワークを共有している")
