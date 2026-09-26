@@ -218,7 +218,8 @@ func TestNormalizeIdent(t *testing.T) {
 // TestNormalizeRejectsForbidden は、どの種類 (kindDiag 以外) も、禁止する文字と不正な UTF-8 を、error にすることを確認する。
 func TestNormalizeRejectsForbidden(t *testing.T) {
 	kinds := map[string]kind{"path": kindPath, "text": kindText, "cell": kindCell, "span": kindSpan, "code": kindCodeBlock, "go": kindGoBlock, "ident": kindIdent, "url": kindURL, "document": kindDocument}
-	bad := []string{"a\x1bb", "a\x07b", "a\x08b", "a\x00b", "a\x7fb", "a\u0085b", "a\u202eb", "a\u2028b", "a\u2069b", "a\rb", "a\xffb"}
+	bad := []string{"a\x1bb", "a\x07b", "a\x08b", "a\x00b", "a\x7fb", "a\u0085b", "a\u202eb", "a\u2028b", "a\u2069b", "a\rb", "a\xffb",
+		"a\u200bb", "a\u200db", "a\u2060b", "a\ufeffb", "a\U000e0041b"}
 	for name, k := range kinds {
 		for _, s := range bad {
 			if got, err := normalize(k, s); err == nil {
@@ -248,16 +249,21 @@ func TestCheckSource(t *testing.T) {
 		t.Errorf("正常な source: %v", err)
 	}
 	cases := map[string]string{
-		"ESC":        "package a\n// x\x1b[31m\n",
-		"CR":         "package a\r\n",
-		"C1":         "package a\n// x\u0085y\n",
-		"RLO":        "package a\n// x\u202ey\n",
-		"NUL":        "package a\n// x\x00y\n",
-		"invalid":    "package a\n// x\xffy\n",
-		"3 行目":       "package a\n\n// FF\x0c\n",
-		"行末の LS":     "package a\n// x\u2028\n",
-		"DEL":        "package a\n// x\x7f\n",
-		"文字列の中の BEL": "package a\nconst c = \"a\x07b\"\n",
+		"ESC":         "package a\n// x\x1b[31m\n",
+		"CR":          "package a\r\n",
+		"C1":          "package a\n// x\u0085y\n",
+		"RLO":         "package a\n// x\u202ey\n",
+		"NUL":         "package a\n// x\x00y\n",
+		"invalid":     "package a\n// x\xffy\n",
+		"3 行目":        "package a\n\n// FF\x0c\n",
+		"行末の LS":      "package a\n// x\u2028\n",
+		"DEL":         "package a\n// x\x7f\n",
+		"文字列の中の BEL":  "package a\nconst c = \"a\x07b\"\n",
+		"ZWSP":        "package a\n// x\u200by\n",
+		"ZWJ":         "package a\n// x\u200dy\n",
+		"文字列の中の ZWSP": "package a\nconst c = \"a\u200bb\"\n",
+		"先頭の BOM":     "\ufeffpackage a\n",
+		"タグ文字":        "package a\n// x\U000e0041y\n",
 	}
 	for name, src := range cases {
 		err := checkSource("x/a.go", []byte(src))

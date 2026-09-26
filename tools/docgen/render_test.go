@@ -263,6 +263,7 @@ func TestControlCharacters(t *testing.T) {
 		"ESC": "\x1b", "BEL": "\x07", "BS": "\x08", "NUL": "\x00", "DEL": "\x7f", "FF": "\x0c", "VT": "\x0b",
 		"C1 (NEL)": "\u0085", "CSI (C1)": "\u009b", "RLO": "\u202e", "LRE": "\u202a", "RLI": "\u2067", "PDI": "\u2069",
 		"LRM": "\u200e", "ALM": "\u061c", "LS": "\u2028", "PS": "\u2029", "CR": "\r",
+		"ZWSP": "\u200b", "ZWNJ": "\u200c", "ZWJ": "\u200d", "WJ": "\u2060", "BOM": "\ufeff", "TAG": "\U000e0041",
 	}
 	for name, c := range chars {
 		t.Run(name, func(t *testing.T) {

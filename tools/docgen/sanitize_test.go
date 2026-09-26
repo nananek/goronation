@@ -47,13 +47,15 @@ func TestCheckPath(t *testing.T) {
 
 func TestForbiddenRune(t *testing.T) {
 	forbidden := []rune{0x00, 0x01, 0x07, 0x08, 0x0b, 0x0c, '\r', 0x1b, 0x1f, 0x7f, 0x80, 0x85, 0x9f,
-		0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0x2028, 0x2029}
+		0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0x2028, 0x2029,
+		// 書式制御文字 (Cf): 見えない。ゼロ幅・soft hyphen・word joiner・BOM・タグ文字 (ASCII を隠せる)。
+		0x00AD, 0x200B, 0x200C, 0x200D, 0x2060, 0x2064, 0xFEFF, 0xE0001, 0xE0041, 0xE007F}
 	for _, r := range forbidden {
 		if !forbiddenRune(r) {
 			t.Errorf("forbiddenRune(U+%04X) = false, want true", r)
 		}
 	}
-	allowed := []rune{'\n', '\t', ' ', 'a', '~', 0xa0, 0xa1, '日', 'ー', '。', 0x200B, 0x200D, 0xFEFF, 0x1F600}
+	allowed := []rune{'\n', '\t', ' ', 'a', '~', 0xa0, 0xa1, '日', 'ー', '。', 0x2010, 0x2027, 0x2030, 0x3000, 0xFF01, 0x1F600}
 	for _, r := range allowed {
 		if forbiddenRune(r) {
 			t.Errorf("forbiddenRune(U+%04X) = true, want false", r)
@@ -72,6 +74,9 @@ func TestEscapeDiag(t *testing.T) {
 		{"C1\u0085", `C1\x85`},
 		{"rlo\u202e", `rlo\u202e`},
 		{"sep\u2028", `sep\u2028`},
+		{"zw\u200bsp", `zw\u200bsp`},
+		{"bom\ufeff", `bom\ufeff`},
+		{"tag\U000e0041", `tag\U000e0041`},
 		{"bad\xffutf8", `bad\xffutf8`},
 	}
 	for _, tc := range cases {

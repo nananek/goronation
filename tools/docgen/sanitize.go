@@ -81,17 +81,16 @@ func normalize(k kind, s string) (string, error) {
 	return "", fmt.Errorf("normalize: 未知の種類 %d", int(k))
 }
 
-// forbiddenRune は、文書にも診断にも出さない文字か。改行とタブ以外の制御文字 (C0・DEL・C1)、
-// 表示の向きを変える文字 (双方向制御。Trojan Source)、行・段落の区切り (U+2028・U+2029) を含む。
+// forbiddenRune は、文書にも診断にも出さない文字か。改行とタブ以外の制御文字 (C0・DEL・C1)、書式制御文字 (Cf。
+// 表示の向きを変える双方向制御 (Trojan Source)・ゼロ幅の文字・BOM・タグ文字など。見えないので、レビューで読めない
+// 内容を隠せる)、行・段落の区切り (U+2028・U+2029) を含む。
 func forbiddenRune(r rune) bool {
 	switch {
 	case r == '\n' || r == '\t':
 		return false
-	case unicode.IsControl(r):
+	case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
 		return true
-	case r == 0x061C, r == 0x200E, r == 0x200F, r == 0x2028, r == 0x2029:
-		return true
-	case 0x202A <= r && r <= 0x202E, 0x2066 <= r && r <= 0x2069:
+	case r == 0x2028 || r == 0x2029:
 		return true
 	}
 	return false
@@ -104,7 +103,7 @@ func checkRunes(s string) error {
 	}
 	for _, r := range s {
 		if forbiddenRune(r) {
-			return fmt.Errorf("制御文字か、表示の向きを変える文字 U+%04X を含む", r)
+			return fmt.Errorf("制御文字か、書式制御文字 (見えない文字・表示の向きを変える文字) U+%04X を含む", r)
 		}
 	}
 	return nil
@@ -124,7 +123,7 @@ func checkSource(name string, data []byte) error {
 			case r == '\r':
 				return fmt.Errorf("%s:%d: CR を含む (改行は LF にする。CRLF に変換されないよう、.gitattributes で eol=lf にする)", name, i+1)
 			case forbiddenRune(r):
-				return fmt.Errorf("%s:%d: 制御文字か、表示の向きを変える文字 U+%04X を含む", name, i+1, r)
+				return fmt.Errorf("%s:%d: 制御文字か、書式制御文字 (見えない文字・表示の向きを変える文字) U+%04X を含む", name, i+1, r)
 			}
 		}
 	}
@@ -307,7 +306,7 @@ func codeBlock(lang, s string) string {
 	return fence + lang + "\n" + strings.TrimRight(s, "\n") + "\n" + fence
 }
 
-// escapeDiag は、診断の文字列の、禁止する文字 (forbiddenRune) と改行・タブ・不正な UTF-8 を、\x..・\u.... に直す。
+// escapeDiag は、診断の文字列の、禁止する文字 (forbiddenRune) と改行・タブ・不正な UTF-8 を、\x..・\u....・\U........ に直す。
 // 攻撃者が付けられる名前や本文が、端末の制御列や、偽の行を出力に出さないため。
 func escapeDiag(s string) string {
 	var b strings.Builder
@@ -322,6 +321,8 @@ func escapeDiag(s string) string {
 			b.WriteString(`\t`)
 		case forbiddenRune(r) && r < 0x100:
 			b.WriteString(fmt.Sprintf(`\x%02x`, r))
+		case forbiddenRune(r) && r > 0xFFFF:
+			b.WriteString(fmt.Sprintf(`\U%08x`, r))
 		case forbiddenRune(r):
 			b.WriteString(fmt.Sprintf(`\u%04x`, r))
 		default:
