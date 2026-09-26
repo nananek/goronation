@@ -112,6 +112,10 @@ func TestSourceHygiene(t *testing.T) {
 					if id, ok := x.Fun.(*ast.Ident); ok && (id.Name == "print" || id.Name == "println") {
 						t.Errorf("%s: 組み込みの %s は使わない", fset.Position(x.Pos()), id.Name)
 					}
+					// token.File.Line(pos) も、Position と同じく、//line で補正した行を返す (lineOf を使う)。
+					if se, ok := x.Fun.(*ast.SelectorExpr); ok && se.Sel.Name == "Line" {
+						t.Errorf("%s: .Line(...) は、//line で補正した行を返す。lineOf を使う", fset.Position(x.Pos()))
+					}
 				case *ast.SelectorExpr:
 					pos := fset.Position(x.Pos()).String()
 					sel := x.Sel.Name
