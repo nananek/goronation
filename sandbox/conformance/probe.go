@@ -40,6 +40,8 @@ type report struct {
 	FdRead     string            // -fdread の結果 (読めた中身。読めなければ "err: ...")
 	Tiocsti    string            // -tiocsti の結果 ("" = 注入できた。それ以外は、失敗の理由)
 	Kill0      string            // -kill0 の結果 ("" = そのプロセスが見える。"esrch" = 見えない)
+	TTYOpen    string            // -opentty の結果 (制御端末 /dev/tty を開けたか。"" = 開けた)
+	TTYInject  string            // 開けた /dev/tty への TIOCSTI の結果 ("" = 注入できた。開けなければ "-")
 }
 
 type multiFlag []string
@@ -60,6 +62,7 @@ func probeMain(args []string) {
 	fdread := fl.Int("fdread", -1, "この fd から読む")
 	tiocsti := fl.Bool("tiocsti", false, "標準入力の端末に、TIOCSTI を試す")
 	kill0 := fl.Int("kill0", 0, "この pid に、シグナル 0 を送る")
+	opentty := fl.Bool("opentty", false, "制御端末 /dev/tty を開く")
 	exit := fl.Int("exit", -1, "何もせず、この終了コードで終わる")
 	selfKill := fl.Bool("selfkill", false, "自分に SIGKILL を送る")
 	sleep := fl.String("sleep", "", "何もせず 1 分待つ (値は、プロセスの目印)")
@@ -164,6 +167,15 @@ func probeMain(args []string) {
 	}
 	if *kill0 != 0 {
 		r.Kill0 = kill0Result(*kill0)
+	}
+	if *opentty {
+		r.TTYInject = "-"
+		f, err := os.OpenFile("/dev/tty", os.O_RDWR|osNoCTTY, 0)
+		r.TTYOpen = errString(err)
+		if err == nil {
+			r.TTYInject = tiocstiOn(int(f.Fd()))
+			f.Close()
+		}
 	}
 	_ = json.NewEncoder(os.Stdout).Encode(r)
 }

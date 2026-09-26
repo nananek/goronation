@@ -6,6 +6,8 @@ import "errors"
 
 // この OS には、probe の unix 用の部品が無い (必要なら足す)。
 
+const osNoCTTY = 0
+
 func killSelf() {}
 
 func kill0(pid int) error { return errors.New("未対応") }

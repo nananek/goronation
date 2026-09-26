@@ -45,6 +45,7 @@ var p0Checks = []check{
 	{"signal", checkSignal},
 	{"inherited-fd", checkInheritedFD},
 	{"terminal", checkTerminal},
+	{"terminal-detached", checkTerminalDetached},
 	{"rejects", checkRejects},
 }
 
@@ -404,8 +405,40 @@ func checkSignal(c *C) {
 	if err := lv.cage.Signal(syscall.SIGTERM); err != nil {
 		c.t.Fatalf("Signal: %v", err)
 	}
-	if err := lv.finish(); err == nil {
-		c.t.Log("SIGTERM で、檻のコマンドは、終了コード 0 で終わった")
+	// SIGTERM で止まった檻の終了は、正常終了か、シグナルで死んだ (128 + 番号) のどちらか。*ExitError でない error や、別の終了コードは、契約違反。
+	if err := lv.finish(); err != nil && exitCode(err) != 128+int(syscall.SIGTERM) {
+		c.t.Errorf("SIGTERM で止めた檻の終了 = %v (終了コード %d), want nil か 128+SIGTERM の *ExitError", err, exitCode(err))
+	}
+}
+
+// checkTerminalDetached は、制御端末を持つ呼び手が、Terminal = false で起動した檻が、その端末を持たない (/dev/tty を開けない) ことを確かめる。
+// 端末を持たない檻は、呼び手の端末に、入力を注入できない (git の檻など、端末が要らない檻の既定)。
+func checkTerminalDetached(c *C) {
+	master, slave, err := openPTY()
+	if err != nil {
+		c.t.Fatalf("pty を用意できない: %v", err)
+	}
+	defer master.Close()
+	defer slave.Close()
+	cmd, out := c.reexecAttr("ctty", []*os.File{slave}, cttyAttr()) // 子の fd 3 = slave。子の制御端末になる
+	b, _ := io.ReadAll(out)
+	_ = cmd.Wait()
+	text := string(b)
+	if strings.Contains(text, "START_ERR:") {
+		c.t.Fatalf("Terminal = false の Spec を、起動できなかった: %s", text)
+	}
+	var rep report
+	found := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "{") && json.Unmarshal([]byte(line), &rep) == nil {
+			found = true
+		}
+	}
+	if !found {
+		c.t.Fatalf("probe の報告が無い (檻が動かなかった):\n%s", text)
+	}
+	if rep.TTYOpen == "" {
+		c.t.Errorf("Terminal = false の檻が、呼び手の制御端末 (/dev/tty) を開けた (TIOCSTI の結果: %q)", rep.TTYInject)
 	}
 }
 

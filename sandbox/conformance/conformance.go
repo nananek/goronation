@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -295,7 +296,7 @@ func (l *live) finish() error {
 
 // 役 (テストバイナリの再実行) の環境変数。
 const (
-	roleEnv    = "GORO_CONFORMANCE_ROLE" // "parent": 檻を起動して待つ親 / "fdleak": fd を持ったまま檻を起動する呼び手
+	roleEnv    = "GORO_CONFORMANCE_ROLE" // "parent": 檻を起動して待つ親 / "fdleak": fd を持ったまま檻を起動する呼び手 / "ctty": 制御端末を持つ呼び手
 	roleExeEnv = "GORO_CONFORMANCE_EXE"  // 役が使う、probe の実行ファイル (ホストの path)
 	roleMarker = "GORO_CONFORMANCE_MARKER"
 )
@@ -325,6 +326,16 @@ func runRole(t *testing.T, nb NewBackend, role string) {
 			return
 		}
 		fmt.Println("CAGE_EXIT:", cage.Wait())
+	case "ctty":
+		// 制御端末を持つ呼び手が、Terminal = false で起動した檻は、その端末を持たない (標準出力は pipe。JSON は、この役の標準出力に出る)。
+		s := minimalSpec(caps, exe, "-opentty")
+		s.Stdout, s.Stderr = os.Stdout, os.Stderr
+		cage, err := b.Start(context.Background(), s)
+		if err != nil {
+			fmt.Println("START_ERR:", err)
+			return
+		}
+		fmt.Println("CAGE_EXIT:", cage.Wait())
 	default:
 		t.Fatalf("未知の役 %q", role)
 	}
@@ -335,6 +346,11 @@ const fdLeakFd = 9
 
 // reexec は、テストバイナリを、役 role で再実行する (Run を呼んだテストだけを動かす)。標準出力は pipe で読む。
 func (c *C) reexec(role string, files []*os.File, env ...string) (*exec.Cmd, io.ReadCloser) {
+	return c.reexecAttr(role, files, nil, env...)
+}
+
+// reexecAttr は、reexec に、子プロセスの属性 (制御端末など) を足したもの。
+func (c *C) reexecAttr(role string, files []*os.File, attr *syscall.SysProcAttr, env ...string) (*exec.Cmd, io.ReadCloser) {
 	c.t.Helper()
 	self, err := os.Executable()
 	if err != nil {
@@ -347,6 +363,7 @@ func (c *C) reexec(role string, files []*os.File, env ...string) (*exec.Cmd, io.
 	cmd := exec.Command(self, "-test.run="+strings.Join(pat, "/"), "-test.count=1")
 	cmd.Env = append(os.Environ(), append([]string{roleEnv + "=" + role, roleExeEnv + "=" + c.fx.exe}, env...)...)
 	cmd.ExtraFiles = files
+	cmd.SysProcAttr = attr
 	cmd.Stderr = os.Stderr
 	out, err := cmd.StdoutPipe()
 	if err != nil {

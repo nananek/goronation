@@ -10,6 +10,9 @@ import (
 	"unsafe"
 )
 
+// osNoCTTY は、端末を開くとき、制御端末にしない flag (O_NOCTTY)。
+const osNoCTTY = syscall.O_NOCTTY
+
 // killSelf は、自分に SIGKILL を送る。
 func killSelf() { _ = syscall.Kill(os.Getpid(), syscall.SIGKILL) }
 
