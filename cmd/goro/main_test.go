@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == helperArg {
 		name, args := os.Args[2], os.Args[3:]
 		if name == "goro" {
-			os.Exit(dispatch(args, os.Stderr))
+			os.Exit(dispatch(args, os.Stdout, os.Stderr))
 		}
 		h, ok := helpers[name]
 		if !ok {
@@ -122,7 +122,7 @@ func TestDispatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			if got := dispatch(tc.args, &stderr); got != tc.code {
+			if got := dispatch(tc.args, io.Discard, &stderr); got != tc.code {
 				t.Errorf("終了コード = %d, want %d", got, tc.code)
 			}
 			if !strings.Contains(stderr.String(), tc.want) {
