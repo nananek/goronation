@@ -298,6 +298,7 @@ func TestCageSpecGolden(t *testing.T) {
 		"--setenv", "DISABLE_TELEMETRY", "1",
 		"--setenv", "DISABLE_ERROR_REPORTING", "1",
 		"--setenv", "DISABLE_AUTOUPDATER", "1",
+		"--setenv", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1",
 		"--",
 		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
 		"/opt/claude/claude", "--resume", "x y",
@@ -368,7 +369,7 @@ func TestCageEnv(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	wantNames := "HOME,PATH,TERM,LANG,CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,DISABLE_TELEMETRY,DISABLE_ERROR_REPORTING,DISABLE_AUTOUPDATER"
+	wantNames := "HOME,PATH,TERM,LANG,CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,DISABLE_TELEMETRY,DISABLE_ERROR_REPORTING,DISABLE_AUTOUPDATER,CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"
 	for term, want := range map[string]string{
 		"xterm-256color": "xterm-256color", "screen.linux": "screen.linux", "": "dumb", "bad term": "dumb",
 		"x\ny": "dumb", "$(id)": "dumb", strings.Repeat("a", 65): "dumb", "tmux-256color": "tmux-256color",
