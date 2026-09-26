@@ -94,7 +94,7 @@ func TestShellQuote(t *testing.T) {
 
 func TestFetchCommand(t *testing.T) {
 	got := fetchCommand("/x y/it's.bundle", "20260101-000000-abcdef", []string{"refs/heads/main", "refs/heads/feat/x"})
-	want := `git -c transfer.fsckObjects=true fetch '/x y/it'\''s.bundle' 'refs/heads/main:refs/heads/goro/20260101-000000-abcdef/main' 'refs/heads/feat/x:refs/heads/goro/20260101-000000-abcdef/feat/x'`
+	want := `git -c transfer.fsckObjects=true fetch --no-tags --no-recurse-submodules '/x y/it'\''s.bundle' 'refs/heads/main:refs/heads/goro/20260101-000000-abcdef/main' 'refs/heads/feat/x:refs/heads/goro/20260101-000000-abcdef/feat/x'`
 	if got != want {
 		t.Errorf("fetchCommand:\n got %s\nwant %s", got, want)
 	}

@@ -157,9 +157,11 @@ func safeHeadName(ref string) bool {
 }
 
 // fetchCommand は、利用者が、自分のリポジトリで実行する取り込みのコマンド。オブジェクトを fsck し、ブランチは、
-// 現在のブランチを上書きしないよう、refs/heads/goro/<id>/ の下へ入れる。名前は、すべて、シェルの引用をつける。
+// 現在のブランチを上書きしないよう、refs/heads/goro/<id>/ の下へ入れる。--no-tags: 指定した ref のほかに、タグ (名前は檻が決める) を、
+// 自動で取り込まない。--no-recurse-submodules: 利用者の repo の submodule を、bundle の内容に応じて取りに行かない。
+// 名前は、すべて、シェルの引用をつける。
 func fetchCommand(bundle, id string, heads []string) string {
-	parts := []string{"git", "-c", "transfer.fsckObjects=true", "fetch", shellQuote(bundle)}
+	parts := []string{"git", "-c", "transfer.fsckObjects=true", "fetch", "--no-tags", "--no-recurse-submodules", shellQuote(bundle)}
 	for _, h := range heads {
 		parts = append(parts, shellQuote(h+":refs/heads/goro/"+id+"/"+strings.TrimPrefix(h, "refs/heads/")))
 	}
