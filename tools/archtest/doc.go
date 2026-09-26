@@ -45,8 +45,8 @@
 // ものに解決され、archtest が読む実体と、go tool・gofmt・compile が読む実体が別になりうる (実測: /proc/self/cwd/x を指す
 // core/link.go で、archtest は無害な実体を検査して緑、go は os/exec を含む実体を build した)。名前が .go・go.mod・go.work なら
 // error に、vendor か vendor/modules.txt なら違反にする。root の中 (root が /dev/shm の下でもよい) は対象にしない。
-// 判定は、結果を使う名前 (と vendor) の symlink だけで行い、1 回の判定で処理する path の要素は 4096 まで。超える連鎖は、
-// 時間の上限のために、黙って通さず、同じ扱い (error か違反) にする (fail-closed)。
+// 判定は、結果を使う名前 (と vendor) の symlink だけで行い、1 回の判定で処理する path の要素は 4096 まで (判定 1 回の手数の
+// 上限で、Check 全体の時間の上限ではない)。超える連鎖は、黙って通さず、同じ扱い (error か違反) にする (fail-closed)。
 //
 // # 限界
 //
@@ -74,5 +74,9 @@
 //     MethodByName の禁止)、debug/gosym の import だけ。
 //     外部 module (x/sys/unix など) の同種の関数を経由する経路は、検出できるか確かめていない。
 //   - 手動で go test を回すときは -count=1 を付ける (module の外の変更は、テストの結果のキャッシュに反映されない。make check は付けている)。
+//   - Check 全体の時間は、非有界 (既知の限界)。判定ごとの手数の上限 (4096) は、判定 1 回の費用を縛るだけで、深い tree に .go 名の
+//     symlink を多数置くと遅くなる (例: 深さ 1900 に 100 本で約 24 秒。結果は CLEAN のまま)。これを守らないのは、PR 作成者が
+//     同じ CI でテストコードを実行できるので、時間の増幅は、この lint の対象ではないため。手数の上限を超える連鎖の error 文は、
+//     長いだけの連鎖も「プロセスごとに別のものに解決される」と言う (fail-closed のために、同じ扱いにしている)。
 //   - impl-only-from-cmd は、実装 package 自身の側の import も違反にする (docs/adr/0001 の帰結を参照)。
 package archtest

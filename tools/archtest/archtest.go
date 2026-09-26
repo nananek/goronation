@@ -306,9 +306,9 @@ func (c *checker) checkVendorMode(p string) {
 // (実測: /proc/self/cwd/x を指す core/link.go で、archtest は無害な実体を検査して緑、go は os/exec を含む実体を build した)。
 var processDependentRoots = []string{"/proc", "/dev", "/sys"}
 
-// maxResolveSteps は、processDependent が 1 回の判定で処理する path の要素の数の上限。symlink の連鎖と、target の要素
-// (実在するディレクトリを出入りする "a/../a/../..." など) が増幅すると、判定の時間に上限が無くなる。実在する連鎖は、
-// これに遠く及ばない。超えたら、黙って通さず、プロセス依存として扱う (fail-closed)。
+// maxResolveSteps は、processDependent が 1 回の判定で処理する path の要素の数の上限。Check 全体の時間の上限ではない
+// (1 手の費用は path 長に比例し、予算は判定ごと)。実在する連鎖は、これに遠く及ばない。超えたら、黙って通さず、
+// プロセス依存として扱う (fail-closed)。
 const maxResolveSteps = 4096
 
 // processDependent は、symlink p を、1 段ずつ辿って解決する途中で、processDependentRoots の中に入ったら、
@@ -318,7 +318,8 @@ const maxResolveSteps = 4096
 // filepath.EvalSymlinks は使わない。/proc/self/cwd を解決すると、いまのプロセスの cwd の実体の path が返り、/proc を
 // 通ったことが分からなくなる。".." は、字面で畳まずに、解決済みの親のディレクトリにする (symlink のディレクトリの
 // 先を通る連鎖を、OS と同じに解決する)。連鎖が深すぎる (輪) なら空を返し、Stat の失敗が error にする。
-// 処理する要素の数が maxResolveSteps を超えたら、その旨を返す (fail-closed。時間の上限)。
+// 処理する要素の数が maxResolveSteps を超えたら、その旨を返す (fail-closed。判定 1 回の手数の上限で、Check 全体の
+// 時間の上限ではない)。
 func (c *checker) processDependent(p string) string {
 	abs, err := filepath.Abs(p)
 	if err != nil {
