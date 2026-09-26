@@ -391,6 +391,17 @@ func TestCageSpecBindOrder(t *testing.T) {
 	if index(spec, c.AgentHome) < 0 || index(spec, c.AgentHome) > index(spec, c.GoroExe) {
 		t.Errorf("HOME の bind が、その下の goro より後: %+v", spec.Binds)
 	}
+	// 同じ親の下に、子が 2 つある: 親は、どちらの子より先。
+	c = testCage()
+	c.AgentExe = c.Work + "/tools/claude"
+	c.GoroExe = c.Work + "/bin/goro"
+	spec = cageSpec(c)
+	if _, err := spec.Argv(); err != nil {
+		t.Fatal(err)
+	}
+	if w := index(spec, c.Work); w < 0 || w > index(spec, c.AgentExe) || w > index(spec, c.GoroExe) {
+		t.Errorf("作業ディレクトリの bind が、その下の 2 つの実行ファイルの、どちらかより後: %+v", spec.Binds)
+	}
 	// 重ならない配置は、並べた順のまま。
 	var order []string
 	for _, b := range cageSpec(testCage()).Binds {

@@ -394,3 +394,24 @@ func TestBindInHome(t *testing.T) {
 		}
 	}
 }
+
+// TestGitArgs は、檻の中で実行する git の引数を、丸ごと固定する (path は、檻の中でも、ホストと同じ絶対 path。固定の /src・/work・/out は使わない)。
+// clone は、ローカルの clone でも、object を共有しない (--no-local・--no-hardlinks)。repo は、-- の後ろ (オプションとして読まれない)。
+func TestGitArgs(t *testing.T) {
+	st := &Store{root: "/data/state/goro/sessions", host: bwrap.Host{Home: "/home/tester"}}
+	sess := st.layout("20260926-103000-a1b2c3")
+	for name, tc := range map[string]struct{ got, want []string }{
+		"clone": {cloneArgs("/data/repos/repo", sess, "goro", "goro@localhost.invalid"), []string{
+			"clone", "--no-local", "--no-hardlinks", "-c", "user.name=goro", "-c", "user.email=goro@localhost.invalid",
+			"--", "/data/repos/repo", "/data/state/goro/sessions/20260926-103000-a1b2c3/clone"}},
+		"remote remove": {removeOriginArgs(sess), []string{
+			"-C", "/data/state/goro/sessions/20260926-103000-a1b2c3/clone", "remote", "remove", "origin"}},
+		"bundle": {bundleArgs(sess), []string{
+			"-C", "/data/state/goro/sessions/20260926-103000-a1b2c3/clone", "bundle", "create",
+			"/data/state/goro/sessions/20260926-103000-a1b2c3/export/" + bundleName, "--all"}},
+	} {
+		if !slices.Equal(tc.got, tc.want) {
+			t.Errorf("%s の引数:\n got: %q\nwant: %q", name, tc.got, tc.want)
+		}
+	}
+}
