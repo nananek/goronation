@@ -75,6 +75,7 @@ func TestLintPackageDoc(t *testing.T) {
 	}{
 		{"package doc が無い", map[string]string{doc: "package core\n"}, []string{doc + " pkg-doc-missing"}},
 		{"空行があると、doc にならない", map[string]string{doc: "// Package core は、テスト。\n//\n// 契約。\n\npackage core\n"}, []string{doc + " pkg-doc-missing"}},
+		{"空の doc comment (// だけ)", map[string]string{doc: "//\npackage core\n"}, []string{doc + " pkg-doc-start", doc + " pkg-doc-contract"}},
 		{"複数のファイルにある", map[string]string{doc: goodDoc("core"), "core/other.go": docComment("Package core は、別の doc。", "", "契約。") + "package core\n"}, []string{doc + " pkg-doc-multiple"}},
 		{"名前が違う", map[string]string{doc: docComment("Package other は、テスト。", "", "契約。") + "package core\n"}, []string{doc + " pkg-doc-start"}},
 		{"Package で始まらない", map[string]string{doc: docComment("core は、テスト。", "", "契約。") + "package core\n"}, []string{doc + " pkg-doc-start"}},
@@ -234,6 +235,7 @@ func TestLintMarkdown(t *testing.T) {
 		{"ADR が 4,000 字 (境界)", map[string]string{"docs/adr/0001-a.md": "# 0001. a\n- 状態: 採用\n" + strings.Repeat("あ", 3980) + "\n"}, nil},
 		{"ADR が 4,001 字", map[string]string{"docs/adr/0001-a.md": "# 0001. a\n- 状態: 採用\n" + strings.Repeat("あ", 3981) + "\n"}, []string{"docs/adr/0001-a.md md-size"}},
 		{"ADR の README は、生成区間の外だけを数える", map[string]string{"docs/adr/README.md": "# ADR\n" + adrBegin + "\n" + lines(200) + adrEnd + "\n"}, nil},
+		{"ADR の README の marker が 1 行目でも、区間の中は数えない", map[string]string{"docs/adr/README.md": adrBegin + "\n" + lines(200) + adrEnd + "\n"}, nil},
 		{"ADR の README の、区間の外が 60 行を超える", map[string]string{"docs/adr/README.md": "# ADR\n" + adrBegin + "\n" + adrEnd + "\n" + lines(60)}, []string{"docs/adr/README.md md-size"}},
 		{"別の場所の .md", map[string]string{"docs/other.md": "x\n"}, []string{"docs/other.md md-place"}},
 		{"package の README", map[string]string{"core/README.md": "x\n"}, []string{"core/README.md md-place"}},
@@ -317,6 +319,10 @@ func TestFindingOutput(t *testing.T) {
 		{Path: "a.md", Rule: ruleMDSize, Msg: "y"},
 		{Path: "b.go", Line: 1, Rule: ruleExportedDoc, Msg: "z"},
 		{Path: "a.md", Rule: ruleMDLink, Msg: "w"},
+		// path と行が同じなら、規則の名前の順、それも同じなら、説明の順。
+		{Path: "c.go", Line: 3, Rule: ruleMDSize, Msg: "v"},
+		{Path: "c.go", Line: 3, Rule: ruleExportedDoc, Msg: "u2"},
+		{Path: "c.go", Line: 3, Rule: ruleExportedDoc, Msg: "u1"},
 	}
 	sortFindings(fs)
 	var got []string
@@ -328,6 +334,9 @@ func TestFindingOutput(t *testing.T) {
 		"a.md: [md-size] y",
 		"b.go:1: [exported-doc] z",
 		"b.go:2: [exported-doc] x",
+		"c.go:3: [exported-doc] u1",
+		"c.go:3: [exported-doc] u2",
+		"c.go:3: [md-size] v",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q", got, want)

@@ -58,7 +58,8 @@
 //
 // 敵対入力として読む。root は cwd の 2 つ上に固定し (go.work を上向きに探さず、symlink は error)、
 // 読み書きは os.Root の内側で、生成物は tree.writeFile を通る唯一の入口 (writeOutput) が書く。
-// ツリーの中の symlink は、辿らず error。名前が .go・go.mod・.md の FIFO などは、開かず error。
+// ツリーの中の symlink は、辿らず error (辿らない名前 (testdata など) で、読む名前でもないものだけは、無視する)。
+// 名前が .go・go.mod・.md の FIFO などは、開かず error。
 // 開くときは O_NONBLOCK を付け、開いた fd と名前が同じファイルであることを確かめてから、読む・切り詰める。
 // 予算 (60 秒・項目 100,000・ファイル 5,000・1 ファイル 1 MiB・合計 64 MiB・深さ 64) は、全体で 1 つを共有する。
 //

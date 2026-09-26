@@ -93,7 +93,7 @@ func TestCheckDetects(t *testing.T) {
 		{"④索引の生成区間を手で編集する", func(t *testing.T, root string) {
 			p := "docs/adr/README.md"
 			writeFileAt(t, root, p, strings.Replace(readFileAt(t, root, p), "| 最初 |", "| 手で変えた題 |", 1))
-		}, []string{"docs/adr/README.md", "[gen-stale]"}},
+		}, []string{"docs/adr/README.md", "[gen-stale]", "索引の生成区間が古い"}},
 		{"④の変形: 行を足す", func(t *testing.T, root string) {
 			p := "docs/adr/README.md"
 			writeFileAt(t, root, p, strings.Replace(readFileAt(t, root, p), adrEnd, "| 偽 | 手書きの行 | 採用 |\n"+adrEnd, 1))
@@ -113,7 +113,7 @@ func TestCheckDetects(t *testing.T) {
 		}, []string{core, "docs/reference/README.md", "[gen-missing]"}},
 		{"余剰のファイル", func(t *testing.T, root string) {
 			writeFileAt(t, root, "docs/reference/notes.md", "手で書いた文書\n")
-		}, []string{"docs/reference/notes.md", "[gen-extra]"}},
+		}, []string{"docs/reference/notes.md", "[gen-extra]", "生成物ではないファイル"}},
 		{"余剰の隠しファイル", func(t *testing.T, root string) {
 			writeFileAt(t, root, "docs/reference/.hidden", "x\n")
 		}, []string{"docs/reference/.hidden", "[gen-extra]"}},
@@ -124,7 +124,7 @@ func TestCheckDetects(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(root, "docs", "reference", "empty"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-		}, []string{"docs/reference/empty", "[gen-extra]"}},
+		}, []string{"docs/reference/empty", "[gen-extra]", "生成物ではないディレクトリ"}},
 		{"余剰のディレクトリと、中のファイル", func(t *testing.T, root string) {
 			writeFileAt(t, root, "docs/reference/sub/deep/x.md", "x\n")
 		}, []string{"docs/reference/sub", "docs/reference/sub/deep/x.md", "[gen-extra]"}},

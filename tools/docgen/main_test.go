@@ -75,8 +75,8 @@ func TestRunGenerate(t *testing.T) {
 	if code != 0 || errs != "" {
 		t.Fatalf("code = %d, stdout = %q, stderr = %q", code, out, errs)
 	}
-	if !strings.Contains(out, "1 個の package") {
-		t.Errorf("stdout = %q", out)
+	if !strings.Contains(out, "1 個の package") || strings.Contains(out, "-check") {
+		t.Errorf("stdout = %q (生成は、-check の「問題なし」を出さない)", out)
 	}
 	got := readTree(t, filepath.Join(root, "docs"))
 	if got["reference/core.md"] == "" || got["reference/README.md"] == "" {
