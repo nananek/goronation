@@ -65,6 +65,7 @@ func runUsage() string {
   goro export ID                            成果 (コミット) を bundle にして、取り込みのコマンドを表示する
 
 限界: 檻からホストの localhost には届かない。ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。
+檻の中の path は、ホストと同じ (檻から、ユーザー名と状態ディレクトリの path が見える。中身は見えない)。
 
 起動後の Ctrl-C は、エージェントの中断として効く (goro run 自身は終了しない)。止めるときは、エージェントの終了操作 (上の「終了」) か、別の端末から goro run に SIGTERM。
 終わると、セッション ID・再開と取り出しのコマンド・拒否された宛先を表示する。
@@ -276,8 +277,8 @@ func runRun(args []string, stderr io.Writer) int {
 // runTarget は、doRun が檻で動かす作業ディレクトリと run dir (セッションか、ログイン用)。
 type runTarget struct {
 	id     string // セッション ID。--login では空
-	work   string // /work に見せる
-	runDir string // /run/goro に見せる
+	work   string // 作業ディレクトリ (檻に同じ path で見せ、cwd にする)
+	runDir string // run dir (檻に同じ path で ro で見せる)
 }
 
 // pickAgent は、この goro run で動かすエージェントと、--session で再開する既存のセッション (--session でなければ nil) を決める。

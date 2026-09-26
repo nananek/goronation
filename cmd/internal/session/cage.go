@@ -47,26 +47,39 @@ func (s *Store) gitSpec(binds []bwrap.Bind, args ...string) bwrap.Spec {
 	}
 }
 
-// bind は、ホストの path src を、檻の中の dst に見せる Bind。ホストの HOME の下の path (セッションのディレクトリ・
-// 元の repo など、このパッケージが作る・利用者が指定した作業用の path) は、InHome を明示する。
-func (s *Store) bind(src, dst string, rw bool) bwrap.Bind {
-	return bwrap.Bind{Src: src, Dst: dst, RW: rw, InHome: under(src, s.host.Home)}
+// bind は、ホストの path p を、檻の中の同じ path (identity。檻専用の固定の path は使わない) に見せる Bind。ホストの HOME の下の path
+// (セッションのディレクトリ・元の repo など、このパッケージが作る・利用者が指定した作業用の path) は、InHome を明示する。
+func (s *Store) bind(p string, rw bool) bwrap.Bind {
+	return bwrap.Bind{Src: p, Dst: p, RW: rw, InHome: under(p, s.host.Home)}
 }
 
-// cloneBinds は、clone の檻が見せるもの: 元の repo を ro で /src に、clone 先を rw で /work に。
+// cloneBinds は、clone の檻が見せるもの: 元の repo を ro で、clone 先を rw で。
 func (s *Store) cloneBinds(repo string, sess *Session) []bwrap.Bind {
-	return []bwrap.Bind{s.bind(repo, "/src", false), s.bind(sess.Clone, "/work", true)}
+	return []bwrap.Bind{s.bind(repo, false), s.bind(sess.Clone, true)}
 }
 
-// workBinds は、clone の中で git を実行する檻が見せるもの: clone を rw で /work に。
+// workBinds は、clone の中で git を実行する檻が見せるもの: clone を rw で。
 func (s *Store) workBinds(sess *Session) []bwrap.Bind {
-	return []bwrap.Bind{s.bind(sess.Clone, "/work", true)}
+	return []bwrap.Bind{s.bind(sess.Clone, true)}
 }
 
-// exportBinds は、export の檻が見せるもの: clone を ro で /work に (檻の中で bundle を作るだけで、clone は書き換えない)、
-// export/ を rw で /out に。
+// exportBinds は、export の檻が見せるもの: clone を ro で (檻の中で bundle を作るだけで、clone は書き換えない)、export/ を rw で。
 func (s *Store) exportBinds(sess *Session) []bwrap.Bind {
-	return []bwrap.Bind{s.bind(sess.Clone, "/work", false), s.bind(sess.Export, "/out", true)}
+	return []bwrap.Bind{s.bind(sess.Clone, false), s.bind(sess.Export, true)}
+}
+
+// cloneArgs・removeOriginArgs・bundleArgs は、檻の中で実行する git の引数 (path は、檻の中でも、ホストと同じ絶対 path)。
+// clone は、repo (ro) から sess.Clone (rw) へ。
+func cloneArgs(repo string, sess *Session, name, email string) []string {
+	return []string{"clone", "--no-local", "--no-hardlinks", "-c", "user.name=" + name, "-c", "user.email=" + email, "--", repo, sess.Clone}
+}
+
+func removeOriginArgs(sess *Session) []string {
+	return []string{"-C", sess.Clone, "remote", "remove", "origin"}
+}
+
+func bundleArgs(sess *Session) []string {
+	return []string{"-C", sess.Clone, "bundle", "create", sess.Export + "/" + bundleName, "--all"}
 }
 
 // runGit は、使い捨ての檻で git args を実行し、終わるのを待つ。失敗したら、出力 (制御文字を除いたもの) を添えて error にする。

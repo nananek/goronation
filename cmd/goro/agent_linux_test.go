@@ -27,25 +27,24 @@ func TestAgentProfiles(t *testing.T) {
 		return strings.Join(out, ",")
 	}
 	for _, tc := range []struct {
-		p       agentProfile
-		name    string
-		jailExe string
-		env     string
-		hosts   []string
-		exeEnv  string
-		login   []string
+		p      agentProfile
+		name   string
+		env    string
+		hosts  []string
+		exeEnv string
+		login  []string
 	}{
-		{claudeProfile, "claude", "/opt/claude/claude",
+		{claudeProfile, "claude",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1,DISABLE_TELEMETRY=1,DISABLE_ERROR_REPORTING=1,DISABLE_AUTOUPDATER=1,CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1",
 			[]string{"api.anthropic.com:443", "platform.claude.com:443"}, "GORO_CLAUDE", nil},
-		{opencodeProfile, "opencode", "/opt/opencode/opencode",
+		{opencodeProfile, "opencode",
 			"OPENCODE_DISABLE_AUTOUPDATE=1,OPENCODE_DISABLE_MODELS_FETCH=1,OPENCODE_DISABLE_SHARE=1,OPENCODE_DISABLE_LSP_DOWNLOAD=1",
 			[]string{"opencode.ai:443"}, "GORO_OPENCODE", []string{"auth", "login"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := tc.p
-			if p.name != tc.name || p.jailExe() != tc.jailExe || p.exeEnv() != tc.exeEnv {
-				t.Errorf("name・jailExe・exeEnv = %q・%q・%q, want %q・%q・%q", p.name, p.jailExe(), p.exeEnv(), tc.name, tc.jailExe, tc.exeEnv)
+			if p.name != tc.name || p.exeEnv() != tc.exeEnv {
+				t.Errorf("name・exeEnv = %q・%q, want %q・%q", p.name, p.exeEnv(), tc.name, tc.exeEnv)
 			}
 			if got := envNames(p); got != tc.env {
 				t.Errorf("env = %s\nwant %s", got, tc.env)
@@ -76,9 +75,9 @@ func TestAgentProfiles(t *testing.T) {
 			}
 		})
 	}
-	// 2 つの profile は、混ざらない (別の檻専用の HOME・別の檻の中の path・別の許可)。
+	// 2 つの profile は、混ざらない (別の檻専用の HOME・別の許可)。
 	a, b := claudeProfile, opencodeProfile
-	if a.jailExe() == b.jailExe() || a.exeEnv() == b.exeEnv() || a.name == b.name {
+	if a.exeEnv() == b.exeEnv() || a.name == b.name {
 		t.Errorf("profile が混ざる: %+v / %+v", a, b)
 	}
 	for _, h := range a.hosts() {
@@ -253,8 +252,8 @@ func testOpenCodeCage() cageConfig {
 	return c
 }
 
-// opencode の檻の argv を、丸ごと固定する。claude の golden (TestCageSpecGolden) との違いは、エージェントの実行ファイルの
-// 行 (/opt/opencode/opencode)・専用の HOME (agents/opencode/home)・環境変数 (OPENCODE_DISABLE_*)・起動するコマンドだけ。
+// opencode の檻の argv を、丸ごと固定する。claude の golden (TestCageSpecGolden) との違いは、エージェントの実行ファイル
+// (~/.opencode/bin/opencode)・専用の HOME (agents/opencode/home)・環境変数 (OPENCODE_DISABLE_*)・起動するコマンドだけ。
 func TestCageSpecGoldenOpenCode(t *testing.T) {
 	argv, err := cageSpec(testOpenCodeCage()).Argv()
 	if err != nil {
@@ -267,14 +266,14 @@ func TestCageSpecGoldenOpenCode(t *testing.T) {
 		"--tmpfs", "/tmp",
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
-		"--ro-bind", "/home/u/.opencode/bin/opencode", "/opt/opencode/opencode",
-		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
-		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/agents/opencode/home", "/home/goro",
-		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
-		"--chdir", "/work",
+		"--ro-bind", "/home/u/.opencode/bin/opencode", "/home/u/.opencode/bin/opencode",
+		"--ro-bind", "/home/u/bin/goro", "/home/u/bin/goro",
+		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run",
+		"--bind", "/home/u/.local/state/goro/agents/opencode/home", "/home/u/.local/state/goro/agents/opencode/home",
+		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone",
+		"--chdir", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone",
 		"--clearenv",
-		"--setenv", "HOME", "/home/goro",
+		"--setenv", "HOME", "/home/u/.local/state/goro/agents/opencode/home",
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "TERM", "xterm-256color",
 		"--setenv", "LANG", "C.UTF-8",
@@ -283,8 +282,8 @@ func TestCageSpecGoldenOpenCode(t *testing.T) {
 		"--setenv", "OPENCODE_DISABLE_SHARE", "1",
 		"--setenv", "OPENCODE_DISABLE_LSP_DOWNLOAD", "1",
 		"--",
-		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
-		"/opt/opencode/opencode", "--continue",
+		"/home/u/bin/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run/proxy.sock", "--no-forward-tty", "--",
+		"/home/u/.opencode/bin/opencode", "--continue",
 	}
 	if !slices.Equal(argv, want) {
 		t.Errorf("argv が golden と違う:\n got: %q\nwant: %q", argv, want)
@@ -301,17 +300,21 @@ func TestCageSpecGoldenOpenCode(t *testing.T) {
 	}
 }
 
-// opencode の檻の bind: rw は、専用の HOME と /work だけ。ホストの opencode の認証情報・設定・履歴の path は、bwrap が拒否する。
+// opencode の檻の bind: 元と先は同じ path。rw は、専用の HOME と作業ディレクトリだけ。ホストの opencode の認証情報・設定・履歴の path は、bwrap が拒否する。
 func TestCageSpecBindsOpenCode(t *testing.T) {
 	type bind struct{ rw, inHome bool }
 	got := map[string]bind{}
-	for _, b := range cageSpec(testOpenCodeCage()).Binds {
+	oc := testOpenCodeCage()
+	for _, b := range cageSpec(oc).Binds {
+		if b.Src != b.Dst {
+			t.Errorf("bind 元 %q と bind 先 %q が違う", b.Src, b.Dst)
+		}
 		got[b.Dst] = bind{b.RW, b.InHome}
 	}
 	want := map[string]bind{
 		"/usr": {false, false}, "/etc/ssl/certs": {false, false},
-		"/opt/opencode/opencode": {false, true}, "/opt/goro/goro": {false, true}, "/run/goro": {false, true},
-		"/home/goro": {true, true}, "/work": {true, true},
+		oc.AgentExe: {false, true}, oc.GoroExe: {false, true}, oc.RunDir: {false, true},
+		oc.AgentHome: {true, true}, oc.Work: {true, true},
 	}
 	if len(got) != len(want) {
 		t.Errorf("bind の数 = %d, want %d: %+v", len(got), len(want), got)
@@ -321,8 +324,11 @@ func TestCageSpecBindsOpenCode(t *testing.T) {
 			t.Errorf("%s: rw/InHome = %+v, want %+v", dst, got[dst], w)
 		}
 	}
-	if _, ok := got["/opt/claude/claude"]; ok {
-		t.Error("opencode の檻に、/opt/claude/claude がある")
+	if _, ok := got[testCage().AgentExe]; ok {
+		t.Error("opencode の檻に、claude の実行ファイルがある")
+	}
+	if _, ok := got[testCage().AgentHome]; ok {
+		t.Error("opencode の檻に、claude の HOME がある")
 	}
 	for _, bad := range []struct{ what, exe, home string }{
 		{"~/.local/share/opencode の下の実行ファイル", "/home/u/.local/share/opencode/bin/opencode", ""},
@@ -618,9 +624,6 @@ func TestAgentTable(t *testing.T) {
 				t.Errorf("name %q が、表の中で重なっている", p.name)
 			}
 			seen[p.name] = true
-			if got, want := p.jailExe(), "/opt/"+p.name+"/"+p.binName(); got != want {
-				t.Errorf("jailExe = %q, want %q", got, want)
-			}
 			if want := "GORO_" + strings.ToUpper(strings.ReplaceAll(p.name, "-", "_")); p.exeEnv() != want {
 				t.Errorf("exeEnv = %q, want %q", p.exeEnv(), want)
 			}
@@ -656,10 +659,10 @@ func TestAgentTable(t *testing.T) {
 			t.Errorf("exeEnvName(%q) = %q, want %q", name, got, want)
 		}
 	}
-	// bin が name と違うエージェント: PATH で探す名前と、檻の中のファイル名が、bin になる。
+	// bin が name と違うエージェント: PATH で探す名前が、bin になる。
 	p := agentProfile{name: "foo", bin: "foo-cli"}
-	if p.binName() != "foo-cli" || p.jailExe() != "/opt/foo/foo-cli" || p.exeEnv() != "GORO_FOO" {
-		t.Errorf("bin つき: binName・jailExe・exeEnv = %q・%q・%q", p.binName(), p.jailExe(), p.exeEnv())
+	if p.binName() != "foo-cli" || p.exeEnv() != "GORO_FOO" {
+		t.Errorf("bin つき: binName・exeEnv = %q・%q", p.binName(), p.exeEnv())
 	}
 	if got, err := resolveAgentExe(p, "", "", func(name string) (string, error) {
 		if name != "foo-cli" {

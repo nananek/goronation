@@ -15,7 +15,7 @@ import (
 //
 // エージェントごとに違うものは、すべて、この構造体のデータ (と、名前から導出するもの) で、「claude なら A・opencode なら B」の
 // 分岐は、コードに書かない。新しいエージェントを足す作業は、profile を 1 つ書いて、agents の表に足すことだけ (宛先は egress の
-// 関数、環境変数はこの定数の中)。名前から導出するもの: 環境変数 GORO_<NAME> (exeEnv)・檻の中の path (jailExe)・状態の
+// 関数、環境変数はこの定数の中)。名前から導出するもの: 環境変数 GORO_<NAME> (exeEnv)・状態の
 // ディレクトリ <state>/agents/<name>/ (dirs)・--agent の値。
 type agentProfile struct {
 	// name は、--agent の値で、エージェントの識別子: 状態のディレクトリ名・セッションの記録・環境変数の名前 (GORO_<NAME>) の元。
@@ -65,9 +65,6 @@ func exeEnvName(name string) string {
 
 // exeEnv は、p の、実行ファイルを指す環境変数の名前。
 func (p agentProfile) exeEnv() string { return exeEnvName(p.name) }
-
-// jailExe は、檻の中での実行ファイルの path: /opt/<name>/<実行ファイル名>。
-func (p agentProfile) jailExe() string { return "/opt/" + p.name + "/" + p.binName() }
 
 // claudeProfile は、claude (Claude Code) の profile。既定のエージェント。
 var claudeProfile = agentProfile{
@@ -132,8 +129,8 @@ const agentsDirName = "agents"
 type agentDirs struct {
 	// home は、檻専用の HOME (ログイン状態・会話の履歴が残る)。エージェントごとに別にする。
 	home string
-	// loginWork・loginRun は、--login の空の作業ディレクトリ (/work) と run dir (egress の UDS・監査ログ)。エージェントごとに別にする:
-	// 共有すると、片方のエージェントの檻が /work に置いた設定 (opencode.json・.claude/settings.json など) が、もう片方の --login の檻
+	// loginWork・loginRun は、--login の空の作業ディレクトリ (檻の cwd) と run dir (egress の UDS・監査ログ)。エージェントごとに別にする:
+	// 共有すると、片方のエージェントの檻が作業ディレクトリに置いた設定 (opencode.json・.claude/settings.json など) が、もう片方の --login の檻
 	// (そのエージェントの HOME の認証情報を持つ) で読まれて動く。run dir の監査ログ (過去の拒否宛先) も混ざる。
 	loginWork, loginRun string
 }

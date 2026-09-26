@@ -35,8 +35,34 @@ type runFixture struct {
 	dir  string // 短い path の作業ディレクトリ
 	home string // 偽のホストの HOME (~/.ssh などの目印がある)
 	repo string // 元の repo
-	exe  string // テストバイナリ (goro としても、偽の claude としても、動く)
+	bin  string // テストバイナリへの hard link を、動かす役の名前 (goro・claude・opencode・fakeagent) で置いたディレクトリ
+	exe  string // goro としての、テストバイナリ (<bin>/goro)
 	env  []string
+}
+
+// binPath は、役 name のテストバイナリの path。檻の中の path は、ホストの path と同じなので、名前は、argv[0] の名前としてそのまま届き、
+// 偽のエージェント・goro init として動く役を選ぶ (fakeclaude_linux_test.go)。
+func (f *runFixture) binPath(name string) string { return filepath.Join(f.bin, name) }
+
+// linkOrCopy は、src を dst に hard link する (別のファイルシステムなら、コピーする。symlink にはしない: goro run は、実体に解決する)。
+func linkOrCopy(src, dst string) error {
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func newRunFixture(t *testing.T) *runFixture {
@@ -50,7 +76,16 @@ func newRunFixture(t *testing.T) *runFixture {
 		t.Fatal(err)
 	}
 	dir := shortDir(t)
-	f := &runFixture{dir: dir, home: filepath.Join(dir, "home"), repo: filepath.Join(dir, "repo"), exe: exe}
+	f := &runFixture{dir: dir, home: filepath.Join(dir, "home"), repo: filepath.Join(dir, "repo"), bin: filepath.Join(dir, "bin")}
+	if err := os.Mkdir(f.bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"goro", "claude", "opencode", testAgentProfile.name} {
+		if err := linkOrCopy(exe, f.binPath(name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.exe = f.binPath("goro")
 	for path, content := range map[string]string{
 		filepath.Join(f.home, ".ssh", "id_test"):                          "PRIVATE-KEY-MARKER\n",
 		filepath.Join(f.home, ".claude", "credentials.json"):              "TOKEN-MARKER\n",
@@ -64,7 +99,7 @@ func newRunFixture(t *testing.T) *runFixture {
 			t.Fatal(err)
 		}
 	}
-	f.env = []string{"HOME=" + f.home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "TERM=xterm-256color", "GORO_CLAUDE=" + exe, "GORO_OPENCODE=" + exe}
+	f.env = []string{"HOME=" + f.home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "TERM=xterm-256color", "GORO_CLAUDE=" + f.binPath("claude"), "GORO_OPENCODE=" + f.binPath("opencode")}
 	if err := os.Mkdir(f.repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -358,8 +393,23 @@ func TestRunEgressAllowList(t *testing.T) {
 	}
 }
 
-// (c) 檻の中: 外部・ホストの loopback に届かず、ホストの ~/.ssh・~/.claude・HOME・元の repo・状態ディレクトリが見えず、
-// システムと実行ファイルと run dir は書けず、/work・檻専用の HOME・/tmp だけ書ける。環境変数は、許可リストだけ。
+// newSession は、--repo でセッションを作り (エージェントは何もせずに終わる)、その ID と、clone・run dir の path を返す。
+// 檻の中の path は、ホストと同じなので、セッションを再開する (--session) 檻の path を、事前に知れる。
+func (f *runFixture) newSession(t *testing.T, args ...string) (id, clone, run string) {
+	t.Helper()
+	r := f.goro(t, append(append([]string{"run"}, args...), "--repo", f.repo, "--", "exit", "0")...).mustOK(t)
+	id = sessionID(t, r)
+	dir := filepath.Join(f.stateDir(), "sessions", id)
+	return id, filepath.Join(dir, "clone"), filepath.Join(dir, "run")
+}
+
+// listOf は、fake の probe の list: の結果 ("ok:a,b") から、名前の一覧を取り出す。
+func listOf(res string) (names string, ok bool) { return strings.CutPrefix(res, "ok:") }
+
+// (c) 檻の中: 外部・ホストの loopback に届かず、ホストの ~/.ssh・~/.claude・元の repo・他のセッションの状態が見えず、
+// システムと実行ファイルと run dir は書けず、clone・檻専用の HOME・/tmp だけ書ける。環境変数は、許可リストだけ。
+// 檻の中の path は、ホストと同じ (identity): bind した path までの祖先のディレクトリは、空の鎖として在るが、その兄弟は見えず、
+// 祖先への書き込みは、檻の中だけで消える (ホストに届かない)。
 func TestRunCageIsolation(t *testing.T) {
 	f := newRunFixture(t)
 	l, err := net.Listen("tcp", "127.0.0.1:0") // ホストの loopback で待ち受ける (檻の loopback とは別)
@@ -376,31 +426,46 @@ func TestRunCageIsolation(t *testing.T) {
 			c.Close()
 		}
 	}()
+	id, clone, run := f.newSession(t)
+	home, claudeExe, goroExe := f.agentPath("claude", "home"), f.binPath("claude"), f.binPath("goro")
+	sessionDir := filepath.Dir(clone)
 
-	// 檻から見えてはいけないもの (ホストの HOME・鍵・認証情報・元の repo・状態ディレクトリ・作業ディレクトリ・実 HOME・/etc と /root)。
+	// 檻から見えてはいけないもの (ホストの鍵・認証情報・元の repo・セッションの記録と export・実 HOME の他のもの・/etc と /root)。
 	hidden := []string{
-		"stat:" + f.home, "stat:" + filepath.Join(f.home, ".ssh"), "stat:" + filepath.Join(f.home, ".ssh", "id_test"),
-		"stat:" + filepath.Join(f.home, ".claude", "credentials.json"), "stat:" + f.repo, "stat:" + f.stateDir(), "stat:" + f.dir,
-		"stat:/etc/passwd", "stat:/root", "stat:/home/" + filepath.Base(f.home),
+		"stat:" + filepath.Join(f.home, ".ssh"), "stat:" + filepath.Join(f.home, ".ssh", "id_test"),
+		"stat:" + filepath.Join(f.home, ".claude", "credentials.json"), "stat:" + f.repo, "stat:" + filepath.Join(f.repo, "README.md"),
+		"stat:" + filepath.Join(sessionDir, "agent"), "stat:" + filepath.Join(sessionDir, "export"),
+		"stat:/etc/passwd", "stat:/root",
+	}
+	// 祖先のディレクトリ: 在るが、bind した path への鎖だけが見え、兄弟 (~/.ssh・元の repo・別のエージェントなど) は見えない。
+	chains := map[string]string{
+		f.dir: "bin,home", f.home: ".local", filepath.Join(f.home, ".local"): "state", filepath.Join(f.home, ".local", "state"): "goro",
+		f.stateDir(): "agents,sessions", filepath.Join(f.stateDir(), "sessions"): id, sessionDir: "clone,run",
+		filepath.Join(f.stateDir(), "agents"): "claude", filepath.Join(f.stateDir(), "agents", "claude"): "home",
 	}
 	// 届いてはいけないもの (外部・ホストの loopback)。
 	unreachable := []string{"dial:1.1.1.1:443", "dial:" + l.Addr().String()}
 	// ro の mount のはずのもの (ro の mount に、書き込みは失敗する)。
-	readOnly := []string{"/usr", "/etc/ssl/certs", "/opt/claude/claude", "/opt/goro/goro", "/run/goro"}
-	readOnlyWrites := []string{"write:/usr/x", "write:/etc/ssl/certs/x", "write:/run/goro/x", "write:/run/goro/proxy.sock", "write:/run/goro/egress.log"}
+	readOnly := []string{"/usr", "/etc/ssl/certs", claudeExe, goroExe, run}
+	readOnlyWrites := []string{"write:/usr/x", "write:/etc/ssl/certs/x", "write:" + run + "/x", "write:" + run + "/" + proxySockName, "write:" + run + "/" + egressLogName}
 	// rw の mount のはずのもの。
-	readWrite := []string{"/home/goro", "/work"}
-	writable := []string{"write:/work/x", "write:/home/goro/x", "write:/tmp/x"}
-	visible := []string{"stat:/opt/goro/goro", "stat:/opt/claude/claude", "stat:/usr/bin/git", "stat:/etc/ssl/certs", "stat:/run/goro/egress.log", "dial:127.0.0.1:3128"}
+	readWrite := []string{home, clone}
+	writable := []string{"write:" + clone + "/x", "write:" + home + "/x", "write:/tmp/x"}
+	visible := []string{"stat:" + goroExe, "stat:" + claudeExe, "stat:/usr/bin/git", "stat:/etc/ssl/certs", "stat:" + run + "/" + egressLogName, "dial:127.0.0.1:3128"}
+	// 祖先への書き込みは、檻の中では通りうる (檻の / は tmpfs) が、ホストには届かない (下で、ホストに無いことを確かめる)。
+	ancestorWrites := []string{"write:" + f.dir + "/x", "write:" + f.home + "/x", "write:" + f.stateDir() + "/x", "write:" + sessionDir + "/x"}
 
 	var probes []string
-	for _, g := range [][]string{hidden, unreachable, readOnlyWrites, writable, visible} {
+	for _, g := range [][]string{hidden, unreachable, readOnlyWrites, writable, visible, ancestorWrites} {
 		probes = append(probes, g...)
+	}
+	for dir := range chains {
+		probes = append(probes, "list:"+dir)
 	}
 	for _, p := range append(slices.Clone(readOnly), readWrite...) {
 		probes = append(probes, "mnt:"+p)
 	}
-	r := f.goro(t, append([]string{"run", "--repo", f.repo, "--", "probe"}, probes...)...).mustOK(t)
+	r := f.goro(t, append([]string{"run", "--session", id, "--", "probe"}, probes...)...).mustOK(t)
 	_, res := parseOut(r.stdout)
 	for _, g := range []struct {
 		what string
@@ -419,6 +484,16 @@ func TestRunCageIsolation(t *testing.T) {
 			}
 		}
 	}
+	for dir, want := range chains {
+		if got, ok := listOf(res["list:"+dir]); !ok || got != want {
+			t.Errorf("祖先 %s の中身 = %q (%q), want %q (bind した path への鎖だけ)", dir, got, res["list:"+dir], want)
+		}
+	}
+	for _, op := range ancestorWrites {
+		if _, err := os.Lstat(strings.TrimPrefix(op, "write:")); err == nil {
+			t.Errorf("%s: 檻の中の祖先への書き込みが、ホストに届いた", op)
+		}
+	}
 	for _, p := range readOnly {
 		if got := res["mnt:"+p]; got != "ro" {
 			t.Errorf("%s の mount = %q, want ro", p, got)
@@ -435,11 +510,11 @@ func TestRunCageIsolation(t *testing.T) {
 		}
 	}
 
-	// 環境変数と、起動の状態。
-	info := f.goro(t, "run", "--repo", f.repo, "--", "info").mustOK(t)
+	// 環境変数と、起動の状態。HOME と cwd は、ホストと同じ path。
+	info := f.goro(t, "run", "--session", id, "--", "info").mustOK(t)
 	kv, _ := parseOut(info.stdout)
-	if kv["home"] != "/home/goro" || kv["cwd"] != "/work" || kv["https_proxy"] != "http://127.0.0.1:3128" || kv["no_proxy"] != "127.0.0.1,localhost,::1" {
-		t.Errorf("HOME・cwd・HTTPS_PROXY・NO_PROXY = %q・%q・%q・%q", kv["home"], kv["cwd"], kv["https_proxy"], kv["no_proxy"])
+	if kv["home"] != home || kv["cwd"] != clone || kv["https_proxy"] != "http://127.0.0.1:3128" || kv["no_proxy"] != "127.0.0.1,localhost,::1" {
+		t.Errorf("HOME・cwd・HTTPS_PROXY・NO_PROXY = %q・%q・%q・%q, want %q・%q", kv["home"], kv["cwd"], kv["https_proxy"], kv["no_proxy"], home, clone)
 	}
 	allowed := map[string]bool{}
 	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY",
@@ -457,7 +532,7 @@ func TestRunCageIsolation(t *testing.T) {
 		}
 	}
 	if !strings.Contains(kv["work"], "README.md") {
-		t.Errorf("/work に clone が見えない: %q", kv["work"])
+		t.Errorf("clone (cwd) に repo の内容が見えない: %q", kv["work"])
 	}
 }
 
@@ -474,8 +549,8 @@ func TestRunLogin(t *testing.T) {
 		strings.Contains(r.stderr, "Security notes") || strings.Contains(r.stderr, "テーマ") { // エージェントの画面の内容を、説明しない
 		t.Errorf("--login の起動前の案内が無い:\n%s", r.stderr)
 	}
-	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goro" {
-		t.Errorf("cwd・/work の中身・HOME = %q・%q・%q (空の作業ディレクトリのはず)", kv["cwd"], kv["work"], kv["home"])
+	if kv["cwd"] != f.agentPath("claude", "login-work") || kv["work"] != "" || kv["home"] != f.agentPath("claude", "home") {
+		t.Errorf("cwd・cwd の中身・HOME = %q・%q・%q (空の作業ディレクトリ <state>/agents/claude/login-work のはず)", kv["cwd"], kv["work"], kv["home"])
 	}
 	if b, err := os.ReadFile(f.agentPath("claude", "home", "login-marker")); err != nil || string(b) != "logged-in\n" {
 		t.Errorf("ログイン状態が、檻専用の HOME (<state>/agents/claude/home) に残っていない: %q, %v", b, err)

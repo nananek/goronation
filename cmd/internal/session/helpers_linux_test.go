@@ -280,13 +280,13 @@ func treeHash(t *testing.T, dir string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-// cageSh は、セッションの clone を rw で /work に bind した檻の中で、sh -c script を実行する (檻の中の AI が、clone に
+// cageSh は、セッションの clone を rw で (ホストと同じ path で) bind した檻の中で、clone を cwd にして、sh -c script を実行する (檻の中の AI が、clone に
 // コミットする・.git/config や hooks を書く、を模す)。失敗したら、テストを止める。
 func cageSh(t *testing.T, st *Store, sess *Session, script string) {
 	t.Helper()
-	spec := st.gitSpec([]bwrap.Bind{st.bind(sess.Clone, "/work", true)})
+	spec := st.gitSpec([]bwrap.Bind{st.bind(sess.Clone, true)})
 	spec.Cmd = []string{"/usr/bin/sh", "-c", script}
-	spec.Chdir = "/work"
+	spec.Chdir = sess.Clone
 	var out boundedBuffer
 	spec.Stdout, spec.Stderr = &out, &out
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

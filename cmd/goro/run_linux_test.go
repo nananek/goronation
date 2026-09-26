@@ -271,7 +271,7 @@ func testCage() cageConfig {
 }
 
 // 檻の argv (bwrap に渡す引数) を、丸ごと固定する。--ro-bind / / も --share-net も --new-session も無く、rw は 2 つだけで、
-// 環境変数は許可リストだけ。
+// 環境変数は許可リストだけ。bind 元と bind 先は、どれも同じ path (identity。檻専用の固定の path は無い)。
 func TestCageSpecGolden(t *testing.T) {
 	argv, err := cageSpec(testCage()).Argv()
 	if err != nil {
@@ -284,14 +284,14 @@ func TestCageSpecGolden(t *testing.T) {
 		"--tmpfs", "/tmp",
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
-		"--ro-bind", "/home/u/.local/share/claude/versions/2.0.0", "/opt/claude/claude",
-		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
-		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/agents/claude/home", "/home/goro",
-		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
-		"--chdir", "/work",
+		"--ro-bind", "/home/u/.local/share/claude/versions/2.0.0", "/home/u/.local/share/claude/versions/2.0.0",
+		"--ro-bind", "/home/u/bin/goro", "/home/u/bin/goro",
+		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run",
+		"--bind", "/home/u/.local/state/goro/agents/claude/home", "/home/u/.local/state/goro/agents/claude/home",
+		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone",
+		"--chdir", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone",
 		"--clearenv",
-		"--setenv", "HOME", "/home/goro",
+		"--setenv", "HOME", "/home/u/.local/state/goro/agents/claude/home",
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "TERM", "xterm-256color",
 		"--setenv", "LANG", "C.UTF-8",
@@ -301,26 +301,31 @@ func TestCageSpecGolden(t *testing.T) {
 		"--setenv", "DISABLE_AUTOUPDATER", "1",
 		"--setenv", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1",
 		"--",
-		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
-		"/opt/claude/claude", "--resume", "x y",
+		"/home/u/bin/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run/proxy.sock", "--no-forward-tty", "--",
+		"/home/u/.local/share/claude/versions/2.0.0", "--resume", "x y",
 	}
 	if !slices.Equal(argv, want) {
 		t.Errorf("argv が golden と違う:\n got: %q\nwant: %q", argv, want)
 	}
 }
 
-// HOME の下の Src には InHome を明示し、HOME の外の Src には付けない。rw なのは、エージェントの HOME と /work だけ。
+// bind 元と bind 先は、どれも同じ path (identity)。HOME の下の Src には InHome を明示し、HOME の外の Src には付けない。
+// rw なのは、エージェントの HOME と作業ディレクトリだけ。
 func TestCageSpecBinds(t *testing.T) {
-	spec := cageSpec(testCage())
+	c0 := testCage()
+	spec := cageSpec(c0)
 	type bind struct{ rw, inHome bool }
 	got := map[string]bind{}
 	for _, b := range spec.Binds {
+		if b.Src != b.Dst {
+			t.Errorf("bind 元 %q と bind 先 %q が違う (檻の中の path は、ホストと同じ)", b.Src, b.Dst)
+		}
 		got[b.Dst] = bind{b.RW, b.InHome}
 	}
 	want := map[string]bind{
 		"/usr": {false, false}, "/etc/ssl/certs": {false, false},
-		"/opt/claude/claude": {false, true}, "/opt/goro/goro": {false, true}, "/run/goro": {false, true},
-		"/home/goro": {true, true}, "/work": {true, true},
+		c0.AgentExe: {false, true}, c0.GoroExe: {false, true}, c0.RunDir: {false, true},
+		c0.AgentHome: {true, true}, c0.Work: {true, true},
 	}
 	if len(got) != len(want) {
 		t.Errorf("bind の数 = %d, want %d: %+v", len(got), len(want), got)
@@ -330,8 +335,13 @@ func TestCageSpecBinds(t *testing.T) {
 			t.Errorf("%s: rw/InHome = %+v, want %+v", dst, got[dst], w)
 		}
 	}
-	if spec.NewSession || spec.Chdir != "/work" || !slices.Equal(spec.Tmpfs, []string{"/tmp"}) {
+	if spec.NewSession || spec.Chdir != c0.Work || !slices.Equal(spec.Tmpfs, []string{"/tmp"}) {
 		t.Errorf("NewSession = %v, Chdir = %q, Tmpfs = %v", spec.NewSession, spec.Chdir, spec.Tmpfs)
+	}
+	for _, fixed := range []string{"/work", "/home/goro", "/run/goro", "/opt"} {
+		if _, ok := got[fixed]; ok {
+			t.Errorf("檻専用の固定の path %s を bind している", fixed)
+		}
 	}
 
 	// HOME の外 (テストバイナリや /opt の claude) は、InHome が付かず、Argv も通る。CA が無ければ、その bind は無い。
@@ -345,7 +355,7 @@ func TestCageSpecBinds(t *testing.T) {
 		if b.Dst == "/etc/ssl/certs" {
 			t.Error("CACerts が空なのに、/etc/ssl/certs を bind している")
 		}
-		if (b.Dst == "/opt/claude/claude" || b.Dst == "/opt/goro/goro") && b.InHome {
+		if (b.Dst == c.AgentExe || b.Dst == c.GoroExe) && b.InHome {
 			t.Errorf("HOME の外の %s に InHome が付いている", b.Dst)
 		}
 	}
@@ -362,6 +372,36 @@ func TestCageSpecBinds(t *testing.T) {
 	}
 }
 
+// bind 先がホストの path になると、実行ファイルが、作業ディレクトリや HOME の下にある配置が起こる。mount は並べた順に作るので、
+// 下の path の bind を、上の path の bind より先に作ると、消えてしまう。上を先に並べる (それ以外の順は、変えない)。
+func TestCageSpecBindOrder(t *testing.T) {
+	index := func(spec bwrap.Spec, dst string) int {
+		return slices.IndexFunc(spec.Binds, func(b bwrap.Bind) bool { return b.Dst == dst })
+	}
+	c := testCage()
+	c.AgentExe = c.Work + "/tools/claude"
+	c.GoroExe = c.AgentHome + "/bin/goro"
+	spec := cageSpec(c)
+	if _, err := spec.Argv(); err != nil {
+		t.Fatal(err)
+	}
+	if index(spec, c.Work) < 0 || index(spec, c.Work) > index(spec, c.AgentExe) {
+		t.Errorf("作業ディレクトリの bind が、その下の実行ファイルより後: %+v", spec.Binds)
+	}
+	if index(spec, c.AgentHome) < 0 || index(spec, c.AgentHome) > index(spec, c.GoroExe) {
+		t.Errorf("HOME の bind が、その下の goro より後: %+v", spec.Binds)
+	}
+	// 重ならない配置は、並べた順のまま。
+	var order []string
+	for _, b := range cageSpec(testCage()).Binds {
+		order = append(order, b.Dst)
+	}
+	c0 := testCage()
+	if want := []string{"/usr", "/etc/ssl/certs", c0.AgentExe, c0.GoroExe, c0.RunDir, c0.AgentHome, c0.Work}; !slices.Equal(order, want) {
+		t.Errorf("bind の順 = %q, want %q", order, want)
+	}
+}
+
 func TestCageEnv(t *testing.T) {
 	names := func(env []bwrap.EnvVar) string {
 		var out []string
@@ -375,13 +415,16 @@ func TestCageEnv(t *testing.T) {
 		"xterm-256color": "xterm-256color", "screen.linux": "screen.linux", "": "dumb", "bad term": "dumb",
 		"x\ny": "dumb", "$(id)": "dumb", strings.Repeat("a", 65): "dumb", "tmux-256color": "tmux-256color",
 	} {
-		env := cageEnv(claudeProfile, term)
+		env := cageEnv(claudeProfile, "/home/u/h", term)
 		if names(env) != wantNames {
 			t.Fatalf("環境変数の名前 = %s, want %s", names(env), wantNames)
 		}
 		for _, e := range env {
 			if e.Key == "TERM" && e.Value != want {
 				t.Errorf("TERM=%q → %q, want %q", term, e.Value, want)
+			}
+			if e.Key == "HOME" && e.Value != "/home/u/h" {
+				t.Errorf("HOME = %q, want 渡したエージェントの HOME の path", e.Value)
 			}
 		}
 	}

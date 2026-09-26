@@ -31,7 +31,7 @@ type CreateOptions struct {
 
 // Create は、Repo の private clone を持つ新しいセッションを作る。
 //
-// git は、使い捨ての檻の中で実行する (ホストでは実行しない): 元のリポジトリを ro で /src に bind し、clone 先を rw で /work に
+// git は、使い捨ての檻の中で実行する (ホストでは実行しない): 元のリポジトリを ro で、clone 先を rw で (どちらも、ホストと同じ path で)
 // bind して、git clone --no-local --no-hardlinks する。clone されるのは、コミット済みの内容だけで、元のリポジトリと object を
 // 共有しない。そのあと origin を外す。失敗したら、作ったディレクトリを消す。
 func (s *Store) Create(ctx context.Context, o CreateOptions) (sess *Session, err error) {
@@ -82,11 +82,10 @@ func (s *Store) Create(ctx context.Context, o CreateOptions) (sess *Session, err
 			return nil, err
 		}
 	}
-	if err := s.runGit(ctx, s.cloneBinds(repo, sess), "clone", "--no-local", "--no-hardlinks",
-		"-c", "user.name="+name, "-c", "user.email="+email, "--", "/src", "/work"); err != nil {
+	if err := s.runGit(ctx, s.cloneBinds(repo, sess), cloneArgs(repo, sess, name, email)...); err != nil {
 		return nil, err
 	}
-	if err := s.runGit(ctx, s.workBinds(sess), "-C", "/work", "remote", "remove", "origin"); err != nil {
+	if err := s.runGit(ctx, s.workBinds(sess), removeOriginArgs(sess)...); err != nil {
 		return nil, err
 	}
 	return sess, nil

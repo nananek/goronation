@@ -11,7 +11,7 @@
 //
 // # 規則
 //
-//   - clone-committed: 元の repo は ro で /src に bind し、git clone --no-local --no-hardlinks する。clone されるのは
+//   - clone-committed: 元の repo は ro で bind し (檻の中でも、ホストと同じ path)、git clone --no-local --no-hardlinks する。clone されるのは
 //     コミット済みの内容だけで、origin は外す。clone は、元の repo と、object を共有しない。
 //   - no-host-git: ホストは、clone の中で git を実行しない (.git/config・hooks は、檻が書ける)。export は、clone を ro で bind した
 //     使い捨ての檻で bundle を作る。

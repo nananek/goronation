@@ -17,35 +17,39 @@ func (f *runFixture) agentPath(name string, elem ...string) string {
 	return filepath.Join(append([]string{f.stateDir(), "agents", name}, elem...)...)
 }
 
-// opencode の檻: /opt/opencode/opencode に実行ファイルが見え (/opt/claude/claude は無い)、専用の HOME (<state>/agents/opencode/home) が rw、
-// ホストの opencode の認証情報・設定・状態ディレクトリは見えない。環境変数は、共通の 4 つ + OPENCODE_DISABLE_* だけ。
+// opencode の檻: 実行ファイル (ホストと同じ path) が見え (claude の実行ファイルは無い)、専用の HOME (<state>/agents/opencode/home) が rw、
+// ホストの opencode の認証情報・設定・状態ディレクトリの他のものは見えない。環境変数は、共通の 4 つ + OPENCODE_DISABLE_* だけ。
 func TestRunOpenCodeCage(t *testing.T) {
 	f := newRunFixture(t)
 	hostAuth := filepath.Join(f.home, ".local", "share", "opencode", "auth.json")
 	hostConf := filepath.Join(f.home, ".config", "opencode", "opencode.json")
+	id, clone, run := f.newSession(t, "--agent", "opencode")
+	home, ocExe, goroExe, claudeExe := f.agentPath("opencode", "home"), f.binPath("opencode"), f.binPath("goro"), f.binPath("claude")
 	probes := []string{
-		"stat:/opt/opencode/opencode", "stat:/opt/claude/claude", "stat:/opt/goro/goro", "dial:127.0.0.1:3128",
+		"stat:" + ocExe, "stat:" + claudeExe, "stat:" + goroExe, "dial:127.0.0.1:3128",
 		"stat:" + hostAuth, "stat:" + filepath.Join(f.home, ".local", "share", "opencode"), "stat:" + hostConf,
-		"stat:" + f.home, "stat:" + filepath.Join(f.home, ".ssh", "id_test"), "stat:" + f.stateDir(), "stat:" + f.repo,
-		"write:/usr/x", "write:/run/goro/x",
-		"write:/home/goro/x", "write:/work/x", "write:/tmp/x",
-		"mnt:/opt/opencode/opencode", "mnt:/home/goro", "mnt:/work",
+		"stat:" + filepath.Join(f.home, ".ssh", "id_test"), "stat:" + f.repo, "stat:" + f.agentPath("claude"),
+		"write:/usr/x", "write:" + run + "/x",
+		"write:" + home + "/x", "write:" + clone + "/x", "write:/tmp/x",
+		"mnt:" + ocExe, "mnt:" + home, "mnt:" + clone,
+		"list:" + f.home, "list:" + filepath.Join(f.stateDir(), "agents"), "list:" + f.bin,
 	}
-	r := f.goro(t, append([]string{"run", "--agent", "opencode", "--repo", f.repo, "--", "probe"}, probes...)...).mustOK(t)
+	r := f.goro(t, append([]string{"run", "--agent", "opencode", "--session", id, "--", "probe"}, probes...)...).mustOK(t)
 	_, res := parseOut(r.stdout)
 	for op, want := range map[string]string{
-		"stat:/opt/opencode/opencode": "ok", "stat:/opt/goro/goro": "ok", "dial:127.0.0.1:3128": "ok",
-		"write:/home/goro/x": "ok", "write:/work/x": "ok", "write:/tmp/x": "ok",
-		"mnt:/opt/opencode/opencode": "ro", "mnt:/home/goro": "rw", "mnt:/work": "rw",
+		"stat:" + ocExe: "ok", "stat:" + goroExe: "ok", "dial:127.0.0.1:3128": "ok",
+		"write:" + home + "/x": "ok", "write:" + clone + "/x": "ok", "write:/tmp/x": "ok",
+		"mnt:" + ocExe: "ro", "mnt:" + home: "rw", "mnt:" + clone: "rw",
+		"list:" + f.home: "ok:.local", "list:" + filepath.Join(f.stateDir(), "agents"): "ok:opencode", "list:" + f.bin: "ok:goro,opencode",
 	} {
 		if res[op] != want {
 			t.Errorf("%s = %q, want %q", op, res[op], want)
 		}
 	}
 	for _, op := range []string{
-		"stat:/opt/claude/claude", "stat:" + hostAuth, "stat:" + filepath.Join(f.home, ".local", "share", "opencode"), "stat:" + hostConf,
-		"stat:" + f.home, "stat:" + filepath.Join(f.home, ".ssh", "id_test"), "stat:" + f.stateDir(), "stat:" + f.repo,
-		"write:/usr/x", "write:/run/goro/x",
+		"stat:" + claudeExe, "stat:" + hostAuth, "stat:" + filepath.Join(f.home, ".local", "share", "opencode"), "stat:" + hostConf,
+		"stat:" + filepath.Join(f.home, ".ssh", "id_test"), "stat:" + f.repo, "stat:" + f.agentPath("claude"),
+		"write:/usr/x", "write:" + run + "/x",
 	} {
 		if !strings.HasPrefix(res[op], "err") {
 			t.Errorf("%s = %q, want err (見えない・書けない)", op, res[op])
@@ -58,10 +62,10 @@ func TestRunOpenCodeCage(t *testing.T) {
 	}
 
 	// 環境変数と、起動の状態: 許可リストだけ。claude の変数は無く、opencode の 4 つがある。
-	info := f.goro(t, "run", "--agent", "opencode", "--repo", f.repo, "--", "info").mustOK(t)
+	info := f.goro(t, "run", "--agent", "opencode", "--session", id, "--", "info").mustOK(t)
 	kv, _ := parseOut(info.stdout)
-	if kv["home"] != "/home/goro" || kv["cwd"] != "/work" || kv["https_proxy"] != "http://127.0.0.1:3128" || kv["args"] != `["info"]` {
-		t.Errorf("HOME・cwd・HTTPS_PROXY・args = %q・%q・%q・%q", kv["home"], kv["cwd"], kv["https_proxy"], kv["args"])
+	if kv["home"] != home || kv["cwd"] != clone || kv["https_proxy"] != "http://127.0.0.1:3128" || kv["args"] != `["info"]` {
+		t.Errorf("HOME・cwd・HTTPS_PROXY・args = %q・%q・%q・%q, want %q・%q", kv["home"], kv["cwd"], kv["https_proxy"], kv["args"], home, clone)
 	}
 	allowed := map[string]bool{}
 	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_MODELS_FETCH",
@@ -90,8 +94,8 @@ func TestRunOpenCodeLoginAndSeparateHome(t *testing.T) {
 	if kv["args"] != `["auth" "login" "--extra"]` {
 		t.Errorf("opencode の引数 = %s, want [auth login --extra]", kv["args"])
 	}
-	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goro" {
-		t.Errorf("cwd・/work の中身・HOME = %q・%q・%q (空の作業ディレクトリのはず)", kv["cwd"], kv["work"], kv["home"])
+	if kv["cwd"] != f.agentPath("opencode", "login-work") || kv["work"] != "" || kv["home"] != f.agentPath("opencode", "home") {
+		t.Errorf("cwd・cwd の中身・HOME = %q・%q・%q (空の作業ディレクトリ <state>/agents/opencode/login-work のはず)", kv["cwd"], kv["work"], kv["home"])
 	}
 	if b, err := os.ReadFile(filepath.Join(f.agentPath("opencode", "home"), "login-marker")); err != nil || string(b) != "logged-in\n" {
 		t.Errorf("ログイン状態が、opencode 専用の HOME (<state>/agents/opencode/home) に残っていない: %q, %v", b, err)
@@ -311,18 +315,18 @@ func lineWith(out, substr string) string {
 	return ""
 }
 
-// --login の作業ディレクトリ (/work) と run dir は、エージェントごとに別: 片方の --login の檻が /work に置いたものが、もう片方の
-// --login の檻の /work に見えてはいけない (どちらの向きも)。run dir の egress.log (過去の拒否宛先) も、別。claude の名前は、そのまま。
+// --login の作業ディレクトリ (<state>/agents/<名前>/login-work) と run dir は、エージェントごとに別: 片方の --login の檻が作業ディレクトリに置いたものが、
+// もう片方の --login の檻の作業ディレクトリに見えてはいけない (どちらの向きも)。run dir の egress.log (過去の拒否宛先) も、別。claude の名前は、そのまま。
 func TestRunLoginDirsSeparateBothWays(t *testing.T) {
 	f := newRunFixture(t)
 	// opencode の --login の檻が、claude の設定を置く。
 	f.goro(t, "run", "--agent", "opencode", "--login", "--", "commit", "settings.json", "PLANTED-BY-OPENCODE-LOGIN", "msg")
 	if b, err := os.ReadFile(f.agentPath("opencode", "login-work", "settings.json")); err != nil || string(b) != "PLANTED-BY-OPENCODE-LOGIN" {
-		t.Fatalf("前提: opencode の --login の檻が、/work (<state>/agents/opencode/login-work) に書けていない: %q, %v", b, err)
+		t.Fatalf("前提: opencode の --login の檻が、作業ディレクトリ (<state>/agents/opencode/login-work) に書けていない: %q, %v", b, err)
 	}
 	r := f.goro(t, "run", "--login").mustOK(t)
 	if kv, _ := parseOut(r.stdout); kv["work"] != "" {
-		t.Errorf("claude の --login の檻の /work に、opencode の --login の檻が置いたものが見える: work=%q\n%s", kv["work"], r)
+		t.Errorf("claude の --login の檻の作業ディレクトリに、opencode の --login の檻が置いたものが見える: work=%q\n%s", kv["work"], r)
 	}
 	// 拒否された宛先の履歴 (egress.log) も、別。
 	f.goro(t, "run", "--agent", "opencode", "--login", "--", "connect", "only-opencode.example:443").mustOK(t)
@@ -375,19 +379,20 @@ func TestRunOpenCodeRejectsScriptAndWrongFlag(t *testing.T) {
 // 環境変数・許可宛先・--login・セッションの記録・案内・usage が、そのエージェントのものになる。他のエージェントの状態には、触れない。
 func TestRunThirdAgent(t *testing.T) {
 	f := newRunFixture(t)
-	f.env = append(f.env, "GORO_FAKEAGENT="+f.exe)
+	f.env = append(f.env, "GORO_FAKEAGENT="+f.binPath("fakeagent"))
 	envHas := func(kv map[string]string, name string) bool { return strings.Contains(","+kv["env"]+",", ","+name+",") }
 
-	// 起動: 環境変数は、共通 + fakeagent の profile のもの。檻の中の path は /opt/fakeagent/fakeagent。
-	r := f.goro(t, "run", "--agent", "fakeagent", "--repo", f.repo, "--", "probe", "stat:/opt/fakeagent/fakeagent", "stat:/opt/claude/claude", "mnt:/opt/fakeagent/fakeagent").mustOK(t)
+	// 起動: 環境変数は、共通 + fakeagent の profile のもの。檻の中の path は、ホストと同じ (実行ファイルは ro で見える。claude のは、見えない)。
+	fake, claudeExe := f.binPath("fakeagent"), f.binPath("claude")
+	r := f.goro(t, "run", "--agent", "fakeagent", "--repo", f.repo, "--", "probe", "stat:"+fake, "stat:"+claudeExe, "mnt:"+fake).mustOK(t)
 	_, res := parseOut(r.stdout)
-	if res["stat:/opt/fakeagent/fakeagent"] != "ok" || !strings.HasPrefix(res["stat:/opt/claude/claude"], "err") || res["mnt:/opt/fakeagent/fakeagent"] != "ro" {
+	if res["stat:"+fake] != "ok" || !strings.HasPrefix(res["stat:"+claudeExe], "err") || res["mnt:"+fake] != "ro" {
 		t.Errorf("檻の中の実行ファイルの path: %v", res)
 	}
 	id := sessionID(t, r)
 	info := f.goro(t, "run", "--session", id, "--", "info").mustOK(t) // --agent を省略: 記録のエージェント
 	kv, _ := parseOut(info.stdout)
-	if !envHas(kv, "FAKEAGENT_MODE") || envHas(kv, "DISABLE_TELEMETRY") || envHas(kv, "OPENCODE_DISABLE_AUTOUPDATE") || kv["home"] != "/home/goro" {
+	if !envHas(kv, "FAKEAGENT_MODE") || envHas(kv, "DISABLE_TELEMETRY") || envHas(kv, "OPENCODE_DISABLE_AUTOUPDATE") || kv["home"] != f.agentPath("fakeagent", "home") {
 		t.Errorf("fakeagent の環境変数 = %s", kv["env"])
 	}
 	// 状態: <state>/agents/fakeagent/ だけ。他のエージェントの状態は、作らない・触れない。

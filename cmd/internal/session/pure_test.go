@@ -258,8 +258,8 @@ func TestGitSpecIsValid(t *testing.T) {
 			sess := st.layout("20260926-103000-a1b2c3")
 			clone := st.cloneBinds(tc.repo, sess)
 			exp := st.exportBinds(sess)
-			if work := st.workBinds(sess); len(work) != 1 || work[0].Dst != "/work" || !work[0].RW || work[0].Src != sess.Clone {
-				t.Errorf("workBinds = %+v, want clone を rw で /work に", work)
+			if work := st.workBinds(sess); len(work) != 1 || work[0].Dst != sess.Clone || !work[0].RW || work[0].Src != sess.Clone {
+				t.Errorf("workBinds = %+v, want clone を rw で、同じ path に", work)
 			}
 			for _, binds := range [][]bwrap.Bind{clone, exp} {
 				spec := st.gitSpec(binds, "status")
@@ -294,17 +294,27 @@ func TestGitSpecIsValid(t *testing.T) {
 				return m
 			}
 			c, e := byDst(clone), byDst(exp)
-			if !(!c["/src"].RW && c["/work"].RW && !c["/usr"].RW && c["/out"] == bwrap.Bind{}) {
-				t.Errorf("clone の檻: /src は ro・/work は rw・/usr は ro・/out は無い: %+v", c)
+			if !(!c[tc.repo].RW && c[sess.Clone].RW && !c["/usr"].RW && c[sess.Export] == bwrap.Bind{}) {
+				t.Errorf("clone の檻: 元の repo は ro・clone は rw・/usr は ro・export は無い: %+v", c)
 			}
-			if !(!e["/work"].RW && e["/out"].RW && e["/src"] == bwrap.Bind{}) {
-				t.Errorf("export の檻: /work は ro・/out は rw・/src は無い: %+v", e)
+			if !(!e[sess.Clone].RW && e[sess.Export].RW && e[tc.repo] == bwrap.Bind{}) {
+				t.Errorf("export の檻: clone は ro・export は rw・元の repo は無い: %+v", e)
 			}
-			if c["/work"].InHome != tc.inHome || c["/src"].InHome != tc.inHome || e["/out"].InHome != tc.inHome || c["/usr"].InHome {
-				t.Errorf("InHome: /work %v /src %v /out %v /usr %v, want %v (/usr は false)", c["/work"].InHome, c["/src"].InHome, e["/out"].InHome, c["/usr"].InHome, tc.inHome)
+			if c[sess.Clone].InHome != tc.inHome || c[tc.repo].InHome != tc.inHome || e[sess.Export].InHome != tc.inHome || c["/usr"].InHome {
+				t.Errorf("InHome: clone %v repo %v export %v /usr %v, want %v (/usr は false)", c[sess.Clone].InHome, c[tc.repo].InHome, e[sess.Export].InHome, c["/usr"].InHome, tc.inHome)
 			}
 			if len(c) != 3 || len(e) != 3 {
 				t.Errorf("見せるのは /usr と 2 つだけ: %d %d", len(c), len(e))
+			}
+			for _, binds := range [][]bwrap.Bind{clone, exp} {
+				for _, b := range binds {
+					if b.Src != b.Dst {
+						t.Errorf("bind 元 %q と bind 先 %q が違う (檻の中の path は、ホストと同じ)", b.Src, b.Dst)
+					}
+					if slices.Contains([]string{"/src", "/work", "/out"}, b.Dst) {
+						t.Errorf("檻専用の固定の path %s を bind している", b.Dst)
+					}
+				}
 			}
 		})
 	}
@@ -379,7 +389,7 @@ func TestBindInHome(t *testing.T) {
 		"/home/tester": true, "/home/tester/x": true, "/home/tester/.local/state/goro/s": true,
 		"/home/testerX/y": false, "/home/teste": false, "/home": false, "/home/tester2": false, "/usr": false, "/": false,
 	} {
-		if got := st.bind(path, "/x", false).InHome; got != want {
+		if got := st.bind(path, false).InHome; got != want {
 			t.Errorf("bind(%q).InHome = %v, want %v", path, got, want)
 		}
 	}

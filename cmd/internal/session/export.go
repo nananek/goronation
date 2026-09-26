@@ -40,7 +40,7 @@ type Bundle struct {
 
 // Export は、ID のセッションの clone を、bundle にして取り出す。
 //
-// bundle は、使い捨ての檻の中で作る (clone を ro で /work に、export/ を rw で /out に bind して git bundle create)。
+// bundle は、使い捨ての檻の中で作る (clone を ro で、export/ を rw で、ホストと同じ path で bind して git bundle create)。
 // ホストは、clone の中で git を実行しない (clone の .git/config と hooks は、檻が書けるので、ホストで git を動かすと、
 // fsmonitor・hooks・alias・textconv などで、任意のコードを実行させられる)。ホストが読むのは bundle だけで、hostfs で
 // 通常のファイル・上限・ヘッダを確かめる。
@@ -67,7 +67,7 @@ func (s *Store) Export(ctx context.Context, id string) (b *Bundle, err error) {
 			exportRoot.Remove(bundleName)
 		}
 	}()
-	if err := s.runGit(ctx, s.exportBinds(sess), "-C", "/work", "bundle", "create", "/out/"+bundleName, "--all"); err != nil {
+	if err := s.runGit(ctx, s.exportBinds(sess), bundleArgs(sess)...); err != nil {
 		return nil, err
 	}
 	if s.afterBundle != nil {

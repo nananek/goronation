@@ -18,8 +18,9 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-// 檻の中では、テストバイナリが、実際の goro (/opt/goro/goro) と、偽の claude (/opt/claude/claude)・偽の opencode
-// (/opt/opencode/opencode。同じ偽のエージェント) の代わりに動く:
+// 檻の中では、テストバイナリが、実際の goro (名前が goro のファイル) と、偽の claude (名前が claude)・偽の opencode
+// (名前が opencode。同じ偽のエージェント) の代わりに動く (檻の中の path は、ホストの path と同じ。newRunFixture が、テストバイナリへの
+// hard link を、その名前で作る):
 // bwrap は、起動するコマンドを、その path を argv[0] にして実行するので、名前で選ぶ。init は、テストバイナリの
 // TestMain より先に走る。syscall.Exit は、-race のバイナリの、終了時の 1 秒の待ち (atexit_sleep_ms) を避ける
 // (檻に環境変数は渡らないので、GORACE では避けられない)。
@@ -43,7 +44,7 @@ const (
 )
 
 // testAgentProfile は、テスト用の第 3 のエージェントの profile: 宛先と環境変数の定数を持つだけの、profile 1 つ。
-// 偽のエージェントの実行ファイル (テストバイナリ) は、檻の中の path の名前 (/opt/fakeagent/fakeagent) で、偽のエージェントとして動く。
+// 偽のエージェントの実行ファイル (テストバイナリへの hard link) は、名前 fakeagent で、偽のエージェントとして動く。
 var testAgentProfile = agentProfile{
 	name:        "fakeagent",
 	exeExample:  "/opt/fakeagent/bin/fakeagent",
@@ -60,15 +61,16 @@ var testAgentProfile = agentProfile{
 //
 //	auth login [場面...]  opencode の --login のときの起動 (auth login)。HOME にログインの目印を作り、続きに場面があれば、それを動かす
 //	                      (なければ、引数と環境を出す)
-//	info                  引数・作業ディレクトリ・HOME・環境変数の名前・/work の中身を出す
-//	probe OP...           OP (stat:PATH・write:PATH・dial:ADDR・mnt:PATH) を試して、結果を出す。mnt は、PATH の mount が ro か rw か
+//	info                  引数・作業ディレクトリ・HOME・環境変数の名前・作業ディレクトリの中身を出す
+//	probe OP...           OP (stat:PATH・list:PATH・write:PATH・dial:ADDR・mnt:PATH) を試して、結果を出す。mnt は、PATH の mount が ro か rw か。
+//	                      list は、PATH の中の名前を、コンマ区切りで出す
 //	connect TARGET...     HTTPS_PROXY へ、TARGET の CONNECT を送り、応答の状態コードを出す
 //	screen                エージェントの画面に見える出力 (エスケープ・項目名・エラー文・不正な UTF-8・NUL) を、標準出力と標準エラーに出し、
 //	                      終了コード 3 で終わる (goro が、出力を読まず・解釈せず、そのまま通すことの確認)
 //	loopback [ADDR]       proxy の環境変数を守るクライアント (Bun・Node と同じ: NO_PROXY の宛先は直接、それ以外は HTTP_PROXY 経由) で、ADDR
 //	                      (無ければ、檻の中の loopback に自分で立てたサーバー) に GET し、"loopback => <状態コード> direct|proxy" を出す
-//	commit FILE TEXT MSG  /work に FILE を書いて、git commit する
-//	gitlog FILE           /work のコミットの一覧と、FILE の中身を出す
+//	commit FILE TEXT MSG  作業ディレクトリに FILE を書いて、git commit する
+//	gitlog FILE           作業ディレクトリのコミットの一覧と、FILE の中身を出す
 //	marker                HOME のログインの目印を読む
 //	sigcount              ready を出し、最初のシグナルから 1 秒間の SIGINT・SIGQUIT の数を出す
 //	hold                  ready を出し、殺されるまで待つ
@@ -82,7 +84,7 @@ func fakeClaude(args []string) int {
 	}
 	switch args[0] {
 	case "auth", "login":
-		if err := os.WriteFile("/home/goro/login-marker", []byte("logged-in\n"), 0o600); err != nil {
+		if err := os.WriteFile(loginMarker(), []byte("logged-in\n"), 0o600); err != nil {
 			fmt.Println("marker-write-error=" + err.Error())
 		}
 		if args[0] == "auth" && len(args) > 2 && args[1] == "login" && !strings.HasPrefix(args[2], "-") { // auth login <場面> ...: 続きの場面も動かす
@@ -117,19 +119,19 @@ func fakeClaude(args []string) int {
 		}
 		return fakeCommit(args[1], args[2], args[3])
 	case "gitlog":
-		out, err := exec.Command("/usr/bin/git", "-C", "/work", "log", "--format=log=%H").CombinedOutput()
+		out, err := exec.Command("/usr/bin/git", "-C", workDir(), "log", "--format=log=%H").CombinedOutput()
 		fmt.Print(string(out))
 		if err != nil {
 			fmt.Println("gitlog-error=" + err.Error())
 			return 1
 		}
 		if len(args) > 1 {
-			b, err := os.ReadFile(filepath.Join("/work", args[1]))
+			b, err := os.ReadFile(filepath.Join(workDir(), args[1]))
 			fmt.Printf("file=%q err=%v\n", string(b), err)
 		}
 		return 0
 	case "marker":
-		b, err := os.ReadFile("/home/goro/login-marker")
+		b, err := os.ReadFile(loginMarker())
 		fmt.Printf("marker=%q err=%v\n", string(b), err)
 		return 0
 	case "sigcount":
@@ -234,7 +236,7 @@ func fakeInfo(args []string) int {
 	}
 	sort.Strings(names)
 	var work []string
-	if ents, err := os.ReadDir("/work"); err == nil {
+	if ents, err := os.ReadDir(cwd); err == nil {
 		for _, e := range ents {
 			work = append(work, e.Name())
 		}
@@ -257,6 +259,16 @@ func fakeProbe(op string) string {
 		}
 	case "mnt":
 		return mountOptions(arg)
+	case "list":
+		var ents []os.DirEntry
+		if ents, err = os.ReadDir(arg); err == nil {
+			names := []string{}
+			for _, e := range ents {
+				names = append(names, e.Name())
+			}
+			sort.Strings(names)
+			return "ok:" + strings.Join(names, ",")
+		}
 	case "dial":
 		var c net.Conn
 		if c, err = net.DialTimeout("tcp", arg, 3*time.Second); err == nil {
@@ -297,14 +309,22 @@ func fakeConnect(target string) string {
 	return f[1]
 }
 
-// fakeCommit は、/work に file を書いて、git commit する。コミットの ID を出す。
+// workDir は、檻の作業ディレクトリ (cwd。ホストの clone と同じ path)。loginMarker は、HOME のログインの目印。
+func workDir() string {
+	d, _ := os.Getwd()
+	return d
+}
+
+func loginMarker() string { return filepath.Join(os.Getenv("HOME"), "login-marker") }
+
+// fakeCommit は、作業ディレクトリに file を書いて、git commit する。コミットの ID を出す。
 func fakeCommit(file, text, msg string) int {
-	if err := os.WriteFile(filepath.Join("/work", file), []byte(text), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(workDir(), file), []byte(text), 0o644); err != nil {
 		fmt.Println("write-error=" + err.Error())
 		return 1
 	}
 	for _, args := range [][]string{{"add", "--", file}, {"commit", "-q", "-m", msg}, {"rev-parse", "HEAD"}} {
-		out, err := exec.Command("/usr/bin/git", append([]string{"-C", "/work"}, args...)...).CombinedOutput()
+		out, err := exec.Command("/usr/bin/git", append([]string{"-C", workDir()}, args...)...).CombinedOutput()
 		if err != nil {
 			fmt.Printf("git-error=%q %v %s\n", args, err, out)
 			return 1

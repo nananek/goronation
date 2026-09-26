@@ -13,7 +13,7 @@
 //
 // # 規則
 //
-//   - cage: 檻に入るのは、/usr・証明書・エージェントと goro の実体・run dir (すべて ro)、檻専用の HOME と clone (rw)、許可リストの環境変数だけ。ホストの HOME・~/.ssh・~/.claude・~/.local/share/opencode・環境変数は見えない。
+//   - cage: 檻に入るのは、/usr・証明書・エージェントと goro の実体・run dir (すべて ro)、檻専用の HOME と clone (rw)、許可リストの環境変数だけ。ホストの HOME・~/.ssh・~/.claude・~/.local/share/opencode・環境変数は見えない。檻の中の path は、ホストと同じ (bind 元 = bind 先。檻専用の固定の path は無い)。
 //   - egress: 許可は、エージェントごとの既定の宛先 (goro run -h に出る) に、--allow で足したもの。拒否は、終了後に宛先つきで表示する。監査 (run dir の egress.log) は、詰まっても止まらず、行を捨てて数える。
 //   - signal: 端末のシグナルは、檻の中のエージェントが直接受ける (goro init は転送しない)。ホストの goro run は SIGINT・SIGQUIT を無視し、SIGTERM・SIGHUP で檻を止める。
 //   - no-host-git: ホストは git を実行しない。clone も export も使い捨ての檻の中で行い、bundle の取り込みは、利用者が自分の repo で行う。
@@ -21,9 +21,9 @@
 // # 限界
 //
 //   - 許可した宛先 (api.anthropic.com・opencode.ai など) 経由の持ち出しは防げない (TLS の中身を見ない)。大量の拒否 CONNECT で監査の予算 (8 MiB) を使い切られると、以降の宛先は egress.log に載らない (捨てた行数は終了時に表示する)。
-//   - 檻の HOME は、エージェントごとに、全セッションで共有する (ログイン状態・会話の履歴を残すため)。同時に動く別セッションの檻は、共有の /home/goro の UDS などで通信でき、--allow はセッションごとの境界ではない。
+//   - 檻の HOME は、エージェントごとに、全セッションで共有する (ログイン状態・会話の履歴を残すため)。同時に動く別セッションの檻は、共有の HOME の UDS などで通信でき、--allow はセッションごとの境界ではない。
 //   - 端末に直結するため、檻が端末に任意のエスケープシーケンスを書ける (pty の中継とフィルタは未実装。TIOCSTI は legacy_tiocsti の確認で塞ぐ)。termios は、終了後に戻す。
-//   - 起動後の Ctrl-C は、エージェントの中断として効く (goro 自身は終了しない。終了はエージェントの終了操作か SIGTERM)。seccomp・cap-drop は未実装。repo は、ローカルの path だけ。Linux (bwrap) だけ。檻からホストの localhost には届かず、ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。
+//   - 起動後の Ctrl-C は、エージェントの中断として効く (goro 自身は終了しない。終了はエージェントの終了操作か SIGTERM)。seccomp・cap-drop は未実装。repo は、ローカルの path だけ。Linux (bwrap) だけ。檻からホストの localhost には届かず、ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。檻の中の path がホストと同じなので、檻から、ユーザー名と状態ディレクトリの path が見える (中身は見えない)。作業ディレクトリは、セッションごとに違う path になる (claude の「このフォルダを信頼するか」の確認は、新しいセッションごとに出る)。
 //
 // # 関連
 //
