@@ -581,3 +581,17 @@ func TestRunSameSessionTwiceRefused(t *testing.T) {
 	syscall.Kill(first.cmd.Process.Pid, syscall.SIGTERM)
 	first.wait()
 }
+
+// goro run の終了コードは、claude の終了コード。終わった後の案内は、失敗しても出る。
+func TestRunExitCode(t *testing.T) {
+	f := newRunFixture(t)
+	for _, code := range []int{0, 1, 7, 42} {
+		r := f.goro(t, "run", "--repo", f.repo, "--", "exit", strconv.Itoa(code))
+		if r.code != code {
+			t.Errorf("claude が %d で終わったとき、goro run の終了コード = %d\n%s", code, r.code, r)
+		}
+		if !strings.Contains(r.stderr, "セッション:") {
+			t.Errorf("claude が %d で終わったとき、案内が出ていない:\n%s", code, r.stderr)
+		}
+	}
+}

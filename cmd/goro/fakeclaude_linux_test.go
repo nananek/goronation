@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -39,6 +40,7 @@ func init() {
 //	marker                HOME のログインの目印を読む
 //	sigcount              ready を出し、最初のシグナルから 1 秒間の SIGINT・SIGQUIT の数を出す
 //	hold                  ready を出し、殺されるまで待つ
+//	exit N                終了コード N で終わる
 func fakeClaude(args []string) int {
 	if len(args) == 0 {
 		fmt.Println("scenario=none")
@@ -89,6 +91,13 @@ func fakeClaude(args []string) int {
 	case "hold":
 		fmt.Println("ready")
 		select {}
+	case "exit":
+		if len(args) == 2 {
+			if n, err := strconv.Atoi(args[1]); err == nil {
+				return n
+			}
+		}
+		return 2
 	}
 	fmt.Printf("unknown-scenario=%q\n", args[0])
 	return 2
