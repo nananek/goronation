@@ -17,7 +17,23 @@ func (f *runFixture) agentPath(name string, elem ...string) string {
 	return filepath.Join(append([]string{f.stateDir(), "agents", name}, elem...)...)
 }
 
-// opencode の檻: /opt/opencode/opencode に実行ファイルが見え (/opt/claude/claude は無い)、専用の HOME (<state>/agents/opencode/home) が rw、
+// homeKeys は、エージェント name の homes/ の下の、repo ごとの HOME の名前 (repo のキー)。ロックの .lock などの隠しファイルは、数えない。
+func (f *runFixture) homeKeys(t *testing.T, name string) []string {
+	t.Helper()
+	ents, err := os.ReadDir(f.agentPath(name, "homes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), ".") {
+			keys = append(keys, e.Name())
+		}
+	}
+	return keys
+}
+
+// opencode の檻: /opt/opencode/opencode に実行ファイルが見え (/opt/claude/claude は無い)、repo ごとの HOME (<state>/agents/opencode/homes/<キー>) が rw、
 // ホストの opencode の認証情報・設定・状態ディレクトリは見えない。環境変数は、共通の 4 つ + OPENCODE_DISABLE_* だけ。
 func TestRunOpenCodeCage(t *testing.T) {
 	f := newRunFixture(t)
@@ -81,8 +97,8 @@ func TestRunOpenCodeCage(t *testing.T) {
 	}
 }
 
-// エージェントごとに、檻専用の HOME は別: opencode の起動は agents/opencode/ だけを作り、claude の状態 (agents/claude/) に触れない。
-// --login は、opencode では auth login の引数で起動する。ログイン状態は、agents/opencode/home に残り、次の opencode の檻に見え、claude の檻には見えない。
+// エージェントごとに、認証情報 (ログイン状態) は別: opencode の起動は agents/opencode/ だけを作り、claude の状態 (agents/claude/) に触れない。
+// --login は、opencode では auth login の引数で起動する。ログイン状態は、agents/opencode/auth に残り、次の opencode の檻に見え、claude の檻には見えない。
 func TestRunOpenCodeLoginAndSeparateHome(t *testing.T) {
 	f := newRunFixture(t)
 	r := f.goro(t, "run", "--agent", "opencode", "--login", "--", "--extra").mustOK(t)
@@ -93,16 +109,18 @@ func TestRunOpenCodeLoginAndSeparateHome(t *testing.T) {
 	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goro" {
 		t.Errorf("cwd・/work の中身・HOME = %q・%q・%q (空の作業ディレクトリのはず)", kv["cwd"], kv["work"], kv["home"])
 	}
-	if b, err := os.ReadFile(filepath.Join(f.agentPath("opencode", "home"), "login-marker")); err != nil || string(b) != "logged-in\n" {
-		t.Errorf("ログイン状態が、opencode 専用の HOME (<state>/agents/opencode/home) に残っていない: %q, %v", b, err)
+	if b, err := os.ReadFile(filepath.Join(f.agentPath("opencode", "auth"), "login-marker")); err != nil || string(b) != "logged-in\n" {
+		t.Errorf("ログイン状態が、opencode の認証情報のディレクトリ (<state>/agents/opencode/auth) に残っていない: %q, %v", b, err)
 	}
-	if _, err := os.Lstat(f.agentPath("claude", "home")); err == nil {
+	if _, err := os.Lstat(f.agentPath("claude")); err == nil {
 		t.Error("opencode の起動が、claude の状態 (<state>/agents/claude) を作った")
 	}
-	if fi, err := os.Stat(f.agentPath("opencode", "home")); err != nil || fi.Mode().Perm() != 0o700 {
-		t.Errorf("opencode 専用の HOME の権限 = %v, %v, want 0700", fi, err)
+	for _, d := range []string{f.agentPath("opencode", "auth"), f.agentPath("opencode", "login-home")} {
+		if fi, err := os.Stat(d); err != nil || fi.Mode().Perm() != 0o700 {
+			t.Errorf("%s の権限 = %v, %v, want 0700", d, fi, err)
+		}
 	}
-	for _, want := range []string{"ログインの画面が出ます。画面の指示に従い、終わったら終了してください (終了: /exit か Ctrl-C)。", "ログイン状態: " + f.agentPath("opencode", "home"), "goro run --agent opencode --repo PATH"} {
+	for _, want := range []string{"ログインの画面が出ます。画面の指示に従い、終わったら終了してください (終了: /exit か Ctrl-C)。", "ログイン状態: " + f.agentPath("opencode", "auth"), "goro run --agent opencode --repo PATH"} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("--login の案内に %q が無い:\n%s", want, r.stderr)
 		}
@@ -120,8 +138,8 @@ func TestRunOpenCodeLoginAndSeparateHome(t *testing.T) {
 	if strings.Contains(other.stdout, "logged-in") || !strings.Contains(other.stdout, `marker=""`) {
 		t.Errorf("opencode のログイン状態が、claude の檻に見える:\n%s", other)
 	}
-	if _, err := os.Stat(f.agentPath("claude", "home")); err != nil {
-		t.Errorf("claude の起動が、claude の HOME (<state>/agents/claude/home) を作っていない: %v", err)
+	if _, err := os.Stat(f.agentPath("claude", "auth")); err != nil {
+		t.Errorf("claude の起動が、claude の認証情報のディレクトリ (<state>/agents/claude/auth) を作っていない: %v", err)
 	}
 }
 
@@ -391,8 +409,15 @@ func TestRunThirdAgent(t *testing.T) {
 		t.Errorf("fakeagent の環境変数 = %s", kv["env"])
 	}
 	// 状態: <state>/agents/fakeagent/ だけ。他のエージェントの状態は、作らない・触れない。
-	if fi, err := os.Stat(f.agentPath("fakeagent", "home")); err != nil || fi.Mode().Perm() != 0o700 {
+	homes := f.homeKeys(t, "fakeagent")
+	if len(homes) != 1 {
+		t.Fatalf("fakeagent の homes/ の中 = %v (repo 1 つ = HOME 1 つのはず)", homes)
+	}
+	if fi, err := os.Stat(f.agentPath("fakeagent", "homes", homes[0])); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("fakeagent の HOME: %v, %v", fi, err)
+	}
+	if fi, err := os.Stat(f.agentPath("fakeagent", "auth")); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("fakeagent の認証情報のディレクトリ: %v, %v", fi, err)
 	}
 	ents, err := os.ReadDir(filepath.Join(f.stateDir(), "agents"))
 	if err != nil || len(ents) != 1 || ents[0].Name() != "fakeagent" {
@@ -425,13 +450,13 @@ func TestRunThirdAgent(t *testing.T) {
 		t.Errorf("他のエージェントの宛先が通る: %v", res)
 	}
 
-	// --login: profile の loginArgs で起動し、状態は agents/fakeagent/{home,login-work,login-run}。案内は profile のもの。
+	// --login: profile の loginArgs で起動し、状態は agents/fakeagent/{auth,login-home,login-work,login-run}。案内は profile のもの。
 	login := f.goro(t, "run", "--agent", "fakeagent", "--login", "--", "commit", "x.txt", "PLANT", "msg")
 	if !strings.Contains(login.stderr, "ログインの画面が出ます。画面の指示に従い、終わったら終了してください (終了: /quit)。") || !strings.Contains(login.stderr, "goro run --agent fakeagent --repo PATH") ||
-		!strings.Contains(login.stderr, "ログイン状態: "+f.agentPath("fakeagent", "home")) {
+		!strings.Contains(login.stderr, "ログイン状態: "+f.agentPath("fakeagent", "auth")) {
 		t.Errorf("--login の案内:\n%s", login.stderr)
 	}
-	for _, p := range []string{f.agentPath("fakeagent", "home", "login-marker"), f.agentPath("fakeagent", "login-work", "x.txt"), f.agentPath("fakeagent", "login-run", egressLogName)} {
+	for _, p := range []string{f.agentPath("fakeagent", "auth", "login-marker"), f.agentPath("fakeagent", "login-work", "x.txt"), f.agentPath("fakeagent", "login-run", egressLogName)} {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("--login の状態が、%s に無い: %v", p, err)
 		}

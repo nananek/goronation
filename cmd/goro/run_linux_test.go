@@ -263,21 +263,60 @@ func testCage() cageConfig {
 		GoroExe:   "/home/u/bin/goro",
 		CACerts:   "/etc/ssl/certs",
 		RunDir:    "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run",
-		AgentHome: "/home/u/.local/state/goro/agents/claude/home",
+		AgentHome: "/home/u/.local/state/goro/agents/claude/homes/0123456789abcdef",
+		AuthDir:   "/home/u/.local/state/goro/agents/claude/auth",
 		Work:      "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone",
 		Term:      "xterm-256color",
 		Args:      []string{"--resume", "x y"},
 	}
 }
 
-// 檻の argv (bwrap に渡す引数) を、丸ごと固定する。--ro-bind / / も --share-net も --new-session も無く、rw は 2 つだけで、
-// 環境変数は許可リストだけ。
+// 檻の argv (bwrap に渡す引数) を、丸ごと固定する。--ro-bind / / も --share-net も --new-session も無く、rw は 3 つだけ (repo ごとの HOME・
+// 認証用ディレクトリ・/work) で、環境変数は許可リストだけ。認証情報を repo をまたいで共有する前 (HOME をエージェントで 1 つ共有) の golden との違いは、
+// HOME の bind 元 (homes/<repo のキー>)・認証用ディレクトリの bind (/auth)・認証用ディレクトリを指す環境変数 (CLAUDE_SECURESTORAGE_CONFIG_DIR) だけ。
 func TestCageSpecGolden(t *testing.T) {
 	argv, err := cageSpec(testCage()).Argv()
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
+		"/usr/bin/bwrap", "--unshare-all", "--die-with-parent",
+		"--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
+		"--proc", "/proc", "--dev", "/dev",
+		"--tmpfs", "/tmp",
+		"--ro-bind", "/usr", "/usr",
+		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
+		"--ro-bind", "/home/u/.local/share/claude/versions/2.0.0", "/opt/claude/claude",
+		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
+		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
+		"--bind", "/home/u/.local/state/goro/agents/claude/homes/0123456789abcdef", "/home/goro",
+		"--bind", "/home/u/.local/state/goro/agents/claude/auth", "/auth",
+		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
+		"--chdir", "/work",
+		"--clearenv",
+		"--setenv", "HOME", "/home/goro",
+		"--setenv", "PATH", "/usr/bin:/bin",
+		"--setenv", "TERM", "xterm-256color",
+		"--setenv", "LANG", "C.UTF-8",
+		"--setenv", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1",
+		"--setenv", "DISABLE_TELEMETRY", "1",
+		"--setenv", "DISABLE_ERROR_REPORTING", "1",
+		"--setenv", "DISABLE_AUTOUPDATER", "1",
+		"--setenv", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1",
+		"--setenv", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "/auth",
+		"--",
+		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
+		"/opt/claude/claude", "--resume", "x y",
+	}
+	if !slices.Equal(argv, want) {
+		t.Errorf("argv が golden と違う:\n got: %q\nwant: %q", argv, want)
+	}
+}
+
+// claude の檻の実効の Spec は、HOME をエージェントで 1 つ共有していた前の golden と、次の 3 つだけが違う: HOME の bind 元 (homes/<repo のキー>)・
+// 認証用ディレクトリの bind (/auth)・認証用ディレクトリを指す環境変数 (CLAUDE_SECURESTORAGE_CONFIG_DIR)。ほかの mount・環境変数・引数は、増えも減りもしない。
+func TestCageSpecDiffersFromSharedHomeOnlyInHomeAndAuth(t *testing.T) {
+	previous := []string{ // 前の golden (agents/claude/home を、そのまま /home/goro に rw で見せていたときの argv)
 		"/usr/bin/bwrap", "--unshare-all", "--die-with-parent",
 		"--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
 		"--proc", "/proc", "--dev", "/dev",
@@ -304,12 +343,46 @@ func TestCageSpecGolden(t *testing.T) {
 		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
 		"/opt/claude/claude", "--resume", "x y",
 	}
-	if !slices.Equal(argv, want) {
-		t.Errorf("argv が golden と違う:\n got: %q\nwant: %q", argv, want)
+	argv, err := cageSpec(testCage()).Argv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rest []string
+	removed := 0
+	for i := 0; i < len(argv); i++ {
+		switch {
+		case argv[i] == "--bind" && argv[i+2] == "/auth": // 認証用ディレクトリの bind
+			if argv[i+1] != "/home/u/.local/state/goro/agents/claude/auth" {
+				t.Errorf("認証用ディレクトリの bind 元 = %q", argv[i+1])
+			}
+			i += 2
+			removed++
+		case argv[i] == "--setenv" && argv[i+1] == "CLAUDE_SECURESTORAGE_CONFIG_DIR": // 認証用ディレクトリを指す環境変数
+			if argv[i+2] != "/auth" {
+				t.Errorf("CLAUDE_SECURESTORAGE_CONFIG_DIR = %q", argv[i+2])
+			}
+			i += 2
+			removed++
+		case argv[i] == "--bind" && argv[i+2] == "/home/goro": // HOME の bind 元だけが違う (repo のキーの HOME)
+			if argv[i+1] != "/home/u/.local/state/goro/agents/claude/homes/0123456789abcdef" {
+				t.Errorf("HOME の bind 元 = %q", argv[i+1])
+			}
+			rest = append(rest, "--bind", "/home/u/.local/state/goro/agents/claude/home", "/home/goro")
+			i += 2
+			removed++
+		default:
+			rest = append(rest, argv[i])
+		}
+	}
+	if removed != 3 {
+		t.Errorf("違いの数 = %d, want 3 (HOME の bind 元・認証用ディレクトリの bind・環境変数)", removed)
+	}
+	if !slices.Equal(rest, previous) {
+		t.Errorf("この 3 つを除いた argv が、前の golden と違う:\n got: %q\nwant: %q", rest, previous)
 	}
 }
 
-// HOME の下の Src には InHome を明示し、HOME の外の Src には付けない。rw なのは、エージェントの HOME と /work だけ。
+// HOME の下の Src には InHome を明示し、HOME の外の Src には付けない。rw なのは、repo ごとの HOME・認証用ディレクトリ・/work だけ。
 func TestCageSpecBinds(t *testing.T) {
 	spec := cageSpec(testCage())
 	type bind struct{ rw, inHome bool }
@@ -320,7 +393,7 @@ func TestCageSpecBinds(t *testing.T) {
 	want := map[string]bind{
 		"/usr": {false, false}, "/etc/ssl/certs": {false, false},
 		"/opt/claude/claude": {false, true}, "/opt/goro/goro": {false, true}, "/run/goro": {false, true},
-		"/home/goro": {true, true}, "/work": {true, true},
+		"/home/goro": {true, true}, "/auth": {true, true}, "/work": {true, true},
 	}
 	if len(got) != len(want) {
 		t.Errorf("bind の数 = %d, want %d: %+v", len(got), len(want), got)
@@ -370,7 +443,7 @@ func TestCageEnv(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	wantNames := "HOME,PATH,TERM,LANG,CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,DISABLE_TELEMETRY,DISABLE_ERROR_REPORTING,DISABLE_AUTOUPDATER,CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"
+	wantNames := "HOME,PATH,TERM,LANG,CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,DISABLE_TELEMETRY,DISABLE_ERROR_REPORTING,DISABLE_AUTOUPDATER,CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL,CLAUDE_SECURESTORAGE_CONFIG_DIR"
 	for term, want := range map[string]string{
 		"xterm-256color": "xterm-256color", "screen.linux": "screen.linux", "": "dumb", "bad term": "dumb",
 		"x\ny": "dumb", "$(id)": "dumb", strings.Repeat("a", 65): "dumb", "tmux-256color": "tmux-256color",
@@ -698,7 +771,7 @@ func TestParseDenied(t *testing.T) {
 func TestPrintRunSummary(t *testing.T) {
 	var w bytes.Buffer
 	printRunSummary(&w, runSummary{
-		id: "20260926-120000-abcdef", started: true, stateDir: "/tmp/s t'x", stateDirGiven: true, agentHome: "/tmp/s t'x/home", logPath: "/tmp/s/run/egress.log",
+		id: "20260926-120000-abcdef", started: true, stateDir: "/tmp/s t'x", stateDirGiven: true, authDir: "/tmp/s t'x/agents/claude/auth", logPath: "/tmp/s/run/egress.log",
 		denied: []deniedTarget{{"cdn.example:443", 3}, {"evil\x1b[31m.example:443", 1}}, deniedMore: 4, dropped: 2, serveErr: errors.New("boom"),
 	})
 	got := w.String()
@@ -733,14 +806,14 @@ func TestPrintRunSummary(t *testing.T) {
 
 	// --login
 	w.Reset()
-	printRunSummary(&w, runSummary{stateDir: "/x", agentHome: "/x/home", started: true, logPath: "/x/login-run/egress.log"})
+	printRunSummary(&w, runSummary{stateDir: "/x", authDir: "/x/agents/claude/auth", started: true, logPath: "/x/login-run/egress.log"})
 	got = w.String()
-	if !strings.Contains(got, "ログイン状態: /x/home") || !strings.Contains(got, "goro run --repo PATH") || strings.Contains(got, "セッション:") {
+	if !strings.Contains(got, "ログイン状態: /x/agents/claude/auth") || !strings.Contains(got, "goro run --repo PATH") || strings.Contains(got, "セッション:") {
 		t.Errorf("--login の案内:\n%s", got)
 	}
 	// 檻を起動できなかったなら、何も案内しない (必ず失敗する再開・中身の無い取り出しを、案内しない)。--login も、セッションも。
 	for _, sum := range []runSummary{
-		{stateDir: "/x", agentHome: "/x/home", logPath: "/x/login-run/egress.log"},
+		{stateDir: "/x", authDir: "/x/agents/claude/auth", logPath: "/x/login-run/egress.log"},
 		{id: "20260926-120000-abcdef", stateDir: "/x", logPath: "/x/log", denied: []deniedTarget{{"a.example:443", 1}}, dropped: 3},
 	} {
 		w.Reset()

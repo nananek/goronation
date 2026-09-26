@@ -17,6 +17,8 @@
 //     使い捨ての檻で bundle を作る。
 //   - agent-recorded: CreateOptions.Agent は、セッションの直下の agent (0600。檻に bind しない場所) に、clone より先に書く。Store.Agent が
 //     読み、記録が無ければ空、壊れていれば error (clone に残る設定を、別のエージェントの檻で動かさない判断は、呼び手がする)。
+//   - repo-keyed: Create は、元の repo の実 path (symlink を解決) の sha256 の先頭 16 桁を、セッションの直下の homekey (0600。檻に bind しない場所) に、
+//     clone より先に書く。Store.HomeKey が読み、記録が無ければ空、壊れていれば error。呼び手は、これで、エージェントの HOME を repo ごとに分ける。
 //   - bundle-checked: bundle は、hostfs で、通常のファイル・上限 (512 MiB)・ヘッダを検査してから、path を返す。
 //   - safe-fetch: 取り込みのコマンドには、名前が安全な refs/heads/* だけを書き (名前は檻が決める)、transfer.fsckObjects=true を付ける。
 //     タグと submodule は、自動では取り込まない (--no-tags・--no-recurse-submodules)。
