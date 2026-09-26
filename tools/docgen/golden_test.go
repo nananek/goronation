@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -88,15 +87,6 @@ func firstDiff(a, b string) (int, string, string) {
 		}
 	}
 	return 0, "", ""
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
 }
 
 // TestGolden は、testdata/golden/<case>/repo の生成結果が、<case>/want と完全一致することを確認する。

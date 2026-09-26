@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// watchdogGrace は、時間の予算 (limits.Timeout) の後の、強制終了までの猶予。
+const watchdogGrace = 10 * time.Second
+
 const usage = "使い方: docgen [-check] (path の引数は無い。cwd は <root>/tools/docgen)"
 
 // mode は、実行の種類。
@@ -40,7 +43,7 @@ func emit(w io.Writer, s string) {
 
 func main() {
 	// 予算 (limits.Timeout) が効かないところ (書き込みなど) で止まっても、無限には待たない。
-	watchdog := time.AfterFunc(defaultLimits.Timeout+10*time.Second, func() {
+	watchdog := time.AfterFunc(defaultLimits.Timeout+watchdogGrace, func() {
 		emit(os.Stderr, "docgen: 全体の時間の上限を超えたため、強制終了する")
 		os.Exit(1)
 	})
@@ -75,16 +78,34 @@ func run(args []string, stdout, stderr io.Writer, getwd func() (string, error)) 
 		emit(stderr, "docgen: "+err.Error())
 		return 1
 	}
+	findings := res.Findings
 	if m == modeCheck {
-		emit(stderr, "docgen: -check は、まだ実装していない")
-		return 2
+		cmp, err := t.compare(res)
+		if err != nil {
+			emit(stderr, "docgen: "+err.Error())
+			return 1
+		}
+		findings = append(findings, cmp...)
+	} else {
+		written, unchanged, err := t.writeOutputs(res)
+		if err != nil {
+			emit(stderr, "docgen: "+err.Error())
+			return 1
+		}
+		emit(stdout, fmt.Sprintf("docgen: %d 個の package から、生成物 %d 個を作った (書いた %d・変更なし %d)",
+			len(res.Docs), len(res.Expected), written, unchanged))
 	}
-	written, unchanged, err := t.writeOutputs(res)
-	if err != nil {
-		emit(stderr, "docgen: "+err.Error())
+	sortFindings(findings)
+	for _, f := range findings {
+		emit(stderr, f.String())
+	}
+	if len(findings) > 0 {
+		emit(stderr, fmt.Sprintf("docgen: %d 件の問題", len(findings)))
 		return 1
 	}
-	emit(stdout, fmt.Sprintf("docgen: %d 個の package から、生成物 %d 個を作った (書いた %d・変更なし %d)",
-		len(res.Docs), len(res.Expected), written, unchanged))
+	if m == modeCheck {
+		emit(stdout, fmt.Sprintf("docgen: -check: 問題なし (package %d 個・生成物 %d 個・.md %d 個)",
+			len(res.Docs), len(res.Expected), len(res.Src.Markdown)))
+	}
 	return 0
 }

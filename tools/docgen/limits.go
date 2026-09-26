@@ -23,3 +23,24 @@ var defaultLimits = limits{
 	MaxTotalBytes: 64 << 20,
 	MaxDepth:      64,
 }
+
+// 文書の上限 (docs-check が強制する)。値を変えるときは、ADR と doc.go の記述も、一緒に直す。
+const (
+	readmeMaxLines = 30
+	readmeMaxChars = 2000
+
+	adrMaxLines = 60
+	adrMaxChars = 4000
+
+	// pkgDocMaxLines は、package doc の行数 (元のファイルのコメントの行数) の上限。一般の package は 30、
+	// 検査・強制を担う package (enforcerPackages) は 120 (限界の節を持つため)。行数を超えたら、package を分ける。
+	pkgDocMaxLines      = 30
+	enforcerDocMaxLines = 120
+
+	// usageMaxCodeLines は、package doc の「使い方」の節に書くコードの、合計の行数の上限。
+	usageMaxCodeLines = 5
+)
+
+// enforcerPackages は、検査・強制を担う package (repo 相対のディレクトリ)。「限界」の節が必須で、
+// package doc の行数の上限が長い。増やすときは、この一覧の変更が、レビューに見える。
+var enforcerPackages = []string{"tools/archtest", "tools/docgen"}

@@ -8,6 +8,16 @@ import (
 	"strings"
 )
 
+// sortedKeys は、map のキーを、名前の順に返す (走査・出力の順序を、map の並びに依らせない)。
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
 // refIndexPath は、生成物の一覧 (package の索引) の path。
 const refIndexPath = referenceDir + "/README.md"
 
@@ -17,6 +27,7 @@ type result struct {
 	Src      *sources
 	Docs     []*pkgDoc
 	Expected map[string]string // 期待する生成物 (repo 相対 path → 中身): referenceDir の下と、ADR の README
+	Findings []finding         // lint の結果 (生成物との照合は、compare が別に返す)
 }
 
 // analyze は、repo を読み (予算は tree が共有する)、生成物の期待する内容を作る。
@@ -85,6 +96,9 @@ func (t *tree) analyzeInventory(inv *inventory) (*result, error) {
 	}
 	if res.Expected[adrReadme], err = spliceADRIndex(string(readme), table); err != nil {
 		return nil, fmt.Errorf("%s: %w", adrReadme, err)
+	}
+	if res.Findings, err = t.lint(res); err != nil {
+		return nil, err
 	}
 	return res, nil
 }

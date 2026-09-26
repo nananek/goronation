@@ -69,7 +69,7 @@ func TestRunRefusesWrongCwd(t *testing.T) {
 }
 
 func TestRunGenerate(t *testing.T) {
-	root := fixtureRepo(t, scaffold(map[string]string{"core/doc.go": "// Package core は、テスト。\npackage core\n", "README.md": "# x\n"}))
+	root := fixtureRepo(t, scaffold(map[string]string{"core/doc.go": goodDoc("core"), "README.md": "# x\n"}))
 	cwd := filepath.Join(root, "tools", "docgen")
 	code, out, errs := runIn(t, cwd)
 	if code != 0 || errs != "" {
