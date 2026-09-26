@@ -237,7 +237,7 @@ func TestResolveClaude(t *testing.T) {
 		{"2 文字目だけ !", bang, "", pathLookup, bang, ""},
 		{"スクリプト (ラッパー)", script, "", pathLookup, "", "スクリプト"},
 		{"スクリプトへの symlink", scriptLink, "", pathLookup, "", "スクリプト"},
-		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin か GORO_CLAUDE"},
+		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin PATH か GORO_CLAUDE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := resolveAgentExe(claudeProfile, tc.flagVal, tc.env, tc.look)
@@ -521,8 +521,8 @@ func TestStartProxy(t *testing.T) {
 	if fi, err := os.Stat(p.sockPath); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("UDS の権限 = %v, %v, want 0600", fi, err)
 	}
-	if _, err := startProxy(run, allowList(claudeProfile, nil)); err == nil || !strings.Contains(err.Error(), "すでに動いている") {
-		t.Errorf("同じ run dir の 2 つ目の startProxy = %v, want すでに動いている", err)
+	if _, err := startProxy(run, allowList(claudeProfile, nil)); err == nil || !strings.Contains(err.Error(), "別の goro run が使っている") {
+		t.Errorf("同じ run dir の 2 つ目の startProxy = %v, want 別の goro run が使っている", err)
 	}
 	if got := connectVia(t, p.sockPath, "denied.example:443"); got != "403" {
 		t.Errorf("許可外の宛先 = %s, want 403", got)
@@ -706,14 +706,14 @@ func TestPrintRunSummary(t *testing.T) {
 		"セッション: 20260926-120000-abcdef",
 		`goro run --state-dir '/tmp/s t'\''x' --session 20260926-120000-abcdef`,
 		`goro export --state-dir '/tmp/s t'\''x' 20260926-120000-abcdef`,
-		"egress の監査ログ: /tmp/s/run/egress.log",
-		"最大 10 件",
+		"監査ログ: /tmp/s/run/egress.log",
+		"拒否された宛先:",
 		"  cdn.example:443 (3 回)",
 		"  evil?[31m.example:443 (1 回)", // 制御文字は ? にする
 		"ほか 4 件",
 		"--allow cdn.example:443",
-		"2 行、書けずに捨てた",
-		"egress の待ち受けが異常に終わった: boom",
+		"監査の 2 行を、書けずに捨てた",
+		"egress が異常終了した: boom",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("案内に %q が無い:\n%s", want, got)
@@ -727,7 +727,7 @@ func TestPrintRunSummary(t *testing.T) {
 	w.Reset()
 	printRunSummary(&w, runSummary{id: "20260926-120000-abcdef", started: true, stateDir: "/x", logPath: "/x/log"})
 	got = w.String()
-	if strings.Contains(got, "--state-dir") || strings.Contains(got, "拒否") || strings.Contains(got, "注意") || !strings.Contains(got, "goro run --session 20260926-120000-abcdef") {
+	if strings.Contains(got, "--state-dir") || strings.Contains(got, "拒否") || strings.Contains(got, "監査") || !strings.Contains(got, "goro run --session 20260926-120000-abcdef") {
 		t.Errorf("既定の案内:\n%s", got)
 	}
 
@@ -735,7 +735,7 @@ func TestPrintRunSummary(t *testing.T) {
 	w.Reset()
 	printRunSummary(&w, runSummary{stateDir: "/x", agentHome: "/x/home", started: true, logPath: "/x/login-run/egress.log"})
 	got = w.String()
-	if !strings.Contains(got, "檻専用の HOME (ログイン状態が残る): /x/home") || !strings.Contains(got, "goro run --repo PATH") || strings.Contains(got, "セッション:") {
+	if !strings.Contains(got, "ログイン状態: /x/home") || !strings.Contains(got, "goro run --repo PATH") || strings.Contains(got, "セッション:") {
 		t.Errorf("--login の案内:\n%s", got)
 	}
 	// 檻を起動できなかったなら、何も案内しない (必ず失敗する再開・中身の無い取り出しを、案内しない)。--login も、セッションも。
@@ -754,7 +754,7 @@ func TestPrintRunSummary(t *testing.T) {
 func TestPrintSessionsAndBundle(t *testing.T) {
 	var w bytes.Buffer
 	printSessions(&w, nil)
-	if w.String() != "セッションは無い\n" {
+	if w.String() != "セッションは無い。作る: goro run --repo PATH\n" {
 		t.Errorf("空の一覧 = %q", w.String())
 	}
 	w.Reset()

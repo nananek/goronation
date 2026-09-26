@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,6 +51,9 @@ func runUsage() string {
 		fmt.Fprintf(&b, "      既定の許可宛先: %s\n", strings.Join(p.hosts(), " "))
 		fmt.Fprintf(&b, "      --login: %s\n", p.loginUsage)
 		fmt.Fprintf(&b, "      終了: %s\n", p.exitHint)
+		if p.resumeUsage != "" {
+			fmt.Fprintf(&b, "      続き: %s\n", p.resumeUsage)
+		}
 	}
 	fmt.Fprintf(&b, `
 例:
@@ -100,7 +104,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	}
 	flags := flag.NewFlagSet("goro run", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.Usage = func() { fmt.Fprint(stderr, runUsage()) }
+	flags.Usage = func() {} // 使い方は、-h のときだけ (下)。エラーには、-h の案内 1 行だけを添える
 	var allow stringList
 	flags.StringVar(&o.repo, "repo", "", "")
 	flags.StringVar(&o.session, "session", "", "")
@@ -112,12 +116,17 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	flags.StringVar(&o.bin, "bin", "", "")
 	for _, name := range removedFlags {
 		flags.Func(name, "", func(string) error {
-			return fmt.Errorf("廃止した。実行ファイルは、--bin PATH (環境変数 %s は、そのまま使える) で指す", exeEnvName(name))
+			return fmt.Errorf("廃止した。--bin PATH を使う (環境変数 %s は、そのまま使える)", exeEnvName(name))
 		})
 	}
 	flags.Var(&allow, "allow", "")
 	if err := flags.Parse(head); err != nil {
-		return o, err // flag が、理由と使い方を出している
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(stderr, runUsage())
+		} else {
+			fmt.Fprintln(stderr, "使い方: goro run -h") // flag が、理由を出している
+		}
+		return o, err
 	}
 	o.allow, o.agentArgs = allow, tail
 	agentSet := false // --agent が書かれたか (省略と、空の値を区別する)
@@ -125,7 +134,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 
 	fail := func(format string, a ...any) (runOptions, error) {
 		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
-		fmt.Fprint(stderr, runUsage())
+		fmt.Fprintln(stderr, "使い方: goro run -h")
 		return o, errors.New("引数が不正")
 	}
 	if flags.NArg() > 0 {
@@ -141,7 +150,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 		return fail("--repo・--session・--login のうち、ちょうど 1 つが要る")
 	}
 	if (o.name != "" || o.email != "") && o.repo == "" {
-		return fail("--name と --email は、--repo のときだけ使える (clone の名義)")
+		return fail("--name と --email は、--repo のときだけ使える")
 	}
 	switch {
 	case agentSet:
@@ -204,8 +213,8 @@ func resolveAgentExe(p agentProfile, flagVal, envVal string, lookPath func(strin
 	}
 	if path == "" {
 		found, err := lookPath(p.binName())
-		if err != nil {
-			return "", fmt.Errorf("%s が見つからない (PATH に置くか、--bin か %s で指す): %w", p.binName(), p.exeEnv(), err)
+		if err != nil { // err の中身 (exec: "...": executable file not found in $PATH) は、案内と同じことなので、出さない
+			return "", fmt.Errorf("%s が見つからない。PATH に置くか、--bin PATH か %s で指す", p.binName(), p.exeEnv())
 		}
 		path = found
 	}
@@ -214,8 +223,7 @@ func resolveAgentExe(p agentProfile, flagVal, envVal string, lookPath func(strin
 		return "", fmt.Errorf("%s (%s) を使えない: %w", p.name, path, err)
 	}
 	if isScript(real) {
-		return "", fmt.Errorf("%s (%s) はスクリプト (先頭が #!) です。檻の中では、スクリプトが呼ぶ実体が見えず、動きません。"+
-			"実体の実行ファイルを --bin か %s で指定してください (例: %s)", p.name, real, p.exeEnv(), p.exeExample)
+		return "", fmt.Errorf("%s (%s) はスクリプトで、檻の中では動かない。実体を --bin PATH か %s で指す (例: %s)", p.name, real, p.exeEnv(), p.exeExample)
 	}
 	return real, nil
 }
@@ -283,23 +291,26 @@ func pickAgent(o runOptions, store *session.Store) (agentProfile, *session.Sessi
 	if err == nil {
 		err = requireDir(sess.Clone)
 	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %s が無い。一覧: goro sessions", o.session)
+	}
 	if err != nil {
-		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %w", err)
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %s。一覧: goro sessions", strings.TrimPrefix(err.Error(), "session: "))
 	}
 	name, err := store.Agent(sess)
 	if err != nil {
-		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %w", err)
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %s", strings.TrimPrefix(err.Error(), "session: "))
 	}
 	if name == "" {
 		name = legacySessionAgent
 	}
 	recorded, ok := agentByName(name)
 	if !ok {
-		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: 記録されたエージェント %q を、この goro は知らない", name)
+		return agentProfile{}, nil, fmt.Errorf("このセッションのエージェント %q を、この goro は知らない", name)
 	}
 	if o.agent != "" && o.agent != recorded.name {
-		return agentProfile{}, nil, fmt.Errorf("このセッションは %s で作られた。--agent %s では使えない。別のエージェントで使うには、--repo から新しいセッションを作ってください",
-			recorded.name, o.agent)
+		return agentProfile{}, nil, fmt.Errorf("このセッションは %s で作った。--agent %s では使えない。新しく作る: goro run --agent %s --repo PATH",
+			recorded.name, o.agent, o.agent)
 	}
 	return recorded, sess, nil
 }
@@ -498,8 +509,9 @@ type runSummary struct {
 	serveErr      error // egress の待ち受けの異常な終了
 }
 
-// printRunSummary は、goro run の終了後の案内を w に出す: セッション ID・再開と取り出しのコマンド・拒否された宛先。
-// 檻を起動できなかったときは、何も出さない。
+// printRunSummary は、goro run の終了後の案内を w に出す。ユーザーが次にすること (コマンド) と、拒否された宛先だけを、短く出す:
+// セッション ID・再開と取り出しのコマンド (--login なら、次のコマンド)・拒否された宛先 (許可するコマンドつき)。
+// 理由・経緯の説明は、出さない (goro run -h に書く)。檻を起動できなかったときは、何も出さない。
 func printRunSummary(w io.Writer, s runSummary) {
 	if !s.started {
 		return // 檻を起動できなかった: 原因は、すでに表示した。必ず失敗する再開や、中身の無い取り出しを案内しない
@@ -514,45 +526,43 @@ func printRunSummary(w io.Writer, s runSummary) {
 	}
 	fmt.Fprintln(w)
 	if s.id == "" {
-		fmt.Fprintf(w, "檻専用の HOME (ログイン状態が残る): %s\n", sanitize(s.agentHome))
-		fmt.Fprintf(w, "  次は: goro run%s%s --repo PATH\n", agentFlag, stateFlag)
+		fmt.Fprintf(w, "ログイン状態: %s\n", sanitize(s.agentHome))
+		fmt.Fprintf(w, "次は: goro run%s%s --repo PATH\n", agentFlag, stateFlag)
 	} else {
 		fmt.Fprintf(w, "セッション: %s\n", s.id)
-		fmt.Fprintf(w, "  再開:         goro run%s%s --session %s\n", agentFlag, stateFlag, s.id)
-		fmt.Fprintf(w, "  成果の取り出し: goro export%s %s\n", stateFlag, s.id)
-		if s.agent.resumeNote != "" {
-			fmt.Fprintf(w, "  %s\n", s.agent.resumeNote)
-		}
-	}
-	if s.logPath != "" {
-		fmt.Fprintf(w, "egress の監査ログ: %s\n", sanitize(s.logPath))
+		fmt.Fprintf(w, "  再開:   goro run%s%s --session %s\n", agentFlag, stateFlag, s.id)
+		fmt.Fprintf(w, "  取り出し: goro export%s %s\n", stateFlag, s.id)
 	}
 	if len(s.denied) > 0 {
-		fmt.Fprintln(w, "許可の一覧に無く、拒否された宛先 (最大 10 件):")
-		example := "" // --allow の例には、説明のある宛先 (許可しなくてよい・先に直すもの) を使わない
+		fmt.Fprintln(w, "拒否された宛先:")
+		example := "" // --allow の例には、説明のある宛先 (許可不要・先にすることがあるもの) を使わない
 		for _, d := range s.denied {
-			fmt.Fprintf(w, "  %s (%d 回)\n", sanitize(d.Target), d.Count)
+			line := fmt.Sprintf("  %s (%d 回)", sanitize(d.Target), d.Count)
 			if note, ok := s.agent.denyNotes[d.Target]; ok {
-				fmt.Fprintf(w, "    → %s\n", note)
+				line += " — " + note
 			} else if example == "" {
 				example = d.Target
 			}
+			fmt.Fprintln(w, line)
 		}
 		if s.deniedMore > 0 {
-			fmt.Fprintf(w, "  ほか %d 件 (監査ログを見る)\n", s.deniedMore)
+			fmt.Fprintf(w, "  ほか %d 件\n", s.deniedMore)
 		}
 		if example != "" || s.deniedMore > 0 {
 			if example == "" {
 				example = "HOST:PORT"
 			}
-			fmt.Fprintf(w, "  必要な宛先は、--allow HOST:PORT を付けて、もう一度起動する (例: --allow %s)\n", sanitize(example))
+			fmt.Fprintf(w, "許可するには、--allow %s を付けて起動する\n", sanitize(example))
+		}
+		if s.logPath != "" {
+			fmt.Fprintf(w, "監査ログ: %s\n", sanitize(s.logPath))
 		}
 	}
 	if s.dropped > 0 {
-		fmt.Fprintf(w, "注意: 監査の行を %d 行、書けずに捨てた (監査ログが欠けている)\n", s.dropped)
+		fmt.Fprintf(w, "監査の %d 行を、書けずに捨てた (ディスクを確認する)\n", s.dropped)
 	}
 	if s.serveErr != nil {
-		fmt.Fprintf(w, "注意: egress の待ち受けが異常に終わった: %v\n", s.serveErr)
+		fmt.Fprintf(w, "egress が異常終了した: %v\n", s.serveErr)
 	}
 }
 

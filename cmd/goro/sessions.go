@@ -33,7 +33,7 @@ func runSessions(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "goro sessions: 余計な引数 %q\n%s", flags.Arg(0), sessionsUsage)
+		fmt.Fprintf(stderr, "goro sessions: 余計な引数 %q\n", flags.Arg(0))
 		return exitUsage
 	}
 	dir, err := resolveStateDir(*stateDir)
@@ -58,7 +58,7 @@ func runSessions(args []string, stdout, stderr io.Writer) int {
 // printSessions は、セッションの一覧を w に出す (ID・作成日時 (ローカル時刻)・エージェント・元の repo 名)。
 func printSessions(w io.Writer, list []session.Info) {
 	if len(list) == 0 {
-		fmt.Fprintln(w, "セッションは無い")
+		fmt.Fprintln(w, "セッションは無い。作る: goro run --repo PATH")
 		return
 	}
 	for _, in := range list {

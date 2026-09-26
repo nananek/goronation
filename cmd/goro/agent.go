@@ -31,16 +31,17 @@ type agentProfile struct {
 	hosts func() []string
 	// loginArgs は、--login のときに、エージェントへ渡す引数 (利用者の引数は、この後ろ)。
 	loginArgs []string
-	// loginGuide は、--login の起動前に出す案内 (先頭の "goro run: " は、呼び手が付ける)。
+	// loginGuide は、--login の起動前に出す案内 (先頭の "goro run: " は、呼び手が付ける)。ユーザーがすることだけを、短く、命令形で書く
+	// (2 行以内)。理由・経緯・制約の説明は、loginUsage (goro run -h) に書く。
 	loginGuide string
-	// loginUsage は、goro run -h の、このエージェントの --login の説明 (1 行)。
+	// loginUsage は、goro run -h の、このエージェントの --login の説明 (1 行)。理由・制約は、ここに書く。
 	loginUsage string
 	// exitHint は、goro run -h の、このエージェントの終了操作 (1 語句)。
 	exitHint string
-	// resumeNote は、セッションの案内 (再開・取り出し) の後ろに出す 1 行 (空なら出さない)。
-	resumeNote string
-	// denyNotes は、拒否されたときに、説明を添える宛先 (と、その説明)。終了後の一覧には出し (隠さない)、説明を添えて、--allow の
-	// 例には使わない。許可しなくてよいもの (動作に影響しない) と、許可より先に直すべきものを書く。
+	// resumeUsage は、goro run -h の、このエージェントの会話の続きの説明 (空なら出さない)。実行時のメッセージには、出さない。
+	resumeUsage string
+	// denyNotes は、拒否されたときに、宛先の後ろに添える短い一言 (10 文字前後。原因の推測・経緯は書かない)。終了後の一覧には出し
+	// (隠さない)、--allow の例には使わない。許可しなくてよいもの (動作に影響しない) と、許可より先にすることがあるものを書く。
 	denyNotes map[string]string
 }
 
@@ -82,10 +83,9 @@ var claudeProfile = agentProfile{
 	// --login も、claude auth login ではなく、素の対話起動にする: 初回の onboarding (テーマ・ログイン・Security notes) を通ると、
 	// claude が、認証情報と、onboarding の完了 (.claude.json の hasCompletedOnboarding) を保存する。claude auth login は、
 	// 認証情報しか保存せず、次の対話起動が、onboarding (ログイン画面を含む) からやり直しになる。
-	loginArgs: nil,
-	loginGuide: "ログイン用に claude を対話起動する。テーマを選び、出た URL をホストのブラウザで開いてコードを貼り、" +
-		"Security notes で Enter を押したら、/exit で終える (onboarding を最後まで通らないと、次の起動が、ログイン画面からやり直しになる)",
-	loginUsage: "対話起動する (初回の onboarding = テーマ・ログイン・Security notes を通す。出た URL をホストのブラウザで開いてコードを貼り、Security notes で Enter を押したら /exit)",
+	loginArgs:  nil,
+	loginGuide: "テーマを選び、表示された URL をブラウザで開いて、出たコードを貼ってください。\nSecurity notes で Enter を押し、最後に /exit を入力してください。",
+	loginUsage: "対話起動する (初回の onboarding = テーマ・ログイン・Security notes を通す。最後まで通らないと、次の起動がログイン画面からやり直しになる。終わりは /exit)",
 	exitHint:   "/exit",
 }
 
@@ -110,17 +110,15 @@ var opencodeProfile = agentProfile{
 	hosts: egress.OpenCodeHosts,
 	// opencode に onboarding は無い (認証を保存すれば、次の起動は、そのまま使える)。--login は、auth login (provider を選び、
 	// Zen なら API キーを貼る) を起動する: 終わると、自分で終了する。
-	loginArgs: []string{"auth", "login"},
-	loginGuide: "ログイン用に opencode の auth login を起動する。provider を選び (Zen なら OpenCode Zen)、https://opencode.ai/auth で作った " +
-		"API キーを貼ると、檻専用の HOME に保存されて終わる (ホストのブラウザの localhost に戻る方式の OAuth は、檻に届かない: API キーの方式を使う)",
-	loginUsage: "auth login を起動する (provider を選び、Zen なら https://opencode.ai/auth で作った API キーを貼る。終わると自分で終了する)",
-	exitHint:   "/exit",
-	resumeNote: "opencode の会話は、この --agent の檻専用の HOME に残る。続きは、起動後に /sessions で選ぶ。-- --continue は、同じ repo の直近の会話を開く",
+	loginArgs:   []string{"auth", "login"},
+	loginGuide:  "provider を選び、API キーを貼ってください (キーは https://opencode.ai/auth)。",
+	loginUsage:  "auth login を起動する (provider を選び、Zen なら https://opencode.ai/auth のキーを貼る。終わると自分で終了する。ホストのブラウザの localhost に戻る方式の OAuth は、檻に届かないので使えない)",
+	exitHint:    "/exit",
+	resumeUsage: "会話は、そのエージェント専用の HOME に残る。続きは、起動後に /sessions で選ぶ (-- --continue は、同じ repo の直近の会話を開く)",
 	denyNotes: map[string]string{
-		"registry.npmjs.org:443": "opencode が、起動のたびに、プラグインの依存 (@opencode-ai/plugin) の install を試す。失敗しても動くので、許可しなくてよい",
-		"models.opencode.ai:443": "auth login が、provider の一覧を取ろうとする。同梱の一覧で動くので、許可しなくてよい",
-		"github.com:443": "grep ツールが使う ripgrep (rg) を、opencode が download しようとした (PATH に rg が無い)。ホストに rg を入れる " +
-			"(Arch: pacman -S ripgrep。檻の /usr に見える)。github.com は許可しないほうがよい",
+		"registry.npmjs.org:443": "許可不要",
+		"models.opencode.ai:443": "許可不要",
+		"github.com:443":         "ホストに rg を入れる (pacman -S ripgrep)",
 	},
 }
 

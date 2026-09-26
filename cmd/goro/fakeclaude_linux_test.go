@@ -38,15 +38,15 @@ func init() {
 // testAgentProfile は、テスト用の第 3 のエージェントの profile: 宛先と環境変数の定数を持つだけの、profile 1 つ。
 // 偽のエージェントの実行ファイル (テストバイナリ) は、檻の中の path の名前 (/opt/fakeagent/fakeagent) で、偽のエージェントとして動く。
 var testAgentProfile = agentProfile{
-	name:       "fakeagent",
-	exeExample: "/opt/fakeagent/bin/fakeagent",
-	env:        []bwrap.EnvVar{{Key: "FAKEAGENT_MODE", Value: "test"}},
-	hosts:      func() []string { return []string{"fake.example:443"} },
-	loginArgs:  []string{"login"},
-	loginGuide: "ログイン用に fakeagent を起動する (テスト用)",
-	loginUsage: "login を起動する (テスト用の説明。この文が -h に出る)",
-	exitHint:   "/quit",
-	resumeNote: "fakeagent の続き (テスト用)",
+	name:        "fakeagent",
+	exeExample:  "/opt/fakeagent/bin/fakeagent",
+	env:         []bwrap.EnvVar{{Key: "FAKEAGENT_MODE", Value: "test"}},
+	hosts:       func() []string { return []string{"fake.example:443"} },
+	loginArgs:   []string{"login"},
+	loginGuide:  "fakeagent にログインしてください (テスト用)",
+	loginUsage:  "login を起動する (テスト用の説明。この文が -h に出る)",
+	exitHint:    "/quit",
+	resumeUsage: "fakeagent の続きの説明 (テスト用。-h だけに出る)",
 }
 
 // fakeClaude は、偽のエージェント (claude・opencode・テスト用の第 3 のエージェント)。最初の引数が、場面の名前で、結果を、標準出力に "キー=値" か "操作 => 結果" の行で出す

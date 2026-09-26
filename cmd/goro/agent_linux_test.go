@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/nananek/goronation/cmd/internal/session"
 	"github.com/nananek/goronation/egress"
@@ -140,8 +141,8 @@ func TestParseRunArgsAgent(t *testing.T) {
 		{"未知のエージェント", []string{"--agent", "codex", "--repo", "r"}, runOptions{}, "claude か opencode"},
 		{"空のエージェント", []string{"--agent", "", "--repo", "r"}, runOptions{}, "claude か opencode"},
 		{"大文字", []string{"--agent", "OpenCode", "--repo", "r"}, runOptions{}, "claude か opencode"},
-		{"廃止した --claude", []string{"--claude", "/c", "--repo", "r"}, runOptions{}, "廃止した。実行ファイルは、--bin PATH"},
-		{"廃止した --claude (--agent opencode でも)", []string{"--agent", "opencode", "--claude=/c", "--repo", "r"}, runOptions{}, "廃止した。実行ファイルは、--bin PATH"},
+		{"廃止した --claude", []string{"--claude", "/c", "--repo", "r"}, runOptions{}, "廃止した。--bin PATH を使う"},
+		{"廃止した --claude (--agent opencode でも)", []string{"--agent", "opencode", "--claude=/c", "--repo", "r"}, runOptions{}, "廃止した。--bin PATH を使う"},
 		{"--opencode は、出荷していないので、未知のフラグ", []string{"--opencode", "/o", "--repo", "r"}, runOptions{}, "flag provided but not defined: -opencode"},
 		{"--login で省略は claude", []string{"--login"}, runOptions{agent: "claude"}, ""},
 		{"--session で省略は、空 (セッションを作ったエージェントで動かす)", []string{"--session", "x"}, runOptions{agent: ""}, ""},
@@ -208,10 +209,10 @@ func TestResolveOpenCode(t *testing.T) {
 		{"PATH の opencode は、symlink を辿った実体", "", "", pathLookup, real, ""},
 		{"環境変数が PATH に勝つ", "", real, pathLookup, real, ""},
 		{"--bin が環境変数に勝つ", link, script, pathLookup, real, ""},
-		{"PATH に無い", "", "", noLookup, "", "opencode が見つからない (PATH に置くか、--bin か GORO_OPENCODE で指す)"},
+		{"PATH に無い", "", "", noLookup, "", "opencode が見つからない。PATH に置くか、--bin PATH か GORO_OPENCODE で指す"},
 		{"存在しない", filepath.Join(dir, "none"), "", pathLookup, "", "opencode ("},
 		{"スクリプト (npm のラッパーなど)", script, "", pathLookup, "", "スクリプト"},
-		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin か GORO_OPENCODE"},
+		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin PATH か GORO_OPENCODE"},
 		{"スクリプトの例は、opencode の置き場", script, "", pathLookup, "", "~/.opencode/bin/opencode"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -229,11 +230,11 @@ func TestResolveOpenCode(t *testing.T) {
 	}
 	// claude のエラーの文言は、opencode の値に置き換わらない。
 	_, err = resolveAgentExe(claudeProfile, "", "", noLookup)
-	if err == nil || !strings.Contains(err.Error(), "claude が見つからない (PATH に置くか、--bin か GORO_CLAUDE で指す)") {
+	if err == nil || !strings.Contains(err.Error(), "claude が見つからない。PATH に置くか、--bin PATH か GORO_CLAUDE で指す") {
 		t.Errorf("claude の見つからないエラー = %v", err)
 	}
 	_, err = resolveAgentExe(claudeProfile, script, "", pathLookup)
-	if err == nil || !strings.Contains(err.Error(), "--bin か GORO_CLAUDE") || !strings.Contains(err.Error(), "/opt/claude-code/bin/claude") {
+	if err == nil || !strings.Contains(err.Error(), "--bin PATH か GORO_CLAUDE") || !strings.Contains(err.Error(), "/opt/claude-code/bin/claude") {
 		t.Errorf("claude のスクリプトのエラー = %v", err)
 	}
 	var pe *os.PathError
@@ -404,19 +405,19 @@ func TestPrintRunSummaryAgent(t *testing.T) {
 		not  []string
 	}{
 		{"claude (agent を書かない)", runSummary{id: id},
-			[]string{"  再開:         goro run --session " + id + "\n", "  成果の取り出し: goro export " + id + "\n"},
+			[]string{"  再開:   goro run --session " + id + "\n", "  取り出し: goro export " + id + "\n"},
 			[]string{"--agent", "opencode", "/sessions"}},
 		{"claude (profile を書く)", runSummary{id: id, agent: claudeProfile},
-			[]string{"  再開:         goro run --session " + id + "\n"}, []string{"--agent", "opencode"}},
+			[]string{"  再開:   goro run --session " + id + "\n"}, []string{"--agent", "opencode"}},
 		{"opencode", runSummary{id: id, agent: opencodeProfile},
-			[]string{"  再開:         goro run --agent opencode --session " + id + "\n", "  成果の取り出し: goro export " + id + "\n", "/sessions で選ぶ"},
-			[]string{"goro export --agent"}},
+			[]string{"  再開:   goro run --agent opencode --session " + id + "\n", "  取り出し: goro export " + id + "\n"},
+			[]string{"goro export --agent", "/sessions"}}, // 会話の続きの説明は、-h だけ
 		{"opencode と --state-dir", runSummary{id: id, agent: opencodeProfile, stateDir: "/s t", stateDirGiven: true},
 			[]string{"goro run --agent opencode --state-dir '/s t' --session " + id + "\n", "goro export --state-dir '/s t' " + id + "\n"}, nil},
 		{"opencode の --login", runSummary{agent: opencodeProfile, agentHome: "/h"},
-			[]string{"  次は: goro run --agent opencode --repo PATH\n", "檻専用の HOME (ログイン状態が残る): /h\n"}, []string{"セッション:", "/sessions"}},
+			[]string{"次は: goro run --agent opencode --repo PATH\n", "ログイン状態: /h\n"}, []string{"セッション:", "/sessions"}},
 		{"claude の --login", runSummary{agentHome: "/h"},
-			[]string{"  次は: goro run --repo PATH\n"}, []string{"--agent"}},
+			[]string{"次は: goro run --repo PATH\n"}, []string{"--agent"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := summary(tc.s)
@@ -448,44 +449,44 @@ func TestPrintRunSummaryDenyNotes(t *testing.T) {
 
 	// 動作に影響しない宛先だけ: 一覧と説明は出るが、「必要な宛先」の案内は出ない。
 	out := summary(opencodeProfile, []deniedTarget{npm, models}, 0)
-	for _, want := range []string{"registry.npmjs.org:443 (2 回)", "models.opencode.ai:443 (1 回)", "許可しなくてよい", "@opencode-ai/plugin"} {
+	for _, want := range []string{"registry.npmjs.org:443 (2 回) — 許可不要", "models.opencode.ai:443 (1 回) — 許可不要"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("案内に %q が無い:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "必要な宛先は") || strings.Contains(out, "--allow registry") {
-		t.Errorf("許可しなくてよい宛先だけなのに、--allow を案内している:\n%s", out)
+	if strings.Contains(out, "許可するには") || strings.Contains(out, "--allow registry") {
+		t.Errorf("許可不要宛先だけなのに、--allow を案内している:\n%s", out)
 	}
 	// 本物の拒否が混ざる: 例は、その宛先 (先頭が npm でも)。その宛先には、説明を付けない。
 	out = summary(opencodeProfile, []deniedTarget{npm, evil}, 0)
-	if !strings.Contains(out, "(例: --allow evil.example:443)") {
-		t.Errorf("--allow の例が、許可しなくてよい宛先になっている:\n%s", out)
+	if !strings.Contains(out, "--allow evil.example:443 を付けて") {
+		t.Errorf("--allow の例が、許可不要宛先になっている:\n%s", out)
 	}
-	if strings.Count(out, "許可しなくてよい") != 1 {
+	if strings.Count(out, "許可不要") != 1 {
 		t.Errorf("説明が、evil.example にも付いている (npm の 1 回だけのはず):\n%s", out)
 	}
 	// github.com (ripgrep の download): 許可を勧めず、rg を入れるよう案内する。例にも使わない。
 	out = summary(opencodeProfile, []deniedTarget{{"github.com:443", 1}}, 0)
-	for _, want := range []string{"github.com:443 (1 回)", "pacman -S ripgrep", "許可しないほうがよい"} {
+	for _, want := range []string{"github.com:443 (1 回)", "pacman -S ripgrep", "ホストに rg を入れる"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ripgrep の案内に %q が無い:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "必要な宛先は") {
+	if strings.Contains(out, "許可するには") {
 		t.Errorf("github.com だけなのに、--allow を案内している:\n%s", out)
 	}
 	// 一覧に出ない宛先が残っている (deniedMore) ときは、案内を出す (例は、宛先の形)。
 	out = summary(opencodeProfile, []deniedTarget{npm}, 4)
-	if !strings.Contains(out, "ほか 4 件") || !strings.Contains(out, "(例: --allow HOST:PORT)") {
+	if !strings.Contains(out, "ほか 4 件") || !strings.Contains(out, "--allow HOST:PORT を付けて") {
 		t.Errorf("ほか N 件があるのに、案内が無い:\n%s", out)
 	}
 	// claude: 説明 (denyNotes) が無い。同じ宛先でも、説明なしで、先頭の宛先が例 (変わらない)。
 	out = summary(claudeProfile, []deniedTarget{npm, evil}, 0)
-	if strings.Contains(out, "許可しなくてよい") || !strings.Contains(out, "(例: --allow registry.npmjs.org:443)") {
+	if strings.Contains(out, "許可不要") || !strings.Contains(out, "--allow registry.npmjs.org:443 を付けて") {
 		t.Errorf("claude の案内が変わった:\n%s", out)
 	}
 	// 別の agent の説明は、効かない (opencode の説明が、claude の拒否に付かない)。
-	if out := summary(claudeProfile, []deniedTarget{models}, 0); strings.Contains(out, "許可しなくてよい") {
+	if out := summary(claudeProfile, []deniedTarget{models}, 0); strings.Contains(out, "許可不要") {
 		t.Errorf("claude の拒否に、opencode の説明が付いた:\n%s", out)
 	}
 }
@@ -533,12 +534,12 @@ func TestPickAgent(t *testing.T) {
 		{"--login", runOptions{login: true, agent: "opencode"}, "opencode", ""},
 		{"記録なし・省略は claude", runOptions{session: "20260926-120000-aaaaaa"}, "claude", ""},
 		{"記録なし・--agent claude", runOptions{session: "20260926-120000-aaaaaa", agent: "claude"}, "claude", ""},
-		{"記録なし・--agent opencode は断る", runOptions{session: "20260926-120000-aaaaaa", agent: "opencode"}, "", "このセッションは claude で作られた"},
+		{"記録なし・--agent opencode は断る", runOptions{session: "20260926-120000-aaaaaa", agent: "opencode"}, "", "このセッションは claude で作った"},
 		{"claude・省略", runOptions{session: "20260926-120001-bbbbbb"}, "claude", ""},
 		{"claude・--agent opencode は断る", runOptions{session: "20260926-120001-bbbbbb", agent: "opencode"}, "", "--agent opencode では使えない"},
 		{"opencode・省略", runOptions{session: "20260926-120002-cccccc"}, "opencode", ""},
 		{"opencode・--agent opencode", runOptions{session: "20260926-120002-cccccc", agent: "opencode"}, "opencode", ""},
-		{"opencode・--agent claude は断る", runOptions{session: "20260926-120002-cccccc", agent: "claude"}, "", "このセッションは opencode で作られた"},
+		{"opencode・--agent claude は断る", runOptions{session: "20260926-120002-cccccc", agent: "claude"}, "", "このセッションは opencode で作った"},
 		{"知らないエージェントの記録", runOptions{session: "20260926-120003-dddddd"}, "", `"codex" を、この goro は知らない`},
 		{"壊れた記録", runOptions{session: "20260926-120004-eeeeee"}, "", "エージェントの記録"},
 		{"壊れた記録・--agent claude でも断る", runOptions{session: "20260926-120004-eeeeee", agent: "claude"}, "", "エージェントの記録"},
@@ -552,7 +553,7 @@ func TestPickAgent(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tc.err) {
 					t.Fatalf("pickAgent = %q, %v, want error に %q", p.name, err, tc.err)
 				}
-				if tc.o.session != "" && strings.Contains(tc.err, "で作られた") && !strings.Contains(err.Error(), "--repo から新しいセッションを作ってください") {
+				if tc.o.session != "" && strings.Contains(tc.err, "で作った") && !strings.Contains(err.Error(), "新しく作る: goro run --agent") {
 					t.Errorf("エラーに、次の手 (--repo から新しいセッション) が無い: %v", err)
 				}
 				return
@@ -683,7 +684,7 @@ func withTestAgent(t *testing.T, p agentProfile) {
 func TestRunUsageFromProfiles(t *testing.T) {
 	usage := runUsage()
 	for _, p := range agents {
-		for _, want := range []string{p.name, p.exeEnv(), strings.Join(p.hosts(), " "), p.loginUsage, p.exitHint} {
+		for _, want := range []string{p.name, p.exeEnv(), strings.Join(p.hosts(), " "), p.loginUsage, p.exitHint, p.resumeUsage} {
 			if !strings.Contains(usage, want) {
 				t.Errorf("usage に、%s の %q が無い:\n%s", p.name, want, usage)
 			}
@@ -717,5 +718,60 @@ func TestRunUsageFromProfiles(t *testing.T) {
 	}
 	if p, ok := agentByName("fakeagent"); !ok || p.dirs("/s").loginRun != "/s/agents/fakeagent/login-run" {
 		t.Errorf("agentByName・dirs = %+v, %v", p, ok)
+	}
+}
+
+// ユーザー向けのメッセージは、短く、ユーザーがすることだけ (理由・経緯・制約の説明は、goro run -h に置く)。長さの予算で固定する:
+// ログイン開始の案内は 2 行以内・120 文字以内、拒否された宛先の一言は 40 文字以内、主要なエラーは 1 行・130 文字以内。
+func TestUserMessagesStayShort(t *testing.T) {
+	runes := utf8.RuneCountInString
+	for _, p := range agents {
+		if n := strings.Count(p.loginGuide, "\n") + 1; n > 2 || runes(p.loginGuide) > 120 {
+			t.Errorf("%s の loginGuide が長い (%d 行・%d 文字): %q", p.name, n, runes(p.loginGuide), p.loginGuide)
+		}
+		if !strings.Contains(p.loginGuide, "ください") {
+			t.Errorf("%s の loginGuide が、ユーザーへの依頼 (〜してください) でない: %q", p.name, p.loginGuide)
+		}
+		for target, note := range p.denyNotes {
+			if runes(note) > 40 || strings.Contains(note, "。") {
+				t.Errorf("%s の denyNotes[%s] が長い・文になっている (%d 文字): %q", p.name, target, runes(note), note)
+			}
+		}
+	}
+	noLookup := func(string) (string, error) { return "", exec.ErrNotFound }
+	script := filepath.Join(t.TempDir(), "s")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var msgs []string
+	for _, p := range agents {
+		_, e1 := resolveAgentExe(p, "", "", noLookup)
+		_, e2 := resolveAgentExe(p, script, "", noLookup)
+		msgs = append(msgs, e1.Error(), e2.Error())
+	}
+	store, _ := session.NewStore(shortDir(t), bwrap.Host{Home: "/home/u"})
+	if _, _, err := pickAgent(runOptions{session: "20260101-000000-aaaaaa"}, store); err != nil {
+		msgs = append(msgs, err.Error())
+	}
+	var stderr bytes.Buffer
+	for _, args := range [][]string{{"--claude", "/x", "--repo", "r"}, {"--repo", "r", "--login"}, {"--agent", "nosuch", "--repo", "r"}, {"--name", "n", "--login"}, {"--repo", "r", "extra"}} {
+		stderr.Reset()
+		parseRunArgs(args, &stderr)
+		if n := strings.Count(strings.TrimSpace(stderr.String()), "\n") + 1; n > 3 { // 原因の 1 行 (flag の英文を含めて 2 行) + 使い方の案内 1 行
+			t.Errorf("引数エラーが長い (%v): %d 行\n%s", args, n, stderr.String())
+		}
+		msgs = append(msgs, strings.SplitN(stderr.String(), "\n", 2)[0])
+	}
+	for _, m := range msgs {
+		if runes(m) > 200 || strings.Count(m, "\n") > 0 {
+			t.Errorf("エラーが長い (%d 文字): %q", runes(m), m)
+		}
+	}
+	// 終了後の表示 (拒否あり・セッション) は、10 行以内。理由・経緯の説明を含まない。
+	var w bytes.Buffer
+	printRunSummary(&w, runSummary{id: "20260926-120000-abcdef", agent: opencodeProfile, started: true, logPath: "/x/egress.log",
+		denied: []deniedTarget{{"registry.npmjs.org:443", 1}, {"github.com:443", 2}, {"evil.example:443", 1}}})
+	if n := strings.Count(w.String(), "\n"); n > 10 {
+		t.Errorf("終了後の表示が長い (%d 行):\n%s", n, w.String())
 	}
 }

@@ -200,7 +200,7 @@ func lockDir(dir string) (*os.File, error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, errors.New("同じセッション (--login なら、ログイン用の状態) を使う goro run が、すでに動いている")
+			return nil, errors.New("同じセッション (--login なら、同じエージェントのログイン) を、別の goro run が使っている。終わってから、もう一度実行する")
 		}
 		return nil, fmt.Errorf("ロックを取れない: %w", err)
 	}
