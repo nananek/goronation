@@ -10,9 +10,12 @@ import (
 // 結合テスト (bwrap が要る): --agent opencode。偽の opencode は、偽の claude と同じテストバイナリ (argv[0] = opencode で再実行される。
 // GORO_OPENCODE で指す)。檻の中の path・専用の HOME・環境変数・許可宛先が、opencode のものになり、claude の既定が変わらないことを確かめる。
 
-func (f *runFixture) homeOf(agentHome string) string { return filepath.Join(f.stateDir(), agentHome) }
+// agentPath は、エージェント name の状態ディレクトリ (<state>/agents/<name>) の下の path (配置は、ここにリテラルで書いて固定する)。
+func (f *runFixture) agentPath(name string, elem ...string) string {
+	return filepath.Join(append([]string{f.stateDir(), "agents", name}, elem...)...)
+}
 
-// opencode の檻: /opt/opencode/opencode に実行ファイルが見え (/opt/claude/claude は無い)、専用の HOME (home-opencode) が rw、
+// opencode の檻: /opt/opencode/opencode に実行ファイルが見え (/opt/claude/claude は無い)、専用の HOME (<state>/agents/opencode/home) が rw、
 // ホストの opencode の認証情報・設定・状態ディレクトリは見えない。環境変数は、共通の 4 つ + OPENCODE_DISABLE_* だけ。
 func TestRunOpenCodeCage(t *testing.T) {
 	f := newRunFixture(t)
@@ -76,8 +79,8 @@ func TestRunOpenCodeCage(t *testing.T) {
 	}
 }
 
-// エージェントごとに、檻専用の HOME は別: opencode の起動は home-opencode だけを作り、claude の HOME (home) に触れない。
-// --login は、opencode では auth login の引数で起動する。ログイン状態は、home-opencode に残り、次の opencode の檻に見え、claude の檻には見えない。
+// エージェントごとに、檻専用の HOME は別: opencode の起動は agents/opencode/ だけを作り、claude の状態 (agents/claude/) に触れない。
+// --login は、opencode では auth login の引数で起動する。ログイン状態は、agents/opencode/home に残り、次の opencode の檻に見え、claude の檻には見えない。
 func TestRunOpenCodeLoginAndSeparateHome(t *testing.T) {
 	f := newRunFixture(t)
 	r := f.goro(t, "run", "--agent", "opencode", "--login", "--", "--extra").mustOK(t)
@@ -88,16 +91,16 @@ func TestRunOpenCodeLoginAndSeparateHome(t *testing.T) {
 	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goro" {
 		t.Errorf("cwd・/work の中身・HOME = %q・%q・%q (空の作業ディレクトリのはず)", kv["cwd"], kv["work"], kv["home"])
 	}
-	if b, err := os.ReadFile(filepath.Join(f.homeOf("home-opencode"), "login-marker")); err != nil || string(b) != "logged-in\n" {
-		t.Errorf("ログイン状態が、opencode 専用の HOME (<state>/home-opencode) に残っていない: %q, %v", b, err)
+	if b, err := os.ReadFile(filepath.Join(f.agentPath("opencode", "home"), "login-marker")); err != nil || string(b) != "logged-in\n" {
+		t.Errorf("ログイン状態が、opencode 専用の HOME (<state>/agents/opencode/home) に残っていない: %q, %v", b, err)
 	}
-	if _, err := os.Lstat(f.homeOf("home")); err == nil {
-		t.Error("opencode の起動が、claude の HOME (<state>/home) を作った")
+	if _, err := os.Lstat(f.agentPath("claude", "home")); err == nil {
+		t.Error("opencode の起動が、claude の状態 (<state>/agents/claude) を作った")
 	}
-	if fi, err := os.Stat(f.homeOf("home-opencode")); err != nil || fi.Mode().Perm() != 0o700 {
+	if fi, err := os.Stat(f.agentPath("opencode", "home")); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("opencode 専用の HOME の権限 = %v, %v, want 0700", fi, err)
 	}
-	for _, want := range []string{"opencode の auth login を起動する", "檻専用の HOME (ログイン状態が残る): " + f.homeOf("home-opencode"), "goro run --agent opencode --repo PATH"} {
+	for _, want := range []string{"opencode の auth login を起動する", "檻専用の HOME (ログイン状態が残る): " + f.agentPath("opencode", "home"), "goro run --agent opencode --repo PATH"} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("--login の案内に %q が無い:\n%s", want, r.stderr)
 		}
@@ -115,8 +118,8 @@ func TestRunOpenCodeLoginAndSeparateHome(t *testing.T) {
 	if strings.Contains(other.stdout, "logged-in") || !strings.Contains(other.stdout, `marker=""`) {
 		t.Errorf("opencode のログイン状態が、claude の檻に見える:\n%s", other)
 	}
-	if _, err := os.Stat(f.homeOf("home")); err != nil {
-		t.Errorf("claude の起動が、claude の HOME (<state>/home) を作っていない: %v", err)
+	if _, err := os.Stat(f.agentPath("claude", "home")); err != nil {
+		t.Errorf("claude の起動が、claude の HOME (<state>/agents/claude/home) を作っていない: %v", err)
 	}
 }
 
@@ -224,7 +227,7 @@ func TestRunSessionKeepsItsAgent(t *testing.T) {
 	// opencode でその再開を頼むと、断る。opencode の HOME も作らない (檻を起動する前に断る)。
 	r := f.goro(t, "run", "--agent", "opencode", "--session", cid, "--", "info")
 	refused(t, r, "このセッションは claude で作られた", "--agent opencode では使えない", "--repo から新しいセッションを作ってください")
-	if _, err := os.Lstat(f.homeOf("home-opencode")); err == nil {
+	if _, err := os.Lstat(f.agentPath("opencode", "home")); err == nil {
 		t.Error("断ったのに、opencode の HOME が作られた")
 	}
 	// --opencode を付けても、同じ (opencode では動かさない)。--agent を省略した --session に、動かさない側の実行ファイルを指すと断る。
@@ -315,8 +318,8 @@ func TestRunLoginDirsSeparateBothWays(t *testing.T) {
 	f := newRunFixture(t)
 	// opencode の --login の檻が、claude の設定を置く。
 	f.goro(t, "run", "--agent", "opencode", "--login", "--", "commit", "settings.json", "PLANTED-BY-OPENCODE-LOGIN", "msg")
-	if b, err := os.ReadFile(filepath.Join(f.stateDir(), "login-work-opencode", "settings.json")); err != nil || string(b) != "PLANTED-BY-OPENCODE-LOGIN" {
-		t.Fatalf("前提: opencode の --login の檻が、/work (<state>/login-work-opencode) に書けていない: %q, %v", b, err)
+	if b, err := os.ReadFile(f.agentPath("opencode", "login-work", "settings.json")); err != nil || string(b) != "PLANTED-BY-OPENCODE-LOGIN" {
+		t.Fatalf("前提: opencode の --login の檻が、/work (<state>/agents/opencode/login-work) に書けていない: %q, %v", b, err)
 	}
 	r := f.goro(t, "run", "--login").mustOK(t)
 	if kv, _ := parseOut(r.stdout); kv["work"] != "" {
@@ -325,8 +328,8 @@ func TestRunLoginDirsSeparateBothWays(t *testing.T) {
 	// 拒否された宛先の履歴 (egress.log) も、別。
 	f.goro(t, "run", "--agent", "opencode", "--login", "--", "connect", "only-opencode.example:443").mustOK(t)
 	f.goro(t, "run", "--login", "--", "connect", "only-claude.example:443").mustOK(t)
-	for dir, want := range map[string]string{"login-run": "only-claude.example", "login-run-opencode": "only-opencode.example"} {
-		b, err := os.ReadFile(filepath.Join(f.stateDir(), dir, egressLogName))
+	for dir, want := range map[string]string{f.agentPath("claude", "login-run"): "only-claude.example", f.agentPath("opencode", "login-run"): "only-opencode.example"} {
+		b, err := os.ReadFile(filepath.Join(dir, egressLogName))
 		other := "only-opencode.example"
 		if want == other {
 			other = "only-claude.example"

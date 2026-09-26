@@ -342,7 +342,8 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if err != nil {
 		return fail("goro 自身の実行ファイルを決められない: %v", err)
 	}
-	agentHome := filepath.Join(stateDir, agent.homeName)
+	dirs := agent.dirs(stateDir)
+	agentHome := dirs.home
 	if err := ensureDir(agentHome); err != nil {
 		return fail("エージェントの HOME を作れない: %v", err)
 	}
@@ -350,8 +351,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	var tgt runTarget
 	switch {
 	case o.login:
-		work, run := agent.loginDirs()
-		tgt = runTarget{work: filepath.Join(stateDir, work), runDir: filepath.Join(stateDir, run)}
+		tgt = runTarget{work: dirs.loginWork, runDir: dirs.loginRun}
 		for _, d := range []string{tgt.work, tgt.runDir} {
 			if err := ensureDir(d); err != nil {
 				return fail("ログイン用のディレクトリを作れない: %v", err)
@@ -390,8 +390,7 @@ const sampleSessionID = "00000000-000000-000000"
 // sockPathFor は、o の goro run が使う egress の UDS の path。セッションの ID は、同じ長さの例で代える。
 func sockPathFor(stateDir string, o runOptions) string {
 	if o.login {
-		_, run := o.profile().loginDirs()
-		return filepath.Join(stateDir, run, proxySockName)
+		return filepath.Join(o.profile().dirs(stateDir).loginRun, proxySockName)
 	}
 	return filepath.Join(stateDir, "sessions", sampleSessionID, "run", proxySockName)
 }

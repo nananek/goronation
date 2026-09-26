@@ -476,10 +476,10 @@ func TestRunLogin(t *testing.T) {
 	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goro" {
 		t.Errorf("cwd・/work の中身・HOME = %q・%q・%q (空の作業ディレクトリのはず)", kv["cwd"], kv["work"], kv["home"])
 	}
-	if b, err := os.ReadFile(filepath.Join(f.stateDir(), "home", "login-marker")); err != nil || string(b) != "logged-in\n" {
-		t.Errorf("ログイン状態が、檻専用の HOME (<state>/home) に残っていない: %q, %v", b, err)
+	if b, err := os.ReadFile(f.agentPath("claude", "home", "login-marker")); err != nil || string(b) != "logged-in\n" {
+		t.Errorf("ログイン状態が、檻専用の HOME (<state>/agents/claude/home) に残っていない: %q, %v", b, err)
 	}
-	if _, err := os.Stat(filepath.Join(f.stateDir(), "login-run", egressLogName)); err != nil {
+	if _, err := os.Stat(f.agentPath("claude", "login-run", egressLogName)); err != nil {
 		t.Errorf("ログイン用の run dir に、監査ログが無い: %v", err)
 	}
 	if !strings.Contains(r.stderr, "檻専用の HOME (ログイン状態が残る)") || !strings.Contains(r.stderr, "goro run --repo PATH") || strings.Contains(r.stderr, "セッション:") {
@@ -498,7 +498,7 @@ func TestRunLogin(t *testing.T) {
 	// --state-dir
 	st := filepath.Join(f.dir, "st")
 	r = f.goro(t, "run", "--state-dir", st, "--login", "--", "auth").mustOK(t)
-	if _, err := os.Stat(filepath.Join(st, "home", "login-marker")); err != nil {
+	if _, err := os.Stat(filepath.Join(st, "agents", "claude", "home", "login-marker")); err != nil {
 		t.Errorf("--state-dir の下の HOME に、ログイン状態が無い: %v", err)
 	}
 	if !strings.Contains(r.stderr, "goro run --state-dir '"+st+"' --repo PATH") {

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/nananek/goronation/egress"
@@ -18,8 +19,6 @@ type agentProfile struct {
 	exeExample string
 	// jailExe は、檻の中での実行ファイルの path。
 	jailExe string
-	// homeName は、状態ディレクトリの下の、檻専用の HOME の名前。エージェントごとに別にする (ログイン状態・会話の履歴を混ぜない)。
-	homeName string
 	// env は、共通の環境変数 (HOME・PATH・TERM・LANG) に足す、そのエージェントの環境変数 (通信を止めるもの)。
 	env []bwrap.EnvVar
 	// hosts は、既定の許可宛先。呼ぶたびに新しい slice を返す。
@@ -43,7 +42,6 @@ var claudeProfile = agentProfile{
 	name:       "claude",
 	exeExample: "/opt/claude-code/bin/claude",
 	jailExe:    "/opt/claude/claude",
-	homeName:   "home", // 互換: 既存の利用者のログイン状態が、この dir に残っている
 	// 通信を止める変数 (許可した宛先以外への、必須でない通信が、拒否として終了後の一覧に出て、必要な宛先に見えるのを避ける):
 	// CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC・DISABLE_TELEMETRY・DISABLE_ERROR_REPORTING・DISABLE_AUTOUPDATER に加えて、
 	// CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL (公式のプラグイン marketplace の自動インストール。これが無いと、
@@ -69,7 +67,6 @@ var opencodeProfile = agentProfile{
 	name:       "opencode",
 	exeExample: "~/.opencode/bin/opencode",
 	jailExe:    "/opt/opencode/opencode",
-	homeName:   "home-opencode", // claude の HOME (home) とは別: ログイン状態 (auth.json)・会話の履歴 (DB) を混ぜない
 	// 通信を止める変数 (実在は、binary の RuntimeFlags で確認):
 	//   OPENCODE_DISABLE_AUTOUPDATE   更新の確認 (api.github.com) を止める (実測)
 	//   OPENCODE_DISABLE_MODELS_FETCH モデル一覧の取得 (models.opencode.ai) を止める。同梱の一覧で動く (実測: 一覧は、取得を許しても同じ)
@@ -97,14 +94,25 @@ var opencodeProfile = agentProfile{
 	},
 }
 
-// loginDirs は、--login が使う、状態ディレクトリの下の、空の作業ディレクトリ (/work) と run dir の名前。エージェントごとに別にする:
-// 共有すると、片方のエージェントの檻が /work に置いた設定 (opencode.json・.opencode/・.claude/settings.json) が、もう片方の
-// --login の檻 (そのエージェントの HOME の認証情報を持つ) で読まれて動く。claude は、互換のため、これまでの名前のまま。
-func (p agentProfile) loginDirs() (work, run string) {
-	if p.name == claudeProfile.name {
-		return "login-work", "login-run"
-	}
-	return "login-work-" + p.name, "login-run-" + p.name
+// agentsDirName は、エージェントごとの状態を置く、状態ディレクトリの下のディレクトリの名前。
+const agentsDirName = "agents"
+
+// agentDirs は、エージェント 1 種類の状態のディレクトリ (すべて絶対 path)。
+type agentDirs struct {
+	// home は、檻専用の HOME (ログイン状態・会話の履歴が残る)。エージェントごとに別にする。
+	home string
+	// loginWork・loginRun は、--login の空の作業ディレクトリ (/work) と run dir (egress の UDS・監査ログ)。エージェントごとに別にする:
+	// 共有すると、片方のエージェントの檻が /work に置いた設定 (opencode.json・.claude/settings.json など) が、もう片方の --login の檻
+	// (そのエージェントの HOME の認証情報を持つ) で読まれて動く。run dir の監査ログ (過去の拒否宛先) も混ざる。
+	loginWork, loginRun string
+}
+
+// dirs は、状態ディレクトリ stateDir の下の、p の状態のディレクトリ: <state>/agents/<name>/{home,login-work,login-run}。
+// エージェントの状態の置き場は、ここだけ (どのエージェントも、同じ形。名前だけが違う)。セッションは、エージェント共通の
+// <state>/sessions/<id> で、そこに作ったエージェントの記録がある。
+func (p agentProfile) dirs(stateDir string) agentDirs {
+	base := filepath.Join(stateDir, agentsDirName, p.name)
+	return agentDirs{home: filepath.Join(base, "home"), loginWork: filepath.Join(base, "login-work"), loginRun: filepath.Join(base, "login-run")}
 }
 
 // agents は、--agent に指定できるエージェント。先頭が既定。

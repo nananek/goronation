@@ -25,27 +25,25 @@ func TestAgentProfiles(t *testing.T) {
 		return strings.Join(out, ",")
 	}
 	for _, tc := range []struct {
-		p        agentProfile
-		name     string
-		jailExe  string
-		homeName string
-		env      string
-		hosts    []string
-		exeEnv   string
-		login    []string
+		p       agentProfile
+		name    string
+		jailExe string
+		env     string
+		hosts   []string
+		exeEnv  string
+		login   []string
 	}{
-		{claudeProfile, "claude", "/opt/claude/claude", "home",
+		{claudeProfile, "claude", "/opt/claude/claude",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1,DISABLE_TELEMETRY=1,DISABLE_ERROR_REPORTING=1,DISABLE_AUTOUPDATER=1,CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1",
 			[]string{"api.anthropic.com:443", "platform.claude.com:443"}, "GORO_CLAUDE", nil},
-		{opencodeProfile, "opencode", "/opt/opencode/opencode", "home-opencode",
+		{opencodeProfile, "opencode", "/opt/opencode/opencode",
 			"OPENCODE_DISABLE_AUTOUPDATE=1,OPENCODE_DISABLE_MODELS_FETCH=1,OPENCODE_DISABLE_SHARE=1,OPENCODE_DISABLE_LSP_DOWNLOAD=1",
 			[]string{"opencode.ai:443"}, "GORO_OPENCODE", []string{"auth", "login"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := tc.p
-			if p.name != tc.name || p.jailExe != tc.jailExe || p.homeName != tc.homeName || p.exeEnv() != tc.exeEnv {
-				t.Errorf("name・jailExe・homeName・exeEnv = %q・%q・%q・%q, want %q・%q・%q・%q",
-					p.name, p.jailExe, p.homeName, p.exeEnv(), tc.name, tc.jailExe, tc.homeName, tc.exeEnv)
+			if p.name != tc.name || p.jailExe != tc.jailExe || p.exeEnv() != tc.exeEnv {
+				t.Errorf("name・jailExe・exeEnv = %q・%q・%q, want %q・%q・%q", p.name, p.jailExe, p.exeEnv(), tc.name, tc.jailExe, tc.exeEnv)
 			}
 			if got := envNames(p); got != tc.env {
 				t.Errorf("env = %s\nwant %s", got, tc.env)
@@ -78,7 +76,7 @@ func TestAgentProfiles(t *testing.T) {
 	}
 	// 2 つの profile は、混ざらない (別の檻専用の HOME・別の檻の中の path・別の許可)。
 	a, b := claudeProfile, opencodeProfile
-	if a.homeName == b.homeName || a.jailExe == b.jailExe || a.exeEnv() == b.exeEnv() || a.name == b.name {
+	if a.jailExe == b.jailExe || a.exeEnv() == b.exeEnv() || a.name == b.name {
 		t.Errorf("profile が混ざる: %+v / %+v", a, b)
 	}
 	for _, h := range a.hosts() {
@@ -248,13 +246,13 @@ func testOpenCodeCage() cageConfig {
 	c := testCage()
 	c.Agent = opencodeProfile
 	c.AgentExe = "/home/u/.opencode/bin/opencode"
-	c.AgentHome = "/home/u/.local/state/goro/home-opencode"
+	c.AgentHome = "/home/u/.local/state/goro/agents/opencode/home"
 	c.Args = []string{"--continue"}
 	return c
 }
 
 // opencode の檻の argv を、丸ごと固定する。claude の golden (TestCageSpecGolden) との違いは、エージェントの実行ファイルの
-// 行 (/opt/opencode/opencode)・専用の HOME (home-opencode)・環境変数 (OPENCODE_DISABLE_*)・起動するコマンドだけ。
+// 行 (/opt/opencode/opencode)・専用の HOME (agents/opencode/home)・環境変数 (OPENCODE_DISABLE_*)・起動するコマンドだけ。
 func TestCageSpecGoldenOpenCode(t *testing.T) {
 	argv, err := cageSpec(testOpenCodeCage()).Argv()
 	if err != nil {
@@ -270,7 +268,7 @@ func TestCageSpecGoldenOpenCode(t *testing.T) {
 		"--ro-bind", "/home/u/.opencode/bin/opencode", "/opt/opencode/opencode",
 		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
 		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/home-opencode", "/home/goro",
+		"--bind", "/home/u/.local/state/goro/agents/opencode/home", "/home/goro",
 		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
 		"--chdir", "/work",
 		"--clearenv",
@@ -568,29 +566,39 @@ func TestPickAgent(t *testing.T) {
 	}
 }
 
-// --login の作業ディレクトリと run dir の名前は、エージェントごとに別 (claude は、これまでの名前のまま)。UDS の path も、その run dir の下。
-func TestLoginDirs(t *testing.T) {
-	work, run := claudeProfile.loginDirs()
-	if work != "login-work" || run != "login-run" {
-		t.Errorf("claude の loginDirs = %q・%q, want login-work・login-run (これまでの名前。互換)", work, run)
-	}
-	owork, orun := opencodeProfile.loginDirs()
-	if owork != "login-work-opencode" || orun != "login-run-opencode" {
-		t.Errorf("opencode の loginDirs = %q・%q", owork, orun)
-	}
-	if work == owork || run == orun {
-		t.Error("login の作業ディレクトリか run dir が、エージェント間で共有されている")
-	}
-	for _, p := range agents { // どのエージェントも、名前が違い、セッションのディレクトリ (sessions) と衝突しない
-		w, r := p.loginDirs()
-		if w == r || w == "sessions" || r == "sessions" || w == p.homeName || r == p.homeName {
-			t.Errorf("%s の loginDirs = %q・%q (互いに、HOME・sessions と衝突している)", p.name, w, r)
+// エージェントごとの状態は、すべて <state>/agents/<name>/{home,login-work,login-run} (どのエージェントも同じ形。claude も、
+// 例外にしない)。UDS の path も、その login-run の下。
+func TestAgentDirs(t *testing.T) {
+	for _, tc := range []struct {
+		p                agentProfile
+		home, work, runD string
+	}{
+		{claudeProfile, "/s/agents/claude/home", "/s/agents/claude/login-work", "/s/agents/claude/login-run"},
+		{opencodeProfile, "/s/agents/opencode/home", "/s/agents/opencode/login-work", "/s/agents/opencode/login-run"},
+	} {
+		d := tc.p.dirs("/s")
+		if d.home != tc.home || d.loginWork != tc.work || d.loginRun != tc.runD {
+			t.Errorf("%s の dirs = %+v, want %s・%s・%s", tc.p.name, d, tc.home, tc.work, tc.runD)
 		}
 	}
-	if got := sockPathFor("/s", runOptions{login: true}); got != "/s/login-run/proxy.sock" {
+	// どのエージェントの dir も、互いに別で、sessions と衝突しない (エージェント名は、path の 1 要素)。
+	seen := map[string]string{}
+	for _, p := range agents {
+		d := p.dirs("/s")
+		for _, dir := range []string{d.home, d.loginWork, d.loginRun} {
+			if prev, dup := seen[dir]; dup {
+				t.Errorf("%s の %s が、%s と同じ", p.name, dir, prev)
+			}
+			seen[dir] = p.name
+			if strings.HasPrefix(dir, "/s/sessions") || filepath.Dir(dir) != "/s/agents/"+p.name {
+				t.Errorf("%s の dir %s が、<state>/agents/%s/ の直下でない", p.name, dir, p.name)
+			}
+		}
+	}
+	if got := sockPathFor("/s", runOptions{login: true}); got != "/s/agents/claude/login-run/proxy.sock" {
 		t.Errorf("claude の login の UDS = %q", got)
 	}
-	if got := sockPathFor("/s", runOptions{login: true, agent: "opencode"}); got != "/s/login-run-opencode/proxy.sock" {
+	if got := sockPathFor("/s", runOptions{login: true, agent: "opencode"}); got != "/s/agents/opencode/login-run/proxy.sock" {
 		t.Errorf("opencode の login の UDS = %q", got)
 	}
 }
