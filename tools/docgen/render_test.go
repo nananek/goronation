@@ -539,3 +539,25 @@ func TestIndexSynopsisIsEscaped(t *testing.T) {
 		t.Errorf("一覧の概要が、セルとしてエスケープされていない (want %s):\n%s", want, idx)
 	}
 }
+
+// TestAnchors は、anchor (<a id="...">) の id が、識別子だけで、HTML の属性を壊せないことを確認する。
+func TestAnchors(t *testing.T) {
+	got, err := anchors("Foo", "Type.Method", "x_1")
+	if err != nil || got != `<a id="Foo"></a><a id="Type.Method"></a><a id="x_1"></a>` {
+		t.Errorf("anchors = %q, %v", got, err)
+	}
+	for _, id := range []string{"", "a b", "a\"><script>", "a..b", ".a", "a.", "1x", "a-b", "a'b", "<b>", "a\x1bb"} {
+		if got, err := anchors(id); err == nil {
+			t.Errorf("anchors(%q) = %q: error にすべき", id, got)
+		}
+	}
+	if got := anchorID("*Rules", "Label"); got != "Rules.Label" {
+		t.Errorf("anchorID = %q", got)
+	}
+	if got := anchorID("Set[T]", "Add"); got != "Set.Add" {
+		t.Errorf("anchorID (generics) = %q", got)
+	}
+	if got := anchorID("", "New"); got != "New" {
+		t.Errorf("anchorID (関数) = %q", got)
+	}
+}
