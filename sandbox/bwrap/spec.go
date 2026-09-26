@@ -42,7 +42,7 @@ type Spec struct {
 type Bind struct {
 	// Src は、ホストの path。絶対・クリーンで、機密の path (ホストの HOME 自体・~/.ssh・~/.claude・/run/user など) は error。
 	Src string
-	// Dst は、檻の中の path。絶対・クリーンで、Spec の中で重複しない。
+	// Dst は、檻の中の path。絶対・クリーンで、Spec の中で重複せず、Symlinks の Dst の下にも置けない。
 	Dst string
 	// RW は、書き込めるか。false なら ro。システムの path (/usr・/etc など) は ro だけ。
 	RW bool
@@ -55,7 +55,8 @@ type Bind struct {
 type Symlink struct {
 	// Target は、symlink の指す先 (相対でもよい)。
 	Target string
-	// Dst は、symlink を作る、檻の中の path。
+	// Dst は、symlink を作る、檻の中の path。この下に、Binds・Tmpfs・Symlinks は置けない
+	// (bwrap は symlink を辿るので、/proc を指す /p の下の /p/sys は、/proc の中に届く)。
 	Dst string
 }
 

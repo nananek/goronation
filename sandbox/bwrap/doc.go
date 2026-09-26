@@ -13,7 +13,7 @@
 //   - fixed-flags: --unshare-all・--die-with-parent・--clearenv・--proc・--dev は常に付く。外す手段も、--share-net を出す手段も無い。
 //   - bind-src: 機密の Src (ホストの HOME 自体・~/.ssh・~/.claude・/run・/etc・/root・/home・/・SSH_AUTH_SOCK の実体など) は error。
 //     HOME の下は、InHome を明示した作業用 dir だけ。システムの path は ro だけ。Start は、symlink を辿った実体にも同じ規則をかける。
-//   - bind-dst: Dst は絶対・クリーンで、重複せず、/・/proc・/dev の中は使えない。
+//   - bind-dst: Dst は絶対・クリーンで、重複せず、/・/proc・/dev の中と、Symlinks の Dst の下 (symlink を辿って迂回できる) は使えない。
 //   - env: 檻の環境変数は、Spec.Env に書いたものだけ。資格情報らしい名前 (SSH_AUTH_SOCK・*_TOKEN・AWS_* など) は error。
 //   - tty: NewSession が false (既定) で、端末に直結して (標準入出力のどれかが端末か、制御端末を持つ) 起動するとき、TIOCSTI が無効と確かめられなければ、起動しない。
 //   - inherited-fd: Start は、呼び手が継承した fd (3 以降) を close-on-exec にして、檻に渡さない。close-on-exec にできなければ、起動しない。

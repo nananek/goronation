@@ -41,6 +41,9 @@ var (
 	credEnvParts    = []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "API_KEY", "APIKEY", "PRIVATE_KEY", "ACCESS_KEY"}
 )
 
+// claimedDst は、Spec の中で使われた、檻の中の path と、その持ち主 (エラーメッセージ用)。
+type claimedDst struct{ what, dst string }
+
 // Argv は、s を検証し、bwrap の argv (argv[0] は固定パスの bwrap) を作る。ファイルシステムも環境も見ない純関数で、
 // 検証に通らない Spec は error にする (省略できる検証は無い)。symlink を辿った実際の path の検証は、Start が行う。
 func (s Spec) Argv() ([]string, error) {
@@ -87,6 +90,7 @@ func (s Spec) validate() error {
 		return fmt.Errorf("bwrap: Host: %w", err)
 	}
 	dsts := map[string]string{}
+	var claimed []claimedDst
 	claim := func(what, dst string) error {
 		if err := checkDst(dst); err != nil {
 			return err
@@ -95,6 +99,7 @@ func (s Spec) validate() error {
 			return fmt.Errorf("Dst %q が重複している (%s と %s)", dst, prev, what)
 		}
 		dsts[dst] = what
+		claimed = append(claimed, claimedDst{what, dst})
 		return nil
 	}
 	for i, l := range s.Symlinks {
@@ -119,6 +124,16 @@ func (s Spec) validate() error {
 		}
 		if err := s.Host.checkSrc(b, b.Src, true); err != nil {
 			return fmt.Errorf("bwrap: %s: %w", what, err)
+		}
+	}
+	// symlink の下には、何も置けない。bwrap は symlink を辿るので、Dst の字面が /proc・/dev の外でも、
+	// /proc を指す symlink (/p) の下 (/p/sys) に置くと、檻の /proc の中に届く (checkDst の規則を迂回できる)。
+	for i, l := range s.Symlinks {
+		for _, c := range claimed {
+			if c.dst != l.Dst && under(c.dst, l.Dst) {
+				return fmt.Errorf("bwrap: %s: Dst %q は、Symlinks[%d] の Dst %q の下 (symlink を辿って、/proc・/dev の規則を迂回できる)",
+					c.what, c.dst, i, l.Dst)
+			}
 		}
 	}
 	for i, e := range s.Env {
