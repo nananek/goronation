@@ -149,6 +149,20 @@ func TestBudgetIsShared(t *testing.T) {
 		}
 	})
 
+	t.Run("バイトの合計 (ちょうどは通し、1 バイト超は error)", func(t *testing.T) {
+		lim := defaultLimits
+		lim.MaxTotalBytes = 20
+		tr, _ := newTestTreeLimits(t, map[string]string{"a.go": strings.Repeat("a", 10), "b.go": strings.Repeat("b", 10), "c.go": "c"}, lim)
+		for _, name := range []string{"a.go", "b.go"} {
+			if _, err := tr.readFile(name); err != nil {
+				t.Fatalf("合計がちょうど上限になる %s は通すべき: %v", name, err)
+			}
+		}
+		if _, err := tr.readFile("c.go"); !errors.Is(err, errBudget) {
+			t.Errorf("合計 21 バイトは errBudget にすべき: %v", err)
+		}
+	})
+
 	t.Run("書くバイトも、読むバイトと同じ勘定", func(t *testing.T) {
 		lim := defaultLimits
 		lim.MaxTotalBytes = 15
@@ -322,6 +336,23 @@ func TestBudgetIsShared(t *testing.T) {
 	})
 }
 
+// TestListDirReadsAllBatches は、256 個を超える項目のディレクトリでも、すべての名前を、名前の順に返すことを確認する
+// (名前は、256 個ずつ読む)。最初の塊で止めると、後ろの名前は、見られずに通ってしまう。
+func TestListDirReadsAllBatches(t *testing.T) {
+	files := map[string]string{}
+	for i := range 600 {
+		files[fmt.Sprintf("d/f%04d.txt", i)] = "x"
+	}
+	tr, _ := newTestTree(t, files)
+	got, err := tr.listDir("d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 600 || got[0].Name != "f0000.txt" || got[599].Name != "f0599.txt" {
+		t.Errorf("項目が %d 個 (先頭 %v, 末尾 %v), want 600 個", len(got), got[0], got[len(got)-1])
+	}
+}
+
 // TestReadFileAndListDir は、通常の読み取りが、内容をそのまま返すことを確認する (安全策が、正常系を壊さない)。
 func TestReadFileAndListDir(t *testing.T) {
 	tr, _ := newTestTree(t, map[string]string{"d/a.go": "package a\n", "d/sub/b.go": "package b\n"})
@@ -450,6 +481,18 @@ func TestListReference(t *testing.T) {
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("listReference =\n  %+v\nwant\n  %+v", got, want)
+		}
+	})
+	t.Run("深さの上限 (ちょうどは通し、超えたら errBudget)", func(t *testing.T) {
+		lim := defaultLimits
+		lim.MaxDepth = 3 // docs/reference が 2、その下のディレクトリが 3
+		tr, _ := newTestTreeLimits(t, map[string]string{"docs/reference/a/x.md": "x\n"}, lim)
+		if _, err := tr.listReference(); err != nil {
+			t.Errorf("深さ 3 (上限ちょうど) は通すべき: %v", err)
+		}
+		tr, _ = newTestTreeLimits(t, map[string]string{"docs/reference/a/b/x.md": "x\n"}, lim)
+		if _, err := tr.listReference(); !errors.Is(err, errBudget) {
+			t.Errorf("深さ 4 は errBudget にすべき: %v", err)
 		}
 	})
 	t.Run("reference がディレクトリではない", func(t *testing.T) {

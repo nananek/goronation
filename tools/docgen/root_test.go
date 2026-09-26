@@ -97,8 +97,12 @@ func TestRepoRoot(t *testing.T) {
 	})
 
 	t.Run("相対 path は error", func(t *testing.T) {
-		if got, err := repoRoot("."); err == nil {
-			t.Errorf("error を返すべき (root = %q)", got)
+		// プロセスの cwd が repo の root なら、"tools/docgen" は、絶対かどうかの確認が無ければ、root = "." として通ってしまう。
+		t.Chdir(repo)
+		for _, cwd := range []string{".", "tools/docgen", "./tools/docgen", "../repo/tools/docgen"} {
+			if got, err := repoRoot(cwd); err == nil {
+				t.Errorf("repoRoot(%q): error を返すべき (root = %q)", cwd, got)
+			}
 		}
 	})
 }

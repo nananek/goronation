@@ -474,6 +474,22 @@ func TestPackageErrors(t *testing.T) {
 	}
 }
 
+// TestPackageErrorIsDeterministic は、生成できない package が複数あるとき、報告する error が、実行ごとに変わらない
+// (package を、名前の順に処理する) ことを確認する。map の並びに依ると、同じ入力が、実行ごとに違う error を返す。
+func TestPackageErrorIsDeterministic(t *testing.T) {
+	files := scaffold(map[string]string{
+		"core/a/doc.go": "package a\n\nfunc {\n",
+		"core/b/doc.go": "package b\n\nfunc {\n",
+		"core/c/doc.go": "package c\n\nfunc {\n",
+	})
+	for range 30 {
+		tr, _ := newTestTree(t, files)
+		if _, err := tr.analyze(); err == nil || !strings.Contains(err.Error(), "core/a/doc.go") {
+			t.Fatalf("最初の package (core/a) の error になるはず: %v", err)
+		}
+	}
+}
+
 // TestOutputPathCollisions は、出力の path が (大文字小文字を区別しない環境でも) 衝突する package と、ファイルとディレクトリで
 // 衝突する package を、error にする (書く途中でしか分からないと、一部だけが書かれた出力が残る)。
 func TestOutputPathCollisions(t *testing.T) {

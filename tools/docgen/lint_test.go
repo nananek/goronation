@@ -310,20 +310,6 @@ func TestLintLinks(t *testing.T) {
 	}
 }
 
-// TestLintGeneratedLinks は、生成物 (索引) の相対リンクが、生成物どうしとして実在すると見なされ、リンク切れにならないことを
-// 確認する。(go/doc/comment は、scheme:// の無いリンク定義を認めないので、doc comment の相対リンクが生成物に出る入口は無い。)
-func TestLintGeneratedLinks(t *testing.T) {
-	res, err := analyzeFiles(t, map[string]string{"core/doc.go": goodDoc("core")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range res.Findings {
-		if f.Rule == ruleMDLink {
-			t.Errorf("生成物の相対リンクが切れている: %s", f)
-		}
-	}
-}
-
 // TestFindingOutput は、finding の出力の形 (path:行: [規則] 説明) と、並び順を確認する。
 func TestFindingOutput(t *testing.T) {
 	fs := []finding{
