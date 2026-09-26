@@ -1,29 +1,30 @@
-// Command goro は goronation の CLI で、`goro <サブコマンド>` を振り分ける。
+// Command goro は goronation の CLI で、信頼できない AI コーディングエージェント (claude) を、ホストから隔てた檻の中で動かす。
 //
-// いまのサブコマンドは init だけである。init は、檻 (ネットワークが無い bwrap) の中で最初に動く小さなリレーで、
-// 檻の loopback の TCP を、ホストの egress プロキシの Unix ドメインソケット (UDS) へ中継しながら、子プロセスを起動する。
-// 子の stdio (端末) と環境変数を引き継ぎ、子が終われば、子の終了コードで終わる。子の出力は解釈せず、リレーは何も書かない
-// (init が stderr に書くのは、引数の不正と、子を起動できなかったときだけ)。
+// run は、ホストの repo の private clone (または前のセッション) の上で、ネットワークの無い bwrap の檻の中の claude を動かし、
+// 檻の外向き通信を、ホストの egress (許可した宛先だけの CONNECT プロキシ) だけに絞る。export は、clone のコミットを bundle にして取り出す。
+// sessions は一覧を出し、init は、檻の中で最初に動くリレーで、run が起動する。オプションは goro <サブコマンド> -h に書く。
 //
 // # 使い方
 //
-//	goro init --listen 127.0.0.1:0 --upstream /run/goro/egress.sock -- claude
+//	goro run --login             # 初回: 出た URL をホストのブラウザで開き、出たコードを貼る
+//	goro run --repo ~/work/foo   # foo の private clone の中で claude と対話する (再開は --session ID)
+//	goro export ID               # bundle を作り、取り込みの git fetch を表示する (自分の repo で実行する)
 //
 // # 規則
 //
-//   - relay: 接続ごとに上流の UDS へ繋いで双方向に中継する。片方が EOF なら、その向きの書き側だけを閉じる (半クローズ)。
-//     読み書きの失敗は、両方を閉じる。上流に繋がらない接続と、同時 128 を超える接続は、黙って閉じる。
-//   - listen: --listen は loopback の IP リテラルとポート (0 は空きポート) だけを受け付ける。
-//   - proxy-env: 子に HTTPS_PROXY・HTTP_PROXY・https_proxy・http_proxy を、実際の待ち受け先 (ポート 0 なら、決まったポート) を
-//     指す http の URL にして渡す。NO_PROXY は設定しない。--no-proxy-env で、この設定をやめる。
-//   - signal: SIGINT・SIGTERM・SIGHUP・SIGQUIT・SIGWINCH を子に転送する。
-//   - reap: 自分が PID 1 のときは、孤児を回収する (wait4(-1))。
-//   - exit-code: 子の終了コード (シグナルで死んだら 128+番号)。引数が不正なら、使い方を stderr に出して 2。
-//     子を起動する前の失敗は 125、実行できないは 126、見つからないは 127。
+//   - cage: 檻に入るのは、/usr・証明書・claude と goro の実体・run dir (すべて ro)、檻専用の HOME と clone (rw)、許可リストの環境変数だけ。ホストの HOME・~/.ssh・~/.claude・環境変数は見えない。
+//   - egress: 許可は api.anthropic.com:443 と platform.claude.com:443 に、--allow で足したもの。拒否は、終了後に宛先つきで表示する。監査 (run dir の egress.log) は、詰まっても止まらず、行を捨てて数える。
+//   - signal: 端末のシグナルは、檻の中の claude が直接受ける (goro init は転送しない)。ホストの goro run は SIGINT・SIGQUIT を無視し、SIGTERM・SIGHUP で檻を止める。
+//   - no-host-git: ホストは git を実行しない。clone も export も使い捨ての檻の中で行い、bundle の取り込みは、利用者が自分の repo で行う。
 //
 // # 限界
 //
-// init は、檻を作らず、自分が檻の中にいることも確かめない。ホストで動かしても、同じように動く。
-// リレーは宛先を見ずにバイト列を通す。許可先の判定は、上流のホスト側の egress が行う。
-// proxy の環境変数を尊重しない子は、外へ届かない (檻にネットワークが無いため。init は、そのような子を検出しない)。
+//   - 許可した宛先 (api.anthropic.com など) 経由の持ち出しは防げない (TLS の中身を見ない)。大量の拒否 CONNECT で監査の予算 (8 MiB) を使い切られると、以降の宛先は egress.log に載らない (捨てた行数は終了時に表示する)。
+//   - 檻の HOME は全セッションで共有する (ログイン状態を残すため)。同時に動く別セッションの檻は、共有の /home/goro の UDS などで通信でき、--allow はセッションごとの境界ではない。
+//   - 端末に直結するため、檻が端末に任意のエスケープシーケンスを書ける (pty の中継とフィルタは未実装。TIOCSTI は legacy_tiocsti の確認で塞ぐ)。termios は、終了後に戻す。
+//   - 起動後の Ctrl-C は、claude の中断として効く (goro 自身は終了しない。終了は claude の終了操作か SIGTERM)。seccomp・cap-drop は未実装。repo は、ローカルの path だけ。Linux (bwrap) だけ。
+//
+// # 関連
+//
+// docs/adr/0001-repository-layout.md
 package main

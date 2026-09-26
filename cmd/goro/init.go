@@ -24,11 +24,19 @@ const (
 	exitNotFound = 127 // 子が見つからない
 )
 
-const initUsage = `使い方: goro init --listen 127.0.0.1:PORT --upstream PATH [--no-proxy-env] [--] CMD [ARGS...]
+const initUsage = `使い方: goro init --listen 127.0.0.1:PORT --upstream PATH [--no-proxy-env] [--no-forward-tty] [--] CMD [ARGS...]
+
+檻の中で最初に動く小さなリレー (goro run が起動する)。檻の loopback の TCP を、ホストの egress の Unix ドメインソケットへ
+中継しながら、子 (CMD) を起動する。子には、標準入出力と環境変数を引き継ぎ、HTTPS_PROXY・HTTP_PROXY (小文字も) を、待ち受け先を
+指す http の URL にして渡す (NO_PROXY は設定しない)。SIGINT・SIGTERM・SIGHUP・SIGQUIT・SIGWINCH は子に転送し、自分が PID 1 の
+ときは孤児を回収する。子の終了コード (シグナルで死んだら 128+番号) で終わる。引数の不正は 2、子を起動する前の失敗は 125、
+実行できないは 126、見つからないは 127。リレーは、宛先を見ずにバイト列を通す (許可先の判定は、上流の egress が行う)。
+init は、檻を作らず、自分が檻の中にいることも確かめない。
 
   --listen ADDR     檻の loopback で待ち受ける TCP (IP リテラル:ポート。ポート 0 は空きポート)
   --upstream PATH   中継先の Unix ドメインソケットの絶対 path
   --no-proxy-env    子に HTTPS_PROXY などを設定しない
+  --no-forward-tty  端末のシグナル (SIGINT・SIGQUIT・SIGWINCH) を、子に転送しない (子が端末を共有し、直接受けるとき。二重に届かない)
 `
 
 // proxyEnvKeys は、init が子に設定する環境変数 (NO_PROXY は設定しない)。
@@ -39,11 +47,15 @@ var forwardedSignals = []os.Signal{
 	syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGWINCH,
 }
 
+// ttySignals は、端末が、フォアグラウンドの process group 全体に送るシグナル。子が端末を共有していれば、子は、これらを直接受ける。
+var ttySignals = []os.Signal{syscall.SIGINT, syscall.SIGQUIT, syscall.SIGWINCH}
+
 type initConfig struct {
 	listen     string
 	upstream   string
 	noProxyEnv bool
 	argv       []string // 子のコマンドと引数
+	noFwdTTY   bool     // 端末のシグナル (ttySignals) を、子に転送しない
 }
 
 // parseInitArgs は goro init の引数を解釈する。不正なら、理由と使い方を stderr に出して error を返す。
@@ -56,6 +68,7 @@ func parseInitArgs(args []string, stderr io.Writer) (initConfig, error) {
 	flags.StringVar(&cfg.listen, "listen", "", "")
 	flags.StringVar(&cfg.upstream, "upstream", "", "")
 	flags.BoolVar(&cfg.noProxyEnv, "no-proxy-env", false, "")
+	flags.BoolVar(&cfg.noFwdTTY, "no-forward-tty", false, "")
 	if err := flags.Parse(args); err != nil {
 		return cfg, err // flag が、理由と使い方を出している
 	}
@@ -122,6 +135,10 @@ func runInit(args []string, stderr io.Writer) int {
 		for {
 			select {
 			case s := <-sigs:
+				// 転送しない端末のシグナルも、ここで受ける (受けないと、init 自身が、既定の動作で終わる)。
+				if cfg.noFwdTTY && slices.Contains(ttySignals, s) {
+					continue
+				}
 				cmd.Process.Signal(s) // 子が終わっていれば失敗するが、構わない
 			case <-done:
 				return
