@@ -35,6 +35,13 @@ func init() {
 	}
 }
 
+// screenStdout・screenStderr は、偽のエージェント (screen) が出す、TUI の画面に見えるバイト列。goro の解釈 (パターンマッチ・
+// UTF-8 の検査・エスケープの除去など) が入ると、そのまま届かなくなる。
+const (
+	screenStdout = "\x1b[2J\x1b[H┌  Select integration\n│  Security notes: Login successful\n\xff\xfe\x00 not-utf8\n\x1b]0;title\x07Done\n"
+	screenStderr = "■ Timed out waiting for the background service to start\n\x1b[31m└  Failed\x1b[0m\n"
+)
+
 // testAgentProfile は、テスト用の第 3 のエージェントの profile: 宛先と環境変数の定数を持つだけの、profile 1 つ。
 // 偽のエージェントの実行ファイル (テストバイナリ) は、檻の中の path の名前 (/opt/fakeagent/fakeagent) で、偽のエージェントとして動く。
 var testAgentProfile = agentProfile{
@@ -43,7 +50,6 @@ var testAgentProfile = agentProfile{
 	env:         []bwrap.EnvVar{{Key: "FAKEAGENT_MODE", Value: "test"}},
 	hosts:       func() []string { return []string{"fake.example:443"} },
 	loginArgs:   []string{"login"},
-	loginGuide:  "fakeagent にログインしてください (テスト用)",
 	loginUsage:  "login を起動する (テスト用の説明。この文が -h に出る)",
 	exitHint:    "/quit",
 	resumeUsage: "fakeagent の続きの説明 (テスト用。-h だけに出る)",
@@ -57,6 +63,8 @@ var testAgentProfile = agentProfile{
 //	info                  引数・作業ディレクトリ・HOME・環境変数の名前・/work の中身を出す
 //	probe OP...           OP (stat:PATH・write:PATH・dial:ADDR・mnt:PATH) を試して、結果を出す。mnt は、PATH の mount が ro か rw か
 //	connect TARGET...     HTTPS_PROXY へ、TARGET の CONNECT を送り、応答の状態コードを出す
+//	screen                エージェントの画面に見える出力 (エスケープ・項目名・エラー文・不正な UTF-8・NUL) を、標準出力と標準エラーに出し、
+//	                      終了コード 3 で終わる (goro が、出力を読まず・解釈せず、そのまま通すことの確認)
 //	loopback [ADDR]       proxy の環境変数を守るクライアント (Bun・Node と同じ: NO_PROXY の宛先は直接、それ以外は HTTP_PROXY 経由) で、ADDR
 //	                      (無ければ、檻の中の loopback に自分で立てたサーバー) に GET し、"loopback => <状態コード> direct|proxy" を出す
 //	commit FILE TEXT MSG  /work に FILE を書いて、git commit する
@@ -96,6 +104,10 @@ func fakeClaude(args []string) int {
 			fmt.Printf("%s => %s\n", target, fakeConnect(target))
 		}
 		return 0
+	case "screen":
+		os.Stdout.WriteString(screenStdout)
+		os.Stderr.WriteString(screenStderr)
+		return 3
 	case "loopback":
 		return fakeLoopback(args[1:])
 	case "commit":

@@ -7,7 +7,7 @@
 //
 // # 使い方
 //
-//	goro run --login             # 初回: claude を対話起動する。ログインし (URL をホストのブラウザで開き、出たコードを貼る)、Security notes で Enter を押したら /exit
+//	goro run --login             # 初回: 既定のエージェント (claude) のログイン。エージェント自身の画面の指示に従い、終わったら終了する
 //	goro run --repo ~/work/foo   # foo の private clone の中で claude と対話する (再開は --session ID。opencode は、--agent opencode を足す。初回は --agent opencode --login)
 //	goro export ID               # bundle を作り、取り込みの git fetch を表示する (自分の repo で実行する)
 //
@@ -23,7 +23,7 @@
 //   - 許可した宛先 (api.anthropic.com・opencode.ai など) 経由の持ち出しは防げない (TLS の中身を見ない)。大量の拒否 CONNECT で監査の予算 (8 MiB) を使い切られると、以降の宛先は egress.log に載らない (捨てた行数は終了時に表示する)。
 //   - 檻の HOME は、エージェントごとに、全セッションで共有する (ログイン状態・会話の履歴を残すため)。同時に動く別セッションの檻は、共有の /home/goro の UDS などで通信でき、--allow はセッションごとの境界ではない。
 //   - 端末に直結するため、檻が端末に任意のエスケープシーケンスを書ける (pty の中継とフィルタは未実装。TIOCSTI は legacy_tiocsti の確認で塞ぐ)。termios は、終了後に戻す。
-//   - 起動後の Ctrl-C は、エージェントの中断として効く (goro 自身は終了しない。終了はエージェントの終了操作か SIGTERM)。seccomp・cap-drop は未実装。repo は、ローカルの path だけ。Linux (bwrap) だけ。
+//   - 起動後の Ctrl-C は、エージェントの中断として効く (goro 自身は終了しない。終了はエージェントの終了操作か SIGTERM)。seccomp・cap-drop は未実装。repo は、ローカルの path だけ。Linux (bwrap) だけ。檻からホストの localhost には届かず、ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。
 //
 // # 関連
 //

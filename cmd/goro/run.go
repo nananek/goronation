@@ -32,6 +32,7 @@ func runUsage() string {
 	b.WriteString(`  --repo PATH       PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
   --session ID      前の goro run のセッションを再開する (同じ clone が見える)。エージェントは、そのセッションを作ったもの (--agent は省略できる。別のエージェントは断る)
   --login           repo・clone 無しで、空の作業ディレクトリでエージェントのログインを行う (ログイン状態は、檻専用の HOME に残る)。エージェントごとの起動は、下の「エージェント」
+                    ログインは、エージェント自身の画面で行う。goro は出力を解釈しない (端末に直結する)。
   --name N          clone の user.name (--repo のとき。既定は goro)
   --email E         clone の user.email (--repo のとき)
   --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)。セッションは <DIR>/sessions/、エージェントごとの HOME・ログイン用のディレクトリは <DIR>/agents/<エージェント名>/
@@ -62,6 +63,8 @@ func runUsage() string {
   goro run --agent NAME --repo ~/work/foo   同じことを、エージェントを選んで行う
   goro run --session ID -- ARGS...          再開する (エージェントは、そのセッションを作ったもの。-- の後ろはエージェントへの引数)
   goro export ID                            成果 (コミット) を bundle にして、取り込みのコマンドを表示する
+
+限界: 檻からホストの localhost には届かない。ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。
 
 起動後の Ctrl-C は、エージェントの中断として効く (goro run 自身は終了しない)。止めるときは、エージェントの終了操作 (上の「終了」) か、別の端末から goro run に SIGTERM。
 終わると、セッション ID・再開と取り出しのコマンド・拒否された宛先を表示する。
@@ -380,7 +383,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	}
 
 	if o.login {
-		fmt.Fprintln(stderr, "goro run: "+agent.loginGuide)
+		fmt.Fprintln(stderr, "goro run: "+agent.loginGuide())
 	}
 	sum := runSummary{id: tgt.id, stateDir: stateDir, stateDirGiven: o.stateDir != "", agentHome: agentHome, agent: agent}
 	code := runCage(ctx, o, agent, sw, tgt, cageConfig{

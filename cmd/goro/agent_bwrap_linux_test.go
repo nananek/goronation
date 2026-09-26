@@ -102,12 +102,12 @@ func TestRunOpenCodeLoginAndSeparateHome(t *testing.T) {
 	if fi, err := os.Stat(f.agentPath("opencode", "home")); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("opencode 専用の HOME の権限 = %v, %v, want 0700", fi, err)
 	}
-	for _, want := range []string{"provider を選び、API キーを貼ってください (キーは https://opencode.ai/auth)", "ログイン状態: " + f.agentPath("opencode", "home"), "goro run --agent opencode --repo PATH"} {
+	for _, want := range []string{"ログインの画面が出ます。画面の指示に従い、終わったら終了してください (終了: /exit か Ctrl-C)。", "ログイン状態: " + f.agentPath("opencode", "home"), "goro run --agent opencode --repo PATH"} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("--login の案内に %q が無い:\n%s", want, r.stderr)
 		}
 	}
-	if strings.Contains(r.stderr, "Security notes") || strings.Contains(r.stderr, "セッション:") {
+	if strings.Contains(r.stderr, "Security notes") || strings.Contains(r.stderr, "provider") || strings.Contains(r.stderr, "セッション:") {
 		t.Errorf("--login の案内に、claude の案内が混ざっている:\n%s", r.stderr)
 	}
 
@@ -427,7 +427,7 @@ func TestRunThirdAgent(t *testing.T) {
 
 	// --login: profile の loginArgs で起動し、状態は agents/fakeagent/{home,login-work,login-run}。案内は profile のもの。
 	login := f.goro(t, "run", "--agent", "fakeagent", "--login", "--", "commit", "x.txt", "PLANT", "msg")
-	if !strings.Contains(login.stderr, "fakeagent にログインしてください (テスト用)") || !strings.Contains(login.stderr, "goro run --agent fakeagent --repo PATH") ||
+	if !strings.Contains(login.stderr, "ログインの画面が出ます。画面の指示に従い、終わったら終了してください (終了: /quit)。") || !strings.Contains(login.stderr, "goro run --agent fakeagent --repo PATH") ||
 		!strings.Contains(login.stderr, "ログイン状態: "+f.agentPath("fakeagent", "home")) {
 		t.Errorf("--login の案内:\n%s", login.stderr)
 	}
@@ -509,5 +509,34 @@ func TestRunLoopbackBypassesProxy(t *testing.T) {
 	}
 	if n := hostAccepts.Load(); n != 0 {
 		t.Errorf("ホストの loopback が、檻からの接続を %d 回受けた", n)
+	}
+}
+
+// goro は、エージェントの出力を読まず、解釈しない: エージェントの標準入出力は、端末に直結する (goro run が os.Stdout などを、そのまま檻に渡す)。
+// ログインの画面・エラー文・エスケープシーケンスは、そのまま (バイト単位で) 利用者に届き、goro の挙動 (終了コード・終了後の表示) は、
+// その内容に左右されない。画面の内容を模倣・予告する案内は、版が変わると嘘になるので、書かない (TestUserMessagesStayShort)。
+func TestAgentOutputPassesThroughUntouched(t *testing.T) {
+	f := newRunFixture(t)
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"claude (--repo)", []string{"run", "--repo", f.repo, "--", "screen"}},
+		{"opencode (--repo)", []string{"run", "--agent", "opencode", "--repo", f.repo, "--", "screen"}},
+		{"opencode (--login)", []string{"run", "--agent", "opencode", "--login", "--", "screen"}},
+		{"claude (--login)", []string{"run", "--login", "--", "screen"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := f.goro(t, tc.args...)
+			if r.stdout != screenStdout { // goro の標準出力には、エージェントの出力だけが、そのまま出る (goro 自身の表示は、標準エラーだけ)
+				t.Errorf("標準出力が、エージェントの出力と、バイト単位で一致しない:\n got: %q\nwant: %q", r.stdout, screenStdout)
+			}
+			if !strings.Contains(r.stderr, screenStderr) {
+				t.Errorf("標準エラーに、エージェントの出力がそのまま届いていない: %q\nwant を含む: %q", r.stderr, screenStderr)
+			}
+			if r.code != 3 { // 出力に "Failed"・"Timed out" があっても、goro が判断するのは、エージェントの終了コードだけ
+				t.Errorf("終了コード = %d, want 3 (エージェントのもの)\n%s", r.code, r)
+			}
+		})
 	}
 }

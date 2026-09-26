@@ -31,18 +31,23 @@ type agentProfile struct {
 	hosts func() []string
 	// loginArgs は、--login のときに、エージェントへ渡す引数 (利用者の引数は、この後ろ)。
 	loginArgs []string
-	// loginGuide は、--login の起動前に出す案内 (先頭の "goro run: " は、呼び手が付ける)。ユーザーがすることだけを、短く、命令形で書く
-	// (2 行以内)。理由・経緯・制約の説明は、loginUsage (goro run -h) に書く。
-	loginGuide string
-	// loginUsage は、goro run -h の、このエージェントの --login の説明 (1 行)。理由・制約は、ここに書く。
+	// loginUsage は、goro run -h の、このエージェントの --login の説明 (1 行)。理由・制約・API キーの取得 URL は、ここに書く。
+	// エージェントの画面の項目名・手順は、書かない (版で変わる。ログインは、エージェント自身の画面で行う)。
 	loginUsage string
-	// exitHint は、goro run -h の、このエージェントの終了操作 (1 語句)。
+	// exitHint は、このエージェントの終了操作 (短く)。--login の案内 (loginGuide) と、goro run -h に出す。
 	exitHint string
 	// resumeUsage は、goro run -h の、このエージェントの会話の続きの説明 (空なら出さない)。実行時のメッセージには、出さない。
 	resumeUsage string
 	// denyNotes は、拒否されたときに、宛先の後ろに添える短い一言 (10 文字前後。原因の推測・経緯は書かない)。終了後の一覧には出し
 	// (隠さない)、--allow の例には使わない。許可しなくてよいもの (動作に影響しない) と、許可より先にすることがあるものを書く。
 	denyNotes map[string]string
+}
+
+// loginGuide は、--login の起動前に出す案内 (先頭の "goro run: " は、呼び手が付ける)。エージェントの画面の内容 (項目名・手順・URL) は、
+// 説明しない: 画面はエージェントの版で変わり、説明は嘘になる (実際に、opencode 2 系で食い違った)。ログインは、エージェント自身の画面で
+// 行い、goro は出力を読まない・解釈しない (エージェントの標準入出力は、端末に直結する)。エージェントに共通の 1 行に、終了操作だけを添える。
+func (p agentProfile) loginGuide() string {
+	return "ログインの画面が出ます。画面の指示に従い、終わったら終了してください (終了: " + p.exitHint + ")。"
 }
 
 // binName は、PATH で探す実行ファイルの名前。
@@ -84,8 +89,7 @@ var claudeProfile = agentProfile{
 	// claude が、認証情報と、onboarding の完了 (.claude.json の hasCompletedOnboarding) を保存する。claude auth login は、
 	// 認証情報しか保存せず、次の対話起動が、onboarding (ログイン画面を含む) からやり直しになる。
 	loginArgs:  nil,
-	loginGuide: "テーマを選び、表示された URL をブラウザで開いて、出たコードを貼ってください。\nSecurity notes で Enter を押し、最後に /exit を入力してください。",
-	loginUsage: "対話起動する (初回の onboarding = テーマ・ログイン・Security notes を通す。最後まで通らないと、次の起動がログイン画面からやり直しになる。終わりは /exit)",
+	loginUsage: "対話起動する (初回の設定とログインは、claude 自身の画面で行う。最後まで通らないと、次の起動がやり直しになる)",
 	exitHint:   "/exit",
 }
 
@@ -111,9 +115,8 @@ var opencodeProfile = agentProfile{
 	// opencode に onboarding は無い (認証を保存すれば、次の起動は、そのまま使える)。--login は、auth login (provider を選び、
 	// Zen なら API キーを貼る) を起動する: 終わると、自分で終了する。
 	loginArgs:   []string{"auth", "login"},
-	loginGuide:  "provider を選び、API キーを貼ってください (キーは https://opencode.ai/auth)。",
-	loginUsage:  "auth login を起動する (provider を選び、Zen なら https://opencode.ai/auth のキーを貼る。終わると自分で終了する。ホストのブラウザの localhost に戻る方式の OAuth は、檻に届かないので使えない)",
-	exitHint:    "/exit",
+	loginUsage:  "auth login を起動する (ログインは、opencode 自身の画面で行う。API キーは https://opencode.ai/auth で作る。ホストのブラウザの localhost に戻る方式の OAuth は、檻に届かないので使えない)",
+	exitHint:    "/exit か Ctrl-C",
 	resumeUsage: "会話は、そのエージェント専用の HOME に残る。続きは、起動後に /sessions で選ぶ (-- --continue は、同じ repo の直近の会話を開く)",
 	denyNotes: map[string]string{
 		"registry.npmjs.org:443": "許可不要",

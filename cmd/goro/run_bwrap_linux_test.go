@@ -470,7 +470,8 @@ func TestRunLogin(t *testing.T) {
 	if kv["args"] != `["auth" "--extra"]` {
 		t.Errorf("claude の引数 = %s, want [auth --extra] (--login は、claude auth login を付けない)", kv["args"])
 	}
-	if !strings.Contains(r.stderr, "Security notes で Enter を押し") {
+	if !strings.Contains(r.stderr, "ログインの画面が出ます。画面の指示に従い、終わったら終了してください (終了: /exit)。") ||
+		strings.Contains(r.stderr, "Security notes") || strings.Contains(r.stderr, "テーマ") { // エージェントの画面の内容を、説明しない
 		t.Errorf("--login の起動前の案内が無い:\n%s", r.stderr)
 	}
 	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goro" {

@@ -56,8 +56,8 @@ func TestAgentProfiles(t *testing.T) {
 			if !slices.Equal(p.loginArgs, tc.login) {
 				t.Errorf("loginArgs = %v, want %v", p.loginArgs, tc.login)
 			}
-			if p.loginGuide == "" || p.exeExample == "" {
-				t.Error("loginGuide・exeExample が空")
+			if p.exeExample == "" {
+				t.Error("exeExample が空")
 			}
 			// 許可リストは、egress が受け付け、bwrap の資格情報らしい名前の検査に通る。
 			if err := checkAllow(p.hosts()); err != nil {
@@ -624,7 +624,7 @@ func TestAgentTable(t *testing.T) {
 			if want := "GORO_" + strings.ToUpper(strings.ReplaceAll(p.name, "-", "_")); p.exeEnv() != want {
 				t.Errorf("exeEnv = %q, want %q", p.exeEnv(), want)
 			}
-			if p.hosts == nil || len(p.hosts()) == 0 || p.loginGuide == "" || p.loginUsage == "" || p.exitHint == "" || p.exeExample == "" {
+			if p.hosts == nil || len(p.hosts()) == 0 || p.loginUsage == "" || p.exitHint == "" || p.exeExample == "" {
 				t.Errorf("必須の項目が空: %+v", p)
 			}
 			if err := checkAllow(p.hosts()); err != nil {
@@ -693,6 +693,11 @@ func TestRunUsageFromProfiles(t *testing.T) {
 	if !strings.Contains(usage, "claude (既定)") || strings.Contains(usage, "opencode (既定)") {
 		t.Errorf("既定のエージェントの印が、表の先頭でない:\n%s", usage)
 	}
+	for _, want := range []string{"goro は出力を解釈しない (端末に直結する)", "檻からホストの localhost には届かない。ローカルのモデルサーバー"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("usage に %q が無い:\n%s", want, usage)
+		}
+	}
 	if !strings.Contains(usage, "--bin PATH") || strings.Contains(usage, "--claude PATH") || strings.Contains(usage, "--opencode PATH") {
 		t.Errorf("--bin の説明が無い、または、エージェントごとのオプションが残っている:\n%s", usage)
 	}
@@ -726,11 +731,22 @@ func TestRunUsageFromProfiles(t *testing.T) {
 func TestUserMessagesStayShort(t *testing.T) {
 	runes := utf8.RuneCountInString
 	for _, p := range agents {
-		if n := strings.Count(p.loginGuide, "\n") + 1; n > 2 || runes(p.loginGuide) > 120 {
-			t.Errorf("%s の loginGuide が長い (%d 行・%d 文字): %q", p.name, n, runes(p.loginGuide), p.loginGuide)
+		guide := p.loginGuide()
+		if n := strings.Count(guide, "\n") + 1; n > 2 || runes(guide) > 120 {
+			t.Errorf("%s の loginGuide が長い (%d 行・%d 文字): %q", p.name, n, runes(guide), guide)
 		}
-		if !strings.Contains(p.loginGuide, "ください") {
-			t.Errorf("%s の loginGuide が、ユーザーへの依頼 (〜してください) でない: %q", p.name, p.loginGuide)
+		if !strings.Contains(guide, "ください") {
+			t.Errorf("%s の loginGuide が、ユーザーへの依頼 (〜してください) でない: %q", p.name, guide)
+		}
+		// エージェントの画面の内容 (項目名・手順・URL) を、説明しない (版で変わり、嘘になる)。案内は、エージェントに共通で、
+		// 違うのは終了操作だけ。goro は、エージェントの出力を読まない・解釈しない (TestAgentOutputPassesThroughUntouched)。
+		for _, word := range []string{"テーマ", "theme", "Theme", "provider", "Provider", "integration", "Integration", "Security", "API", "キー", "URL", "http", "ブラウザ", "コード"} {
+			if strings.Contains(guide, word) {
+				t.Errorf("%s の loginGuide が、エージェントの画面の内容 (%q) を説明している: %q", p.name, word, guide)
+			}
+		}
+		if want := strings.ReplaceAll(defaultAgent().loginGuide(), defaultAgent().exitHint, p.exitHint); guide != want {
+			t.Errorf("%s の loginGuide = %q, want %q (エージェントに共通で、終了操作だけが違う)", p.name, guide, want)
 		}
 		for target, note := range p.denyNotes {
 			if runes(note) > 40 || strings.Contains(note, "。") {
