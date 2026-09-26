@@ -111,7 +111,7 @@ func TestValidateRejects(t *testing.T) {
 		"NUL を含む引数":           {func(s *sandbox.Spec) { s.Args = append(s.Args, "a\x00b") }, "NUL"},
 		"相対の Dir":             {func(s *sandbox.Spec) { s.Dir = "work" }, "絶対"},
 		"Egress の親が Read に無い": {func(s *sandbox.Spec) { s.Egress = "/other/p.sock" }, "Read に無い"},
-		"Egress の親が Write": {func(s *sandbox.Spec) {
+		"Egress の親が Write だけ": {func(s *sandbox.Spec) {
 			s.Write = append(s.Write, sandbox.Mount{HostPath: "/data/run2", GuestPath: "/run/goro2"})
 			s.Egress = "/run/goro2/p"
 		}, "Read に無い"},
@@ -161,8 +161,11 @@ func TestValidateHost(t *testing.T) {
 	} {
 		r := testRules()
 		r.Host = h
-		if err := r.Validate(okSpec()); !errors.Is(err, sandbox.ErrRejected) {
-			t.Errorf("%s: %v, want ErrRejected", name, err)
+		// mount のある Spec でも、無い Spec でも断る (HOME の下の規則が意味を失う Host を、mount の有無に依らず断る)。
+		for what, s := range map[string]sandbox.Spec{"okSpec": okSpec(), "mount なし": {Exec: "/bin/true"}} {
+			if err := r.Validate(s); !errors.Is(err, sandbox.ErrRejected) {
+				t.Errorf("%s・%s: %v, want ErrRejected", name, what, err)
+			}
 		}
 	}
 }

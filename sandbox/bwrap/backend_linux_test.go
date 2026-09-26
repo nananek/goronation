@@ -48,6 +48,8 @@ func TestBackendStartRejectsBeforeLaunch(t *testing.T) {
 		"HOME 自体":  {Exec: "/opt/x/x", Read: []sandbox.Mount{{HostPath: "/home/u", GuestPath: "/x"}}},
 		"資格情報の環境":  {Exec: "/opt/x/x", Env: []sandbox.EnvVar{{Key: "GH_TOKEN", Value: "x"}}},
 		"相対の Exec": {Exec: "x"},
+		// 契約の検証を通っても、bwrap 固有の検証で断るもの (種類は、同じ ErrRejected)。
+		"GuestPath が /proc の中": {Exec: "/opt/x/x", Read: []sandbox.Mount{{HostPath: "/data/x", GuestPath: "/proc/x"}}},
 		// bwrap の検証には無い、契約の規則 (契約の共通検証を通らなければ、断る)。
 		"Egress の親が Read に無い":  {Exec: "/opt/x/x", Egress: "/run/goro/proxy.sock"},
 		"loopback でない待ち受け":     {Exec: "/opt/x/x", Loopback: []string{"0.0.0.0:3128"}},
