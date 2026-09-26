@@ -173,13 +173,35 @@ func TestResolveClaude(t *testing.T) {
 	real := filepath.Join(dir, "versions", "1.0")
 	other := filepath.Join(dir, "other")
 	notExec := filepath.Join(dir, "notexec")
-	for p, mode := range map[string]os.FileMode{real: 0o755, other: 0o755, notExec: 0o644} {
+	script := filepath.Join(dir, "wrapper")
+	hashy := filepath.Join(dir, "hashy")     // # で始まるが、#! ではない (スクリプトではない)
+	oneByte := filepath.Join(dir, "onebyte") // 1 バイトだけ (短いファイル)
+	bang := filepath.Join(dir, "bang")       // 2 文字目が ! だが、1 文字目が # ではない
+	for p, mode := range map[string]os.FileMode{real: 0o755, other: 0o755, notExec: 0o644, script: 0o755, hashy: 0o755, oneByte: 0o755, bang: 0o755} {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), mode); err != nil {
+		content := "\x7fELF fake binary\n" // 実体の実行ファイルに見立てる (先頭が #! でないもの)
+		switch p {
+		case script:
+			content = "#!/bin/sh\nexec /opt/claude-code/bin/claude \"$@\"\n"
+		case hashy:
+			content = "# not a shebang\n"
+		case oneByte:
+			content = "#"
+		case bang:
+			content = "x!not a shebang\n"
+		}
+		if err := os.WriteFile(p, []byte(content), mode); err != nil {
 			t.Fatal(err)
 		}
+	}
+	scriptLink := filepath.Join(dir, "bin", "claude-wrapper")
+	if err := os.MkdirAll(filepath.Dir(scriptLink), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../wrapper", scriptLink); err != nil {
+		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "bin", "claude")
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
@@ -210,6 +232,12 @@ func TestResolveClaude(t *testing.T) {
 		{"実行できない", notExec, "", pathLookup, "", "実行できる通常のファイルではない"},
 		{"ディレクトリ", dir, "", pathLookup, "", "実行できる通常のファイルではない"},
 		{"存在しない", filepath.Join(dir, "none"), "", pathLookup, "", "claude"},
+		{"# で始まるが #! ではない", hashy, "", pathLookup, hashy, ""},
+		{"1 バイトのファイル", oneByte, "", pathLookup, oneByte, ""},
+		{"2 文字目だけ !", bang, "", pathLookup, bang, ""},
+		{"スクリプト (ラッパー)", script, "", pathLookup, "", "スクリプト"},
+		{"スクリプトへの symlink", scriptLink, "", pathLookup, "", "スクリプト"},
+		{"環境変数のスクリプト", "", script, pathLookup, "", "--claude か GORO_CLAUDE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := resolveClaude(tc.flagVal, tc.env, tc.look)
@@ -270,6 +298,7 @@ func TestCageSpecGolden(t *testing.T) {
 		"--setenv", "DISABLE_TELEMETRY", "1",
 		"--setenv", "DISABLE_ERROR_REPORTING", "1",
 		"--setenv", "DISABLE_AUTOUPDATER", "1",
+		"--setenv", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1",
 		"--",
 		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
 		"/opt/claude/claude", "--resume", "x y",
@@ -340,7 +369,7 @@ func TestCageEnv(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	wantNames := "HOME,PATH,TERM,LANG,CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,DISABLE_TELEMETRY,DISABLE_ERROR_REPORTING,DISABLE_AUTOUPDATER"
+	wantNames := "HOME,PATH,TERM,LANG,CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,DISABLE_TELEMETRY,DISABLE_ERROR_REPORTING,DISABLE_AUTOUPDATER,CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"
 	for term, want := range map[string]string{
 		"xterm-256color": "xterm-256color", "screen.linux": "screen.linux", "": "dumb", "bad term": "dumb",
 		"x\ny": "dumb", "$(id)": "dumb", strings.Repeat("a", 65): "dumb", "tmux-256color": "tmux-256color",
@@ -362,10 +391,10 @@ func TestCageEnv(t *testing.T) {
 }
 
 func TestCageArgs(t *testing.T) {
-	if got := cageArgs(runOptions{login: true}); !slices.Equal(got, []string{"auth", "login"}) {
-		t.Errorf("--login = %v", got)
+	if got := cageArgs(runOptions{login: true}); len(got) != 0 {
+		t.Errorf("--login = %v, want 引数なし (素の対話起動。claude auth login は、onboarding の完了を保存しない)", got)
 	}
-	if got := cageArgs(runOptions{login: true, claudeArgs: []string{"--console"}}); !slices.Equal(got, []string{"auth", "login", "--console"}) {
+	if got := cageArgs(runOptions{login: true, claudeArgs: []string{"--extra"}}); !slices.Equal(got, []string{"--extra"}) {
 		t.Errorf("--login と引数 = %v", got)
 	}
 	if got := cageArgs(runOptions{repo: "r", claudeArgs: []string{"-p", "hi"}}); !slices.Equal(got, []string{"-p", "hi"}) {

@@ -6,7 +6,7 @@
 //
 // # 使い方
 //
-//	goro run --login             # 初回: 出た URL をホストのブラウザで開き、出たコードを貼る
+//	goro run --login             # 初回: claude を対話起動する。ログインし (URL をホストのブラウザで開き、出たコードを貼る)、Security notes で Enter を押したら /exit
 //	goro run --repo ~/work/foo   # foo の private clone の中で claude と対話する (再開は --session ID)
 //	goro export ID               # bundle を作り、取り込みの git fetch を表示する (自分の repo で実行する)
 //

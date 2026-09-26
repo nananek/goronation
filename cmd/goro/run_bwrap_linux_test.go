@@ -441,7 +441,7 @@ func TestRunCageIsolation(t *testing.T) {
 	}
 	allowed := map[string]bool{}
 	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY",
-		"DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "PWD"} {
+		"DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "PWD"} {
 		allowed[n] = true
 	}
 	for _, n := range strings.Split(kv["env"], ",") {
@@ -463,10 +463,13 @@ func TestRunCageIsolation(t *testing.T) {
 // 次の --repo の檻に見える。--state-dir は、案内に含まれる。
 func TestRunLogin(t *testing.T) {
 	f := newRunFixture(t)
-	r := f.goro(t, "run", "--login", "--", "--extra").mustOK(t)
+	r := f.goro(t, "run", "--login", "--", "auth", "--extra").mustOK(t) // fake claude の場面 auth が、ログインの目印を作る
 	kv, _ := parseOut(r.stdout)
-	if kv["args"] != `["auth" "login" "--extra"]` {
-		t.Errorf("claude の引数 = %s, want [auth login --extra]", kv["args"])
+	if kv["args"] != `["auth" "--extra"]` {
+		t.Errorf("claude の引数 = %s, want [auth --extra] (--login は、claude auth login を付けない)", kv["args"])
+	}
+	if !strings.Contains(r.stderr, "Security notes で Enter を押したら") {
+		t.Errorf("--login の起動前の案内が無い:\n%s", r.stderr)
 	}
 	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goro" {
 		t.Errorf("cwd・/work の中身・HOME = %q・%q・%q (空の作業ディレクトリのはず)", kv["cwd"], kv["work"], kv["home"])
@@ -492,7 +495,7 @@ func TestRunLogin(t *testing.T) {
 
 	// --state-dir
 	st := filepath.Join(f.dir, "st")
-	r = f.goro(t, "run", "--state-dir", st, "--login").mustOK(t)
+	r = f.goro(t, "run", "--state-dir", st, "--login", "--", "auth").mustOK(t)
 	if _, err := os.Stat(filepath.Join(st, "home", "login-marker")); err != nil {
 		t.Errorf("--state-dir の下の HOME に、ログイン状態が無い: %v", err)
 	}
@@ -695,7 +698,7 @@ func TestRunStartFailureShowsOnlyCause(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(bad), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(bad, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(bad, []byte("\x7fELF fake binary\n"), 0o755); err != nil { // #! で始めない (スクリプトは、その前に断られる)
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"run", "--repo", f.repo, "--claude", bad}, {"run", "--login", "--claude", bad}} {

@@ -84,6 +84,10 @@ var termRE = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,64}$`)
 
 // cageEnv は、檻の環境変数 (これだけ。ホストの環境変数は渡らない)。proxy の変数は、goro init が設定する。
 // TERM は、形が正しいときだけ渡し、そうでなければ dumb にする。
+// 通信を止める変数 (許可した宛先以外への、必須でない通信が、拒否として終了後の一覧に出て、必要な宛先に見えるのを避ける):
+// CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC・DISABLE_TELEMETRY・DISABLE_ERROR_REPORTING・DISABLE_AUTOUPDATER に加えて、
+// CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL (公式のプラグイン marketplace の自動インストール。これが無いと、
+// 対話起動のたびに downloads.claude.ai:443 と github.com:443 が拒否される。実測: この変数だけで、両方の拒否が消える)。
 func cageEnv(term string) []bwrap.EnvVar {
 	if !termRE.MatchString(term) {
 		term = "dumb"
@@ -97,5 +101,6 @@ func cageEnv(term string) []bwrap.EnvVar {
 		{Key: "DISABLE_TELEMETRY", Value: "1"},
 		{Key: "DISABLE_ERROR_REPORTING", Value: "1"},
 		{Key: "DISABLE_AUTOUPDATER", Value: "1"},
+		{Key: "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", Value: "1"},
 	}
 }
