@@ -83,7 +83,7 @@ var testAgentProfile = agentProfile{
 //	aread NAME...         認証用ディレクトリの NAME を読み、"aread:NAME => <引用した中身>" (無ければ "err: 理由") を出す
 //	als                   認証用ディレクトリの下のファイルの名前を並べて出す ("als => a,b")
 //	env NAME...           環境変数 NAME の値を、"env:NAME => 値" で出す
-//	await NAME OLD        ready を出し、認証用ディレクトリの NAME の中身が OLD 以外になるのを待ち、"changed=<引用した中身>" を出す (実行中の檻への伝わり)
+//	await NAME OLD        ready を出し、認証用ディレクトリの NAME の中身が、空でも OLD でもなくなるのを待ち、"changed=<引用した中身>" を出す (実行中の檻への伝わり)
 //	sigcount              ready を出し、最初のシグナルから 1 秒間の SIGINT・SIGQUIT の数を出す
 //	hold                  ready を出し、殺されるまで待つ
 //	exit N                終了コード N で終わる
@@ -203,7 +203,8 @@ func fakeClaude(args []string) int {
 		}
 		fmt.Println("ready")
 		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-			if b, err := os.ReadFile(filepath.Join(jailAuth, args[1])); err == nil && string(b) != args[2] {
+			// 空は、その場で書く相手 (O_TRUNC してから書く) の途中の状態で、まだ書かれていない値として、読み飛ばす。
+			if b, err := os.ReadFile(filepath.Join(jailAuth, args[1])); err == nil && len(b) > 0 && string(b) != args[2] {
 				fmt.Printf("changed=%q\n", string(b))
 				return 0
 			}
