@@ -129,7 +129,7 @@ func spliceADRIndex(readme, table string) (string, error) {
 	}
 	switch {
 	case nBegin != 1 || nEnd != 1:
-		return "", fmt.Errorf("索引の生成区間の marker (%s と %s の行) が、1 つずつ無い (begin %d 個・end %d 個)", adrBegin, adrEnd, nBegin, nEnd)
+		return "", fmt.Errorf("索引の生成区間の marker (%s と %s の行) が、1 つずつ無い (begin %d 個・end %d 個)。索引の表を、この 2 行で囲む", adrBegin, adrEnd, nBegin, nEnd)
 	case begin >= end:
 		return "", fmt.Errorf("索引の生成区間の marker の順序が逆 (end が begin より前)")
 	}
