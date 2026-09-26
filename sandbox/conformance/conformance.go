@@ -34,8 +34,13 @@ func RequireEnv(name string) Option {
 	return func(o *options) { o.requireEnv = name }
 }
 
-// runTimeout は、檻 1 つの起動から終了までの上限。
-const runTimeout = 30 * time.Second
+// runTimeout は、檻 1 つの起動から終了までの上限 (既定は 30 秒。遅い CI では、環境変数 GORO_CONFORMANCE_TIMEOUT に、time.ParseDuration の形で指定する)。
+var runTimeout = func() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv("GORO_CONFORMANCE_TIMEOUT")); err == nil && d > 0 {
+		return d
+	}
+	return 30 * time.Second
+}()
 
 // C は、1 つの項目 (サブテスト) の文脈: テスト・バックエンド・宣言・fixture。
 type C struct {
