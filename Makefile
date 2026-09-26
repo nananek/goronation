@@ -27,10 +27,10 @@ define each_module
 	done <<< "$$mods"
 endef
 
-.PHONY: check fmt-check vet test build test-bwrap docs docs-check help
+.PHONY: check fmt-check vet vet-darwin test build test-bwrap docs docs-check help
 
 # `## ` の後ろは、make help が出す説明 (target の行に書く)。
-check: fmt-check vet test build ## 下の fmt-check・vet・test・build をすべて実行する (CI が回すのはこれ)
+check: fmt-check vet vet-darwin test build ## 下の fmt-check・vet・vet-darwin・test・build をすべて実行する (CI が回すのはこれ)
 
 # gofmt -l の出力が空であること。
 fmt-check: ## gofmt -l の出力が空であること
@@ -43,6 +43,13 @@ fmt-check: ## gofmt -l の出力が空であること
 
 vet: ## 全 module に go vet ./...
 	$(call each_module,go vet ./...)
+
+# seatbelt (macOS) を書く人が触る module (core・sandbox) が、darwin でビルドできること (Linux 専用のコードが混ざらないこと)。cgo は要らない。
+vet-darwin: ## core・sandbox に GOOS=darwin go vet (Linux 専用のコードの混入を防ぐ)
+	@for dir in core sandbox; do \
+		echo "==> $$dir: GOOS=darwin go vet ./..."; \
+		(cd "$$dir" && GOOS=darwin go vet ./...) || exit 1; \
+	done
 
 test: ## 全 module に go test (フラグは GO_TEST_FLAGS・GO_TEST_EXTRA で変える)
 	$(call each_module,go test $(GO_TEST_FLAGS) ./...)
