@@ -55,6 +55,7 @@
 // 制御文字 (C0・C1・DEL)・書式制御文字 (Cf: 双方向制御・ゼロ幅・BOM・タグ文字など)・見えない文字 (Unicode の
 // Default_Ignorable_Code_Point: Hangul filler・CGJ・Mongolian の異体字選択・未割当のものなど。異体字セレクタ U+FE00〜FE0F と
 // U+E0100〜E01EF だけを除く)・点字の空白 (U+2800)・U+2028/2029・不正な UTF-8・CR は、除去せず error にする。
+// 除いた異体字セレクタも、直前が異体字セレクタ・空白・行頭なら error にする (連続で、見えないデータを運べるため)。
 // これらは、構文解析の前の、生のバイト列でも調べる (doc comment の解析は、行末の FF などを黙って取り除くため)。
 //
 // 行番号は、//line ディレクティブで補正されない (lineOf)。構文の error の位置も、実際の行に書き直す。
@@ -77,9 +78,11 @@
 //
 //   - 文体、限界の質、「1 つの事実は 1 か所」、指示に見える文、中身の無い一文の package doc。
 //   - 見えない文字は、個別の列挙ではなく、Cf と Default_Ignorable_Code_Point の性質で禁止する。表は Go の unicode パッケージ
-//     (Go 1.24 で Unicode 15.0.0) のもので、Go の版が上がると範囲が変わりうる。通るのは、見えないが、絵文字と漢字の異体字に
-//     使う異体字セレクタ (U+FE00〜FE0F・U+E0100〜E01EF) だけ。逆に、ZWJ でつなぐ絵文字など、正当な Cf も error にする
-//     (TestDefaultIgnorableIsForbidden・TestJapaneseIsNotForbidden が固定している)。
+//     (Go 1.24 で Unicode 15.0.0) のもので、Go の版が上がると範囲が変わりうる。逆に、ZWJ でつなぐ絵文字など、正当な Cf も
+//     error にする (TestDefaultIgnorableIsForbidden・TestJapaneseIsNotForbidden が固定している)。
+//   - 異体字セレクタ (U+FE00〜FE0F・U+E0100〜E01EF。見えない) は、基底の文字に付いていれば通す。連続と、基底の無い単独は
+//     error だが、1 文字ごとに 1 個ずつ付ける形は、正当な使い方 (IVS・VS16) と区別できず、通る。1 文字あたり 1 バイトの
+//     見えない帯域が残る (TestVariationSelectorAlternationPassesThrough が固定している)。
 //   - 書き込みは非原子的 (os.Root に Rename が無い)。書く前に、内容・予算・既存の項目との衝突を確かめる (checkPlan)。
 //     書き始めた後に残る失敗は、入出力の失敗 (ディスクの空きなど) と時間の予算で、壊れた出力が残るが、-check が検出する。
 //   - os.Root は、bind mount・/proc・デバイスファイルを禁止しない。名前そのものの、open の間の差し替えは、読む・切り詰める前の

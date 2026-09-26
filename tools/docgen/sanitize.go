@@ -85,7 +85,8 @@ func normalize(k kind, s string) (string, error) {
 // forbiddenRune は、文書にも診断にも出さない文字か。改行とタブ以外の制御文字 (C0・DEL・C1)、書式制御文字 (Cf。
 // 表示の向きを変える双方向制御 (Trojan Source)・ゼロ幅の文字・BOM・タグ文字など)、行・段落の区切り (U+2028・U+2029)、
 // 見えない文字 (isDefaultIgnorable)、点字の空白 (U+2800。見た目が空白) を含む。見えないので、レビューで読めない内容を
-// 隠せる (2 種類の見えない文字の並びで、任意のデータを書ける)。
+// 隠せる (2 種類の見えない文字の並びで、任意のデータを書ける)。異体字セレクタは、この関数では通し、置き場所を
+// runeError が見る。
 func forbiddenRune(r rune) bool {
 	switch {
 	case r == '\n' || r == '\t':
@@ -104,28 +105,51 @@ func forbiddenRune(r rune) bool {
 // パッケージ (PropList.txt から生成。unicode.Version は、Go 1.24 で 15.0.0) の Other_Default_Ignorable_Code_Point (Hangul
 // filler U+115F・U+1160・U+3164・U+FFA0、CGJ U+034F、Khmer U+17B4・U+17B5、未割当の U+2065・U+FFF0〜FFF8・U+E0000 台) と
 // Variation_Selector (Mongolian の U+180B〜180D・180F と、異体字セレクタ) を使い、個別の文字を並べない。
-// 除くのは、異体字セレクタ U+FE00〜FE0F (絵文字) と U+E0100〜E01EF (漢字の異体字 IVS。日本語で正当に使う) だけ。
+// 除くのは、異体字セレクタ (isVariationSelector) だけ。
 func isDefaultIgnorable(r rune) bool {
-	if 0xFE00 <= r && r <= 0xFE0F || 0xE0100 <= r && r <= 0xE01EF {
+	if isVariationSelector(r) {
 		return false
 	}
 	return unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || unicode.Is(unicode.Variation_Selector, r)
 }
 
-// checkRunes は、s が正しい UTF-8 で、forbiddenRune を含まないことを確かめる。
-func checkRunes(s string) error {
-	if !utf8.ValidString(s) {
-		return fmt.Errorf("不正な UTF-8 を含む")
-	}
-	for _, r := range s {
-		if forbiddenRune(r) {
-			return fmt.Errorf("制御文字か、書式制御文字 (見えない文字・表示の向きを変える文字) U+%04X を含む", r)
-		}
+// isVariationSelector は、異体字セレクタ U+FE00〜FE0F (絵文字) と U+E0100〜E01EF (漢字の異体字 IVS。日本語で正当に使う) か。
+// 256 個 = ちょうど 1 バイトの文字集合で、見えない。基底の文字に付けず、並べると、任意のデータを運べる。
+func isVariationSelector(r rune) bool {
+	return 0xFE00 <= r && r <= 0xFE0F || 0xE0100 <= r && r <= 0xE01EF
+}
+
+// runeError は、文字 r を、文書にも診断にも出せないなら、その理由を error で返す (出せるなら nil)。prev は、直前の文字
+// (行頭・文字列の先頭は 0。NUL は forbiddenRune が禁止するので、先頭と区別しなくてよい)。
+// forbiddenRune の文字に加え、異体字セレクタは、基底の文字に付いているときだけ通す (直前が、異体字セレクタ・空白
+// (改行を含む)・行頭なら error)。連続と、基底の無い単独を禁止して、見えないデータの運び屋にしない。
+// 文字を 1 つずつ見る入口 (checkRunes・checkSource・escapeDiag) は、必ずこの関数を通す。
+func runeError(prev, r rune) error {
+	switch {
+	case forbiddenRune(r):
+		return fmt.Errorf("制御文字か、書式制御文字 (見えない文字・表示の向きを変える文字) U+%04X を含む", r)
+	case isVariationSelector(r) && (prev == 0 || isVariationSelector(prev) || unicode.IsSpace(prev)):
+		return fmt.Errorf("異体字セレクタ U+%04X が、基底の文字に付いていない (直前が異体字セレクタ・空白・行頭。付けるのは、1 文字に 1 個)", r)
 	}
 	return nil
 }
 
-// checkSource は、読んだファイル (.go・.md) の中身が、正しい UTF-8 で、forbiddenRune を含まないことを確かめる。
+// checkRunes は、s が正しい UTF-8 で、runeError の文字を含まないことを確かめる。
+func checkRunes(s string) error {
+	if !utf8.ValidString(s) {
+		return fmt.Errorf("不正な UTF-8 を含む")
+	}
+	var prev rune
+	for _, r := range s {
+		if err := runeError(prev, r); err != nil {
+			return err
+		}
+		prev = r
+	}
+	return nil
+}
+
+// checkSource は、読んだファイル (.go・.md) の中身が、正しい UTF-8 で、runeError の文字を含まないことを確かめる。
 // 入力を構文解析や変換にかける前の生のバイト列で調べる (doc comment の解析は、行末の空白 (FF・VT・U+0085・
 // U+2028 など) を黙って取り除くので、解析後の文字列だけを調べても、制御文字を見逃す)。
 // 見つけたら、path:行: の形で error にする。
@@ -134,13 +158,15 @@ func checkSource(name string, data []byte) error {
 		if !utf8.ValidString(line) {
 			return fmt.Errorf("%s:%d: 不正な UTF-8 を含む", name, i+1)
 		}
+		var prev rune
 		for _, r := range line {
-			switch {
-			case r == '\r':
+			if r == '\r' {
 				return fmt.Errorf("%s:%d: CR を含む (改行は LF にする。CRLF に変換されないよう、.gitattributes で eol=lf にする)", name, i+1)
-			case forbiddenRune(r):
-				return fmt.Errorf("%s:%d: 制御文字か、書式制御文字 (見えない文字・表示の向きを変える文字) U+%04X を含む", name, i+1, r)
 			}
+			if err := runeError(prev, r); err != nil {
+				return fmt.Errorf("%s:%d: %w", name, i+1, err)
+			}
+			prev = r
 		}
 	}
 	return nil
@@ -331,12 +357,14 @@ func codeBlock(lang, s string) string {
 	return fence + lang + "\n" + strings.TrimRight(s, "\n") + "\n" + fence
 }
 
-// escapeDiag は、診断の文字列の、禁止する文字 (forbiddenRune) と改行・タブ・不正な UTF-8 を、\x..・\u....・\U........ に直す。
+// escapeDiag は、診断の文字列の、禁止する文字 (runeError) と改行・タブ・不正な UTF-8 を、\x..・\u....・\U........ に直す。
 // 攻撃者が付けられる名前や本文が、端末の制御列や、偽の行を出力に出さないため。
 func escapeDiag(s string) string {
 	var b strings.Builder
+	var prev rune
 	for i := 0; i < len(s); {
 		r, w := utf8.DecodeRuneInString(s[i:])
+		bad := runeError(prev, r) != nil
 		switch {
 		case r == utf8.RuneError && w == 1:
 			b.WriteString(fmt.Sprintf(`\x%02x`, s[i]))
@@ -344,15 +372,16 @@ func escapeDiag(s string) string {
 			b.WriteString(`\n`)
 		case r == '\t':
 			b.WriteString(`\t`)
-		case forbiddenRune(r) && r < 0x100:
+		case bad && r < 0x100:
 			b.WriteString(fmt.Sprintf(`\x%02x`, r))
-		case forbiddenRune(r) && r > 0xFFFF:
+		case bad && r > 0xFFFF:
 			b.WriteString(fmt.Sprintf(`\U%08x`, r))
-		case forbiddenRune(r):
+		case bad:
 			b.WriteString(fmt.Sprintf(`\u%04x`, r))
 		default:
 			b.WriteRune(r)
 		}
+		prev = r
 		i += w
 	}
 	return b.String()

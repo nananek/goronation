@@ -78,8 +78,9 @@ func TestForbiddenRune(t *testing.T) {
 }
 
 // TestDefaultIgnorableIsForbidden は、見えない文字 (Unicode の Default_Ignorable_Code_Point) を、個別の列挙ではなく、性質で
-// 禁止することを確認する (攻撃者視点レビュー 2d63f6d の finding 2)。通るのは、異体字セレクタ (U+FE00〜FE0F・U+E0100〜E01EF。
-// 絵文字と漢字の異体字に使う) だけで、限界として doc.go に書いてある。
+// 禁止することを確認する (攻撃者視点レビュー 2d63f6d の finding 2)。forbiddenRune 単体で通るのは、異体字セレクタ
+// (U+FE00〜FE0F・U+E0100〜E01EF。絵文字と漢字の異体字に使う) だけで、置き場所は runeError が見る
+// (variation_selector_test.go。連続と基底の無い単独は error。交互は限界として、doc.go に書いてある)。
 func TestDefaultIgnorableIsForbidden(t *testing.T) {
 	// レビューが実測した、通っていた文字と、その仲間 (Cf でない DI・未割当の DI・点字の空白) は、どの入口でも error。
 	for _, r := range []rune{0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x180B, 0x180C, 0x180D, 0x180F,
