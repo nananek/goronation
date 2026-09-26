@@ -1,9 +1,11 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -63,7 +65,7 @@ func TestRunOpenCodeCage(t *testing.T) {
 	}
 	allowed := map[string]bool{}
 	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_MODELS_FETCH",
-		"OPENCODE_DISABLE_SHARE", "OPENCODE_DISABLE_LSP_DOWNLOAD", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "PWD"} {
+		"OPENCODE_DISABLE_SHARE", "OPENCODE_DISABLE_LSP_DOWNLOAD", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "PWD"} {
 		allowed[n] = true
 	}
 	names := strings.Split(kv["env"], ",")
@@ -456,5 +458,56 @@ func TestRunThirdAgent(t *testing.T) {
 	}
 	if _, err := os.Lstat(f.agentPath("opencode")); err == nil {
 		t.Error("fakeagent の起動が、opencode の状態 (agents/opencode) を作った")
+	}
+}
+
+// 檻の中のプロセスが、同じ檻の中の別のプロセス (opencode 2 系の background service など) へ、http://127.0.0.1:PORT で繋ぐとき、その通信は、
+// proxy (egress) を通らず、直接届く。NO_PROXY が無いと、その通信が egress に届いて、拒否される (reason=method・405)。
+// 檻の境界は変わらない: 直接届くのは、檻の中の loopback だけで、ホストの loopback には、NO_PROXY があっても届かない (ネットワークが無い)。
+func TestRunLoopbackBypassesProxy(t *testing.T) {
+	f := newRunFixture(t)
+	hostL, err := net.Listen("tcp", "127.0.0.1:0") // ホストの loopback で待ち受ける (檻の loopback とは別)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hostL.Close()
+	var hostAccepts atomic.Int32
+	go func() {
+		for {
+			c, err := hostL.Accept()
+			if err != nil {
+				return
+			}
+			hostAccepts.Add(1)
+			c.Close()
+		}
+	}()
+
+	for _, agent := range [][]string{{}, {"--agent", "opencode"}} {
+		args := append(append([]string{"run"}, agent...), "--repo", f.repo, "--", "loopback")
+		r := f.goro(t, args...).mustOK(t)
+		_, res := parseOut(r.stdout)
+		if res["loopback"] != "200 direct" {
+			t.Errorf("%v: 檻の中の loopback への GET = %q, want 200 direct (proxy を通らない)\n%s", agent, res["loopback"], r)
+		}
+		id := sessionID(t, r)
+		log, err := os.ReadFile(filepath.Join(f.stateDir(), "sessions", id, "run", egressLogName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(log), "127.0.0.1") || strings.Contains(r.stderr, "127.0.0.1") {
+			t.Errorf("%v: 檻の中の loopback への通信が、egress に届いている:\n%s\n%s", agent, log, r.stderr)
+		}
+
+		// ホストの loopback には、届かない (NO_PROXY で直接に行っても、檻の loopback には、そのポートの待ち受けが無い)。
+		args = append(append([]string{"run"}, agent...), "--repo", f.repo, "--", "loopback", hostL.Addr().String())
+		r = f.goro(t, args...).mustOK(t)
+		_, res = parseOut(r.stdout)
+		if !strings.HasPrefix(res["loopback"], "err") {
+			t.Errorf("%v: ホストの loopback %s に届いた: %q", agent, hostL.Addr(), res["loopback"])
+		}
+	}
+	if n := hostAccepts.Load(); n != 0 {
+		t.Errorf("ホストの loopback が、檻からの接続を %d 回受けた", n)
 	}
 }

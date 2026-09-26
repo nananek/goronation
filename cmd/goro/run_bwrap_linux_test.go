@@ -438,12 +438,12 @@ func TestRunCageIsolation(t *testing.T) {
 	// 環境変数と、起動の状態。
 	info := f.goro(t, "run", "--repo", f.repo, "--", "info").mustOK(t)
 	kv, _ := parseOut(info.stdout)
-	if kv["home"] != "/home/goro" || kv["cwd"] != "/work" || kv["https_proxy"] != "http://127.0.0.1:3128" {
-		t.Errorf("HOME・cwd・HTTPS_PROXY = %q・%q・%q", kv["home"], kv["cwd"], kv["https_proxy"])
+	if kv["home"] != "/home/goro" || kv["cwd"] != "/work" || kv["https_proxy"] != "http://127.0.0.1:3128" || kv["no_proxy"] != "127.0.0.1,localhost,::1" {
+		t.Errorf("HOME・cwd・HTTPS_PROXY・NO_PROXY = %q・%q・%q・%q", kv["home"], kv["cwd"], kv["https_proxy"], kv["no_proxy"])
 	}
 	allowed := map[string]bool{}
 	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY",
-		"DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "PWD"} {
+		"DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "PWD"} {
 		allowed[n] = true
 	}
 	for _, n := range strings.Split(kv["env"], ",") {

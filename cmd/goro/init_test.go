@@ -246,7 +246,7 @@ func TestInitNoForwardTTY(t *testing.T) {
 	}
 }
 
-// proxyEnvNames は、init が設定するはずの 4 つと、設定しないはずの NO_PROXY。
+// proxyEnvNames は、init が設定するはずの 4 つ (proxy を指す) と、NO_PROXY・no_proxy (loopback を迂回する)。
 var proxyEnvNames = []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy"}
 
 // withEnv は、os.Environ() から names を除き、add を足した環境変数を返す。
@@ -282,7 +282,7 @@ func printEnv(t *testing.T, env []string, extra []string, listen string) map[str
 }
 
 func TestInitProxyEnv(t *testing.T) {
-	// 親の環境に、proxy の変数 (init が上書きするもの) と、無関係な変数がある。NO_PROXY は無い。
+	// 親の環境に、proxy の変数 (init が上書きするもの) と、無関係な変数がある。NO_PROXY は無い (init が、loopback を迂回する値を設定する)。
 	parent := withEnv(proxyEnvNames, "HTTPS_PROXY=http://parent.example:1", "http_proxy=http://parent.example:2", "GORO_TEST_MARKER=kept")
 
 	t.Run("空きポート", func(t *testing.T) {
@@ -302,11 +302,10 @@ func TestInitProxyEnv(t *testing.T) {
 		if n, err := strconv.Atoi(port); err != nil || n == 0 {
 			t.Errorf("ポート = %q, want 実際に待ち受けているポート (0 ではない)", port)
 		}
-		if v, ok := env["NO_PROXY"]; ok {
-			t.Errorf("NO_PROXY = %q, want 未設定", v)
-		}
-		if v, ok := env["no_proxy"]; ok {
-			t.Errorf("no_proxy = %q, want 未設定", v)
+		for _, name := range []string{"NO_PROXY", "no_proxy"} { // loopback は、proxy を通さない (檻の中の別のプロセスへの http://127.0.0.1:PORT が、egress に届かない)
+			if env[name] != "127.0.0.1,localhost,::1" {
+				t.Errorf("%s = %q, want 127.0.0.1,localhost,::1", name, env[name])
+			}
 		}
 		if env["GORO_TEST_MARKER"] != "kept" {
 			t.Errorf("無関係な環境変数が引き継がれない: %v", env)
@@ -324,6 +323,28 @@ func TestInitProxyEnv(t *testing.T) {
 		for _, name := range proxyEnvNames[:4] {
 			if want := "http://" + listen; env[name] != want {
 				t.Errorf("%s = %q, want %q", name, env[name], want)
+			}
+		}
+	})
+
+	// 親に NO_PROXY・no_proxy があれば、その値に、loopback を (無いものだけ) 足す。両方に、同じ値を設定する。
+	t.Run("既存の NO_PROXY に足す", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			parent []string
+			want   string
+		}{
+			"大文字だけ":       {[]string{"NO_PROXY=internal.example,.corp.example"}, "internal.example,.corp.example,127.0.0.1,localhost,::1"},
+			"小文字だけ":       {[]string{"no_proxy=internal.example"}, "internal.example,127.0.0.1,localhost,::1"},
+			"両方":          {[]string{"NO_PROXY=a.example", "no_proxy=b.example,a.example"}, "a.example,b.example,127.0.0.1,localhost,::1"},
+			"loopback 済み": {[]string{"NO_PROXY= 127.0.0.1 ,LOCALHOST,x.example"}, "127.0.0.1,LOCALHOST,x.example,::1"},
+			"空の値":         {[]string{"NO_PROXY="}, "127.0.0.1,localhost,::1"},
+			"*":           {[]string{"NO_PROXY=*"}, "*,127.0.0.1,localhost,::1"},
+		} {
+			env := printEnv(t, withEnv(proxyEnvNames, tc.parent...), nil, "127.0.0.1:0")
+			for _, key := range []string{"NO_PROXY", "no_proxy"} {
+				if env[key] != tc.want {
+					t.Errorf("%s: %s = %q, want %q", name, key, env[key], tc.want)
+				}
 			}
 		}
 	})

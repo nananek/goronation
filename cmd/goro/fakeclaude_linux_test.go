@@ -57,6 +57,8 @@ var testAgentProfile = agentProfile{
 //	info                  引数・作業ディレクトリ・HOME・環境変数の名前・/work の中身を出す
 //	probe OP...           OP (stat:PATH・write:PATH・dial:ADDR・mnt:PATH) を試して、結果を出す。mnt は、PATH の mount が ro か rw か
 //	connect TARGET...     HTTPS_PROXY へ、TARGET の CONNECT を送り、応答の状態コードを出す
+//	loopback [ADDR]       proxy の環境変数を守るクライアント (Bun・Node と同じ: NO_PROXY の宛先は直接、それ以外は HTTP_PROXY 経由) で、ADDR
+//	                      (無ければ、檻の中の loopback に自分で立てたサーバー) に GET し、"loopback => <状態コード> direct|proxy" を出す
 //	commit FILE TEXT MSG  /work に FILE を書いて、git commit する
 //	gitlog FILE           /work のコミットの一覧と、FILE の中身を出す
 //	marker                HOME のログインの目印を読む
@@ -94,6 +96,8 @@ func fakeClaude(args []string) int {
 			fmt.Printf("%s => %s\n", target, fakeConnect(target))
 		}
 		return 0
+	case "loopback":
+		return fakeLoopback(args[1:])
 	case "commit":
 		if len(args) != 4 {
 			fmt.Println("commit: 引数が足りない")
@@ -150,6 +154,65 @@ func fakeClaude(args []string) int {
 	return 2
 }
 
+// fakeLoopback は、proxy の環境変数を守るクライアントとして、addr に GET する。addr が無ければ、檻の中の loopback にサーバーを立てて、それに GET する。
+// 宛先のホストが NO_PROXY (no_proxy) の項目に一致すれば直接、そうでなければ HTTP_PROXY に、絶対形式のリクエストを送る (Bun・Node と同じ)。
+func fakeLoopback(args []string) int {
+	addr := ""
+	if len(args) > 0 {
+		addr = args[0]
+	} else {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			fmt.Println("loopback => err: " + err.Error())
+			return 1
+		}
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					defer c.Close()
+					bufio.NewReader(c).ReadString('\n')
+					fmt.Fprint(c, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+				}()
+			}
+		}()
+		addr = l.Addr().String()
+	}
+	host, _, _ := net.SplitHostPort(addr)
+	direct := false
+	for _, key := range []string{"NO_PROXY", "no_proxy"} {
+		for _, item := range strings.Split(os.Getenv(key), ",") {
+			if item = strings.TrimSpace(item); item != "" && strings.EqualFold(item, host) {
+				direct = true
+			}
+		}
+	}
+	dial, request, route := addr, "GET / HTTP/1.1\r\nHost: "+addr+"\r\nConnection: close\r\n\r\n", "direct"
+	if !direct {
+		dial, route = strings.TrimPrefix(os.Getenv("HTTP_PROXY"), "http://"), "proxy"
+		request = "GET http://" + addr + "/ HTTP/1.1\r\nHost: " + addr + "\r\nConnection: close\r\n\r\n"
+	}
+	c, err := net.DialTimeout("tcp", dial, 5*time.Second)
+	if err != nil {
+		fmt.Println("loopback => err: " + err.Error())
+		return 0
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(10 * time.Second))
+	fmt.Fprint(c, request)
+	line, err := bufio.NewReader(c).ReadString('\n')
+	f := strings.Fields(line)
+	if err != nil && len(f) < 2 {
+		fmt.Println("loopback => err: " + err.Error())
+		return 0
+	}
+	fmt.Printf("loopback => %s %s\n", f[1], route)
+	return 0
+}
+
 // fakeInfo は、檻の中から見える、起動の状態を出す。
 func fakeInfo(args []string) int {
 	cwd, _ := os.Getwd()
@@ -164,8 +227,8 @@ func fakeInfo(args []string) int {
 			work = append(work, e.Name())
 		}
 	}
-	fmt.Printf("args=%q\ncwd=%s\nhome=%s\nenv=%s\nhttps_proxy=%s\nwork=%s\n",
-		args, cwd, os.Getenv("HOME"), strings.Join(names, ","), os.Getenv("HTTPS_PROXY"), strings.Join(work, ","))
+	fmt.Printf("args=%q\ncwd=%s\nhome=%s\nenv=%s\nhttps_proxy=%s\nno_proxy=%s\nwork=%s\n",
+		args, cwd, os.Getenv("HOME"), strings.Join(names, ","), os.Getenv("HTTPS_PROXY"), os.Getenv("NO_PROXY"), strings.Join(work, ","))
 	return 0
 }
 
