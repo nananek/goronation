@@ -3,6 +3,7 @@ go 1.24.0
 use (
 	./cmd
 	./core
+	./hostfs
 	./sandbox
 	./tools/archtest
 	./tools/docgen
