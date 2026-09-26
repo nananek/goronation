@@ -71,22 +71,12 @@ func readTree(t *testing.T, dir string) map[string]string {
 	return out
 }
 
-// firstDiff は、a と b が最初に違う行 (1 始まり) と、その 2 行を返す。
-func firstDiff(a, b string) (int, string, string) {
-	la, lb := strings.Split(a, "\n"), strings.Split(b, "\n")
-	for i := 0; i < max(len(la), len(lb)); i++ {
-		var x, y string
-		if i < len(la) {
-			x = la[i]
-		}
-		if i < len(lb) {
-			y = lb[i]
-		}
-		if x != y {
-			return i + 1, x, y
-		}
+// lineAt は、s の n 行目 (1 始まり)。無ければ空。
+func lineAt(s string, n int) string {
+	if lines := strings.Split(s, "\n"); n >= 1 && n <= len(lines) {
+		return lines[n-1]
 	}
-	return 0, "", ""
+	return ""
 }
 
 // TestGolden は、testdata/golden/<case>/repo の生成結果が、<case>/want と完全一致することを確認する。
@@ -132,8 +122,8 @@ func TestGolden(t *testing.T) {
 			}
 			for p, w := range wantFiles {
 				if got := res.Expected[p]; got != w {
-					n, x, y := firstDiff(got, w)
-					t.Errorf("%s: %d 行目から違う\n  got : %s\n  want: %s", p, n, x, y)
+					n := firstDiffLine(got, w)
+					t.Errorf("%s: %d 行目から違う\n  got : %s\n  want: %s", p, n, lineAt(got, n), lineAt(w, n))
 				}
 			}
 

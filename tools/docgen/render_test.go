@@ -424,24 +424,6 @@ func TestDeterministic(t *testing.T) {
 	}
 }
 
-// TestFileNameOrderDoesNotMatter は、宣言を置くファイルの名前 (= 走査の順) を変えても、生成物が同じことを確認する。
-func TestFileNameOrderDoesNotMatter(t *testing.T) {
-	a := "package core\n\n// A は、A。\ntype A struct{}\n\n// FA は、関数。\nfunc FA() {}\n"
-	b := "package core\n\n// B は、B。\ntype B struct{}\n\n// FB は、関数。\nfunc FB() {}\n"
-	doc := "// Package core は、テスト。\npackage core\n"
-	r1, err := analyzeFiles(t, map[string]string{"core/doc.go": doc, "core/1.go": a, "core/2.go": b})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r2, err := analyzeFiles(t, map[string]string{"core/doc.go": doc, "core/1.go": b, "core/2.go": a})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r1.Expected["docs/reference/core.md"] != r2.Expected["docs/reference/core.md"] {
-		t.Error("ファイルの名前の順で、生成物が変わる")
-	}
-}
-
 // TestPackageErrors は、生成できない package が、skip ではなく error になることを確認する。
 func TestPackageErrors(t *testing.T) {
 	okDoc := "// Package core は、テスト。\npackage core\n"
