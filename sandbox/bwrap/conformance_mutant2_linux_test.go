@@ -72,7 +72,8 @@ func TestConformanceCatchesMutants2(t *testing.T) {
 		"leaks-cred-env":    "env-clean",    // ホストの資格情報を、檻に渡す
 	} {
 		t.Run(mutant, func(t *testing.T) {
-			cmd := exec.Command(os.Args[0], "-test.run=^TestConformanceMutant2Inner$", "-test.count=1", "-test.v")
+			// 内側では、指定の項目だけを動かす (適合テスト全体は、-race で 1 回 約 16 秒かかる)。親の死・fd の役の再実行は、Run を呼んだテストの名前だけを指すので、影響しない。
+			cmd := exec.Command(os.Args[0], "-test.run=^TestConformanceMutant2Inner$/^"+item+"$", "-test.count=1", "-test.v")
 			cmd.Env = append(os.Environ(), mutant2Env+"="+mutant, "GH_TOKEN=ghp_host_secret")
 			out, err := cmd.CombinedOutput()
 			if err == nil {
