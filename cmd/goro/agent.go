@@ -88,7 +88,7 @@ var opencodeProfile = agentProfile{
 	loginArgs: []string{"auth", "login"},
 	loginGuide: "ログイン用に opencode の auth login を起動する。provider を選び (Zen なら OpenCode Zen)、https://opencode.ai/auth で作った " +
 		"API キーを貼ると、檻専用の HOME に保存されて終わる (OAuth の provider は、ホストのブラウザの localhost に戻れないので、使えない)",
-	resumeNote: "opencode の会話は、この --agent の檻専用の HOME に残る。続きは、起動後に /sessions で選ぶ (-- --continue は、同じ repo の直近の会話を開く)",
+	resumeNote: "opencode の会話は、この --agent の檻専用の HOME に残る。続きは、起動後に /sessions で選ぶ。-- --continue は、同じ repo の直近の会話を開く",
 	denyNotes: map[string]string{
 		"registry.npmjs.org:443": "opencode が、起動のたびに、プラグインの依存 (@opencode-ai/plugin) の install を試す。失敗しても動くので、許可しなくてよい",
 		"models.opencode.ai:443": "auth login が、provider の一覧を取ろうとする。同梱の一覧で動くので、許可しなくてよい",

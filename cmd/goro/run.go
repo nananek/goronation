@@ -473,7 +473,7 @@ func printRunSummary(w io.Writer, s runSummary) {
 		fmt.Fprintf(w, "  再開:         goro run%s%s --session %s\n", agentFlag, stateFlag, s.id)
 		fmt.Fprintf(w, "  成果の取り出し: goro export%s %s\n", stateFlag, s.id)
 		if s.agent.resumeNote != "" {
-			fmt.Fprintf(w, "  (%s)\n", s.agent.resumeNote)
+			fmt.Fprintf(w, "  %s\n", s.agent.resumeNote)
 		}
 	}
 	if s.logPath != "" {
