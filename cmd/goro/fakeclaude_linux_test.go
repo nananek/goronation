@@ -33,7 +33,8 @@ func init() {
 // fakeClaude は、偽のエージェント (claude・opencode)。最初の引数が、場面の名前で、結果を、標準出力に "キー=値" か "操作 => 結果" の行で出す
 // (goro run は、標準入出力を、檻の中の claude に直結する)。場面は次の通り。
 //
-//	auth ...              opencode の --login のときの起動 (auth login)。引数と環境を出し、HOME にログインの目印を作る
+//	auth login [場面...]  opencode の --login のときの起動 (auth login)。HOME にログインの目印を作り、続きに場面があれば、それを動かす
+//	                      (なければ、引数と環境を出す)
 //	info                  引数・作業ディレクトリ・HOME・環境変数の名前・/work の中身を出す
 //	probe OP...           OP (stat:PATH・write:PATH・dial:ADDR・mnt:PATH) を試して、結果を出す。mnt は、PATH の mount が ro か rw か
 //	connect TARGET...     HTTPS_PROXY へ、TARGET の CONNECT を送り、応答の状態コードを出す
@@ -54,6 +55,9 @@ func fakeClaude(args []string) int {
 	case "auth":
 		if err := os.WriteFile("/home/goro/login-marker", []byte("logged-in\n"), 0o600); err != nil {
 			fmt.Println("marker-write-error=" + err.Error())
+		}
+		if len(args) > 2 && args[1] == "login" && !strings.HasPrefix(args[2], "-") { // auth login <場面> ...: 続きの場面も動かす
+			return fakeClaude(args[2:])
 		}
 		return fakeInfo(args)
 	case "info":

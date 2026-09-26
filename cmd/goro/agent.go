@@ -97,6 +97,16 @@ var opencodeProfile = agentProfile{
 	},
 }
 
+// loginDirs は、--login が使う、状態ディレクトリの下の、空の作業ディレクトリ (/work) と run dir の名前。エージェントごとに別にする:
+// 共有すると、片方のエージェントの檻が /work に置いた設定 (opencode.json・.opencode/・.claude/settings.json) が、もう片方の
+// --login の檻 (そのエージェントの HOME の認証情報を持つ) で読まれて動く。claude は、互換のため、これまでの名前のまま。
+func (p agentProfile) loginDirs() (work, run string) {
+	if p.name == claudeProfile.name {
+		return "login-work", "login-run"
+	}
+	return "login-work-" + p.name, "login-run-" + p.name
+}
+
 // agents は、--agent に指定できるエージェント。先頭が既定。
 var agents = []agentProfile{claudeProfile, opencodeProfile}
 

@@ -484,3 +484,30 @@ func TestPrintRunSummaryDenyNotes(t *testing.T) {
 		t.Errorf("claude の拒否に、opencode の説明が付いた:\n%s", out)
 	}
 }
+
+// --login の作業ディレクトリと run dir の名前は、エージェントごとに別 (claude は、これまでの名前のまま)。UDS の path も、その run dir の下。
+func TestLoginDirs(t *testing.T) {
+	work, run := claudeProfile.loginDirs()
+	if work != "login-work" || run != "login-run" {
+		t.Errorf("claude の loginDirs = %q・%q, want login-work・login-run (これまでの名前。互換)", work, run)
+	}
+	owork, orun := opencodeProfile.loginDirs()
+	if owork != "login-work-opencode" || orun != "login-run-opencode" {
+		t.Errorf("opencode の loginDirs = %q・%q", owork, orun)
+	}
+	if work == owork || run == orun {
+		t.Error("login の作業ディレクトリか run dir が、エージェント間で共有されている")
+	}
+	for _, p := range agents { // どのエージェントも、名前が違い、セッションのディレクトリ (sessions) と衝突しない
+		w, r := p.loginDirs()
+		if w == r || w == "sessions" || r == "sessions" || w == p.homeName || r == p.homeName {
+			t.Errorf("%s の loginDirs = %q・%q (互いに、HOME・sessions と衝突している)", p.name, w, r)
+		}
+	}
+	if got := sockPathFor("/s", runOptions{login: true}); got != "/s/login-run/proxy.sock" {
+		t.Errorf("claude の login の UDS = %q", got)
+	}
+	if got := sockPathFor("/s", runOptions{login: true, agent: "opencode"}); got != "/s/login-run-opencode/proxy.sock" {
+		t.Errorf("opencode の login の UDS = %q", got)
+	}
+}

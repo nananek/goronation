@@ -406,7 +406,7 @@ func TestCageArgs(t *testing.T) {
 // egress の UDS の path が長すぎるときは、セッションの clone を作る前に断る (何も作らない: 孤児のセッションを残さない)。
 // 検査する path は、上限ちょうどまで通り、1 バイト超えると断る。--login は、別の (短い) path を使う。
 func TestRunRejectsLongSockPathBeforeCreate(t *testing.T) {
-	for name, o := range map[string]runOptions{"--repo": {repo: "x"}, "--session": {session: "x"}, "--login": {login: true}} {
+	for name, o := range map[string]runOptions{"--repo": {repo: "x"}, "--session": {session: "x"}, "--login": {login: true}, "--login (opencode)": {login: true, agent: "opencode"}} {
 		probe := sockPathFor("/x", o) // 状態ディレクトリ /x の分 (2 バイト) を除いた長さで、上限に合わせる
 		stateAt := func(total int) string { return "/" + strings.Repeat("a", total-len(probe)+1) }
 		if err := checkSockPath(sockPathFor(stateAt(maxSockPath), o)); err != nil {

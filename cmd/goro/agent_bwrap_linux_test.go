@@ -188,6 +188,34 @@ func TestRunOpenCodeResumesSession(t *testing.T) {
 	}
 }
 
+// --login の作業ディレクトリ (/work) と run dir は、エージェントごとに別: 片方の --login の檻が /work に置いたものが、もう片方の
+// --login の檻の /work に見えてはいけない (どちらの向きも)。run dir の egress.log (過去の拒否宛先) も、別。claude の名前は、そのまま。
+func TestRunLoginDirsSeparateBothWays(t *testing.T) {
+	f := newRunFixture(t)
+	// opencode の --login の檻が、claude の設定を置く。
+	f.goro(t, "run", "--agent", "opencode", "--login", "--", "commit", "settings.json", "PLANTED-BY-OPENCODE-LOGIN", "msg")
+	if b, err := os.ReadFile(filepath.Join(f.stateDir(), "login-work-opencode", "settings.json")); err != nil || string(b) != "PLANTED-BY-OPENCODE-LOGIN" {
+		t.Fatalf("前提: opencode の --login の檻が、/work (<state>/login-work-opencode) に書けていない: %q, %v", b, err)
+	}
+	r := f.goro(t, "run", "--login").mustOK(t)
+	if kv, _ := parseOut(r.stdout); kv["work"] != "" {
+		t.Errorf("claude の --login の檻の /work に、opencode の --login の檻が置いたものが見える: work=%q\n%s", kv["work"], r)
+	}
+	// 拒否された宛先の履歴 (egress.log) も、別。
+	f.goro(t, "run", "--agent", "opencode", "--login", "--", "connect", "only-opencode.example:443").mustOK(t)
+	f.goro(t, "run", "--login", "--", "connect", "only-claude.example:443").mustOK(t)
+	for dir, want := range map[string]string{"login-run": "only-claude.example", "login-run-opencode": "only-opencode.example"} {
+		b, err := os.ReadFile(filepath.Join(f.stateDir(), dir, egressLogName))
+		other := "only-opencode.example"
+		if want == other {
+			other = "only-claude.example"
+		}
+		if err != nil || !strings.Contains(string(b), want) || strings.Contains(string(b), other) {
+			t.Errorf("%s/egress.log に、%s だけがあるはず (%s は無い): %q, %v", dir, want, other, b, err)
+		}
+	}
+}
+
 // opencode がスクリプト (npm のラッパーなど) なら、檻を起こす前に断る (セッションも作らない)。--agent opencode に --claude は効かない。
 func TestRunOpenCodeRejectsScriptAndWrongFlag(t *testing.T) {
 	f := newRunFixture(t)
