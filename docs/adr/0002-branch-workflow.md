@@ -16,11 +16,11 @@
 - `develop` を統合ブランチとし、PR の base にする。develop へは squash merge だけを使う。
 - 作業ブランチは develop から切り、develop へ PR を出す。
 - `main` へは、保守者が区切りごとに develop から merge commit で反映する。
-- その merge commit は main にしか無いので、保守者が反映した直後に develop へ戻す。develop に他の変更が入る前に、fast-forward で行う (入ると fast-forward にならない)。develop への直接 push (force なし) で、決定 2 の例外である。
+- その merge commit は main にしか無いので、保守者が反映し、直後に develop へ戻す。develop に他の変更が入る前に、fast-forward で行う。develop への直接 push (force なし) で、決定 2 の例外である。
 
 ### 2. エージェントがしないこと
 
-- main と develop へ直接 push する。
+- main と develop へ直接 push する。例外は決定 1 の戻す操作で、行うのは保守者。エージェントは、保守者の明示の指示があるときだけ行う。
 - main への PR を出す。main への PR を merge する。
 
 ### 3. main 向けの PR は develop からだけ
@@ -32,7 +32,7 @@ main を base とする PR は、同じ repo の `develop` を head とするも
 次は保守者がリポジトリの設定で行う。**コードでは強制されない。**
 
 - ruleset は develop 用と main 用の 2 つに分ける。merge 方式は ruleset ごとの設定で (docs の Available rules for rulesets は「対象のブランチは、許可した方式でしか merge できない」と述べる)、develop 用は squash のみ、main 用は merge commit のみを許可する。どちらも PR を必須にし (Require a pull request before merging)、bypass list は空にする。保守者も PR の merge で変更を入れるので、通常の作業は妨げられない。エージェントが保守者と同じアカウントで push しても、直接 push は止まる想定である。設定で担保する対象は決定 2 の「直接 push の禁止」だけで、設定が無い間は約束にすぎない。PR の作成と merge を制限する設定は無く、「main への PR を出さない・merge しない」は運用の約束である (将来 egress で PR を絞る予定。Issue #1)。
-- 決定 1 の戻す操作のときだけ、保守者が develop 用の ruleset を一時的に無効にし (bypass list は空のまま)、終えたらすぐ有効に戻す。無効の間は、develop の PR 必須などの規則が効かない (docs の About rulesets は、Disabled の ruleset を「enforce されない」と述べる)。
+- 決定 1 の戻す操作のときだけ、保守者が develop 用の ruleset を一時的に無効にし、終えたらすぐ有効に戻す。無効の間は、PR 必須・force push 禁止・削除禁止が全て効かず、エージェントの push も止まらない (docs の About rulesets は、Disabled の ruleset を「enforce されない」と述べる)。行うのは、他のエージェントが動いていない間だけで、エージェントは ruleset を変更しない。
 - docs (Available rules for rulesets) は「対象ブランチへのすべての変更を PR に関連づけることを求められる」と述べるが、bypass できない actor の直接 push が拒否されることと、bypass list が空なら管理者を含めて誰も bypass できないことは、原文で明記を確認できておらず**未検証**である。設定後に、保守者が同じアカウントで、ruleset の対象に含めたテスト用のブランチへ直接 push し、拒否されることを確かめる。
 - required check (develop 用と main 用の両方の ruleset): `ci.yml` の job `base` と `bwrap` を登録する。`ci.yml` の `pull_request` には `branches` の指定が無く、base ブランチを限定しない。
 - required check (main 用の ruleset にだけ): job 名 `only-from-develop` を登録する。`main-source-guard` は base が main の PR でしか動かないので、develop には登録しない (下の pending を参照)。
@@ -45,7 +45,7 @@ main を base とする PR は、同じ repo の `develop` を head とするも
 - GitHub には PR の取り込み元ブランチを制限する標準の設定が無いため、workflow による検査で代替する。
 - guard は `pull_request_target` で動くので、PR の head ではなく、リポジトリの**既定ブランチ**の workflow 定義が使われる (base ブランチの定義ではない。docs の Events that trigger workflows と、2025-12-08 から有効の changelog による: https://github.blog/changelog/2025-11-07-actions-pull_request_target-and-environment-branch-protections-changes/)。そのため、main 向けの PR の中身では、その PR に対する検査を書き換えられない。guard の定義は、develop に merge された内容で決まる。
 - guard 自身の変更を含む develop 向けの PR では、guard は動かない (base が main ではないため)。`.github/` の変更は、保守者が目で確認する。
-- `edited` を trigger に含めるのは、PR の base が後から main に変更された場合も検査するためである。docs の Webhook events and payloads は `edited` を「title か body の編集、または base ブランチの変更」と述べ、Events that trigger workflows は activity type の意味をそこに委ねている。ただし、base の変更でこの workflow が実際に起動し、`branches` が新しい base で評価されることは、実機で確かめておらず**未検証**である。起動しなくても、同名の成功の報告が無い限り、required check は pending のままで、merge は塞がれる (次の項も参照)。
+- `edited` を trigger に含めるのは、PR の base が後から main に変更された場合も検査するためである。docs の Webhook events and payloads は `edited` を「title か body の編集、または base ブランチの変更」と述べる。ただし、base の変更でこの workflow が実際に起動し、`branches` が新しい base で評価されることは、実機で確かめておらず**未検証**である。起動しなくても、同名の成功の報告が無い限り、required check は pending のままで、merge は塞がれる (次の項も参照)。
 - guard は事故防止であり、悪意ある PR 作成者への防壁ではない。別の workflow が同名の job を success で報告した場合に required check が満たされうるかは、**未検証**である。
 - 反映と戻す手間は、保守者が負う。
 
