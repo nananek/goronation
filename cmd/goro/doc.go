@@ -14,7 +14,7 @@
 // # 規則
 //
 //   - cage: 檻に入るのは、/usr・証明書・エージェントと goro の実体・run dir (すべて ro)、檻専用の HOME と clone (rw)、許可リストの環境変数だけ。ホストの HOME・~/.ssh・~/.claude・~/.local/share/opencode・環境変数は見えない。
-//   - egress: 許可は、claude が api.anthropic.com:443 と platform.claude.com:443、opencode が opencode.ai:443 に、--allow で足したもの。拒否は、終了後に宛先つきで表示する。監査 (run dir の egress.log) は、詰まっても止まらず、行を捨てて数える。
+//   - egress: 許可は、エージェントごとの既定の宛先 (goro run -h に出る) に、--allow で足したもの。拒否は、終了後に宛先つきで表示する。監査 (run dir の egress.log) は、詰まっても止まらず、行を捨てて数える。
 //   - signal: 端末のシグナルは、檻の中のエージェントが直接受ける (goro init は転送しない)。ホストの goro run は SIGINT・SIGQUIT を無視し、SIGTERM・SIGHUP で檻を止める。
 //   - no-host-git: ホストは git を実行しない。clone も export も使い捨ての檻の中で行い、bundle の取り込みは、利用者が自分の repo で行う。
 //

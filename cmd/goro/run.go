@@ -19,40 +19,55 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-const runUsage = `使い方: goro run (--repo PATH | --session ID | --login) [--agent claude|opencode] [オプション] [-- エージェントへの引数...]
-
-エージェント (claude か opencode) を、檻 (ネットワークの無い bwrap) の中で、ホストの repo の private clone の上で動かす。
-ホストの作業ツリー・.git・~/.claude・~/.local/share/opencode・~/.ssh・環境変数は、檻から見えない。clone されるのはコミット済みの内容だけ。
-
-  --agent NAME      動かすエージェント: claude (既定) か opencode。ログイン状態・会話の履歴は、エージェントごとに別の檻専用の HOME に残る
-  --repo PATH       PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
+// runUsage は、goro run -h の使い方。エージェントごとの記述 (既定の許可宛先・実行ファイルを指す環境変数・--login・終了操作) は、
+// agents の表 (agentProfile) から作る: エージェントを足しても、ここは変えない。
+func runUsage() string {
+	var b strings.Builder
+	def := defaultAgent()
+	fmt.Fprintf(&b, "使い方: goro run (--repo PATH | --session ID | --login) [--agent NAME] [オプション] [-- エージェントへの引数...]\n\n")
+	fmt.Fprintf(&b, "エージェント (%s) を、檻 (ネットワークの無い bwrap) の中で、ホストの repo の private clone の上で動かす。\n", agentNames())
+	b.WriteString("ホストの作業ツリー・.git・~/.ssh・エージェントの設定と認証情報 (~/.claude など)・環境変数は、檻から見えない。clone されるのはコミット済みの内容だけ。\n\n")
+	fmt.Fprintf(&b, "  --agent NAME      動かすエージェント: %s (省略は %s)。ログイン状態・会話の履歴は、エージェントごとに別の檻専用の HOME に残る\n", agentNames(), def.name)
+	b.WriteString(`  --repo PATH       PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
   --session ID      前の goro run のセッションを再開する (同じ clone が見える)。エージェントは、そのセッションを作ったもの (--agent は省略できる。別のエージェントは断る)
-  --login           repo・clone 無しで、空の作業ディレクトリでエージェントのログインを行う (ログイン状態は、檻専用の HOME に残る)。
-                    claude は対話起動する (初回の onboarding = テーマ・ログイン・Security notes を通す)。opencode は auth login を起動する
+  --login           repo・clone 無しで、空の作業ディレクトリでエージェントのログインを行う (ログイン状態は、檻専用の HOME に残る)。エージェントごとの起動は、下の「エージェント」
   --name N          clone の user.name (--repo のとき。既定は goro)
   --email E         clone の user.email (--repo のとき)
-  --state-dir DIR   状態 (セッション・檻専用の HOME) を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
-  --bin PATH        動かすエージェントの実行ファイル (既定は環境変数 GORO_<エージェント名の大文字> (GORO_CLAUDE・GORO_OPENCODE) か、PATH のエージェント名)
-  --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は claude が api.anthropic.com:443 と platform.claude.com:443、opencode が opencode.ai:443)
-  -- ARGS...        エージェントに渡す引数 (--login のときは、opencode の auth login の後ろに付く)
+  --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)。セッションは <DIR>/sessions/、エージェントごとの HOME・ログイン用のディレクトリは <DIR>/agents/<エージェント名>/
+  --bin PATH        動かすエージェントの実行ファイル (既定は、環境変数 GORO_<エージェント名の大文字> か、PATH の実行ファイル。下の「エージェント」)
+  --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は、エージェントごと。下の「エージェント」)
+  -- ARGS...        エージェントに渡す引数 (--login のときは、そのエージェントのログインの引数の後ろに付く)
 
+エージェント:
+`)
+	for _, p := range agents {
+		title := p.name
+		if p.name == def.name {
+			title += " (既定)"
+		}
+		fmt.Fprintf(&b, "  %s\n", title)
+		fmt.Fprintf(&b, "      実行ファイル: 環境変数 %s か、PATH の %s\n", p.exeEnv(), p.binName())
+		fmt.Fprintf(&b, "      既定の許可宛先: %s\n", strings.Join(p.hosts(), " "))
+		fmt.Fprintf(&b, "      --login: %s\n", p.loginUsage)
+		fmt.Fprintf(&b, "      終了: %s\n", p.exitHint)
+	}
+	fmt.Fprintf(&b, `
 例:
-  goro run --login                    初回。テーマを選び、出た URL をホストのブラウザで開いてコードを貼り、Security notes で Enter を押したら、/exit で終える
-  goro run --repo ~/work/foo          foo の private clone の中で claude と対話する
-  goro run --session ID -- --resume   再開する (-- の後ろは claude への引数)
-  goro run --agent opencode --login   opencode の初回。provider (Zen なら OpenCode Zen) を選び、https://opencode.ai/auth で作った API キーを貼る
-  goro run --agent opencode --repo ~/work/foo   foo の private clone の中で opencode と対話する (opencode の実行ファイルは PATH の opencode)
-  goro export ID                      成果 (コミット) を bundle にして、取り込みのコマンドを表示する
+  goro run --login                          既定のエージェント (%s) のログイン (別のエージェントは、--agent NAME を足す)
+  goro run --repo ~/work/foo                foo の private clone の中で、既定のエージェントと対話する
+  goro run --agent NAME --repo ~/work/foo   同じことを、エージェントを選んで行う
+  goro run --session ID -- ARGS...          再開する (エージェントは、そのセッションを作ったもの。-- の後ろはエージェントへの引数)
+  goro export ID                            成果 (コミット) を bundle にして、取り込みのコマンドを表示する
 
-起動後の Ctrl-C は、エージェントの中断として効く (goro run 自身は終了しない)。止めるときは、エージェントの終了操作 (どちらも /exit) か、別の端末から goro run に SIGTERM。
+起動後の Ctrl-C は、エージェントの中断として効く (goro run 自身は終了しない)。止めるときは、エージェントの終了操作 (上の「終了」) か、別の端末から goro run に SIGTERM。
 終わると、セッション ID・再開と取り出しのコマンド・拒否された宛先を表示する。
-`
-
-// removedFlags は、廃止したオプションの名前と、その代わり (使うと、代わりを教える error にする)。
-// エージェントごとの実行ファイルのオプション (--claude) は、エージェントが増えるたびにオプションが増えるので、--bin 1 つにした。
-var removedFlags = map[string]string{
-	"claude": "--bin PATH (環境変数 GORO_CLAUDE は、そのまま使える)",
+`, def.name)
+	return b.String()
 }
+
+// removedFlags は、廃止したオプションの名前 (使うと、--bin を教える error にする)。エージェントごとの実行ファイルのオプション
+// (--claude) は、エージェントが増えるたびにオプションが増えるので、--bin 1 つにした。
+var removedFlags = []string{"claude"}
 
 // runOptions は、goro run の引数。
 type runOptions struct {
@@ -60,7 +75,7 @@ type runOptions struct {
 	login         bool
 	name, email   string
 	stateDir      string // 空なら既定
-	agent         string // 動かすエージェント (claude・opencode)。空は claude
+	agent         string // 動かすエージェント (agents の表の name)。空は、--session なら記録のエージェント、それ以外は既定
 	bin           string // 動かすエージェントの実行ファイル。空なら GORO_<NAME> か PATH
 	allow         []string
 	agentArgs     []string // エージェントへの引数 (-- の後ろ)
@@ -85,7 +100,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	}
 	flags := flag.NewFlagSet("goro run", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.Usage = func() { fmt.Fprint(stderr, runUsage) }
+	flags.Usage = func() { fmt.Fprint(stderr, runUsage()) }
 	var allow stringList
 	flags.StringVar(&o.repo, "repo", "", "")
 	flags.StringVar(&o.session, "session", "", "")
@@ -95,8 +110,10 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	flags.StringVar(&o.stateDir, "state-dir", "", "")
 	flags.StringVar(&o.agent, "agent", "", "") // 空 = 省略
 	flags.StringVar(&o.bin, "bin", "", "")
-	for name, instead := range removedFlags {
-		flags.Func(name, "", func(string) error { return fmt.Errorf("廃止した。実行ファイルは、%s で指す", instead) })
+	for _, name := range removedFlags {
+		flags.Func(name, "", func(string) error {
+			return fmt.Errorf("廃止した。実行ファイルは、--bin PATH (環境変数 %s は、そのまま使える) で指す", exeEnvName(name))
+		})
 	}
 	flags.Var(&allow, "allow", "")
 	if err := flags.Parse(head); err != nil {
@@ -108,11 +125,11 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 
 	fail := func(format string, a ...any) (runOptions, error) {
 		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
-		fmt.Fprint(stderr, runUsage)
+		fmt.Fprint(stderr, runUsage())
 		return o, errors.New("引数が不正")
 	}
 	if flags.NArg() > 0 {
-		return fail("余計な引数 %q (claude への引数は -- の後ろに書く)", flags.Arg(0))
+		return fail("余計な引数 %q (エージェントへの引数は -- の後ろに書く)", flags.Arg(0))
 	}
 	modes := 0
 	for _, set := range []bool{o.repo != "", o.session != "", o.login} {
@@ -132,7 +149,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 			return fail("--agent は %s: %q", agentNames(), o.agent)
 		}
 	case o.session == "":
-		o.agent = claudeProfile.name // 既定。--session で省略したときは、空のまま: セッションを作ったエージェントで動かす (doRun が決める)
+		o.agent = defaultAgent().name // 既定。--session で省略したときは、空のまま: セッションを作ったエージェントで動かす (doRun が決める)
 	}
 	if err := checkAllow(o.allow); err != nil {
 		return fail("%v", err)
@@ -140,12 +157,12 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	return o, nil
 }
 
-// profile は、o のエージェントの profile。--agent の値は、parseRunArgs が確かめてある (空は claude)。
+// profile は、o のエージェントの profile。--agent の値は、parseRunArgs が確かめてある (空は既定のエージェント)。
 func (o runOptions) profile() agentProfile {
 	if p, ok := agentByName(o.agent); ok {
 		return p
 	}
-	return claudeProfile
+	return defaultAgent()
 }
 
 func indexOf(s []string, v string) int {
@@ -178,7 +195,7 @@ func resolveExe(p string) (string, error) {
 }
 
 // resolveAgentExe は、檻に見せるエージェント p の実体を決める: --bin、なければ環境変数 (GORO_<NAME>)、
-// なければ PATH の <name>。どれも、symlink を辿った実体にする (claude の native 版は、~/.local/bin/claude が、版ごとの実体への
+// なければ PATH の実行ファイル (binName)。どれも、symlink を辿った実体にする (claude の native 版は、~/.local/bin/claude が、版ごとの実体への
 // symlink)。スクリプト (先頭が #!) は、檻の中で、呼ぶ先の実体が見えず動かないので断る。
 func resolveAgentExe(p agentProfile, flagVal, envVal string, lookPath func(string) (string, error)) (string, error) {
 	path := flagVal
@@ -186,9 +203,9 @@ func resolveAgentExe(p agentProfile, flagVal, envVal string, lookPath func(strin
 		path = envVal
 	}
 	if path == "" {
-		found, err := lookPath(p.name)
+		found, err := lookPath(p.binName())
 		if err != nil {
-			return "", fmt.Errorf("%s が見つからない (PATH に置くか、--bin か %s で指す): %w", p.name, p.exeEnv(), err)
+			return "", fmt.Errorf("%s が見つからない (PATH に置くか、--bin か %s で指す): %w", p.binName(), p.exeEnv(), err)
 		}
 		path = found
 	}
@@ -254,8 +271,8 @@ type runTarget struct {
 
 // pickAgent は、この goro run で動かすエージェントと、--session で再開する既存のセッション (--session でなければ nil) を決める。
 //
-// --session は、セッションを作ったエージェント (セッションの記録。記録の無い、エージェントを記録する前のセッションは claude) で
-// 動かす。clone には、エージェントが置いた設定 (.claude/settings.json・opencode.json・.opencode/ など) が残り、次にそこで動く
+// --session は、セッションを作ったエージェント (セッションの記録。記録の無い、エージェントを記録する前のセッションは legacySessionAgent) で
+// 動かす。clone には、エージェントが置いた設定 (.claude/settings.json・opencode.json など) が残り、次にそこで動く
 // エージェントが起動時に読んで実行する。別のエージェント (別の HOME の認証情報と、別の許可宛先を持つ) で使い回すと、
 // 片方の檻が置いたものが、もう片方の檻で動く。--agent を省略したときは、記録のエージェントで動き、記録と違う --agent は断る。
 func pickAgent(o runOptions, store *session.Store) (agentProfile, *session.Session, error) {
@@ -274,7 +291,7 @@ func pickAgent(o runOptions, store *session.Store) (agentProfile, *session.Sessi
 		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %w", err)
 	}
 	if name == "" {
-		name = claudeProfile.name
+		name = legacySessionAgent
 	}
 	recorded, ok := agentByName(name)
 	if !ok {
@@ -472,7 +489,7 @@ type runSummary struct {
 	stateDir      string
 	stateDirGiven bool // --state-dir を指定したか (再開のコマンドに含める)
 	agentHome     string
-	agent         agentProfile // 空 (ゼロ値) は claude として扱う
+	agent         agentProfile // 空 (ゼロ値) は既定のエージェントとして扱う
 	started       bool         // 檻を起動できたか
 	logPath       string       // egress の監査ログ (起動できなかったときは空)
 	denied        []deniedTarget
@@ -491,8 +508,8 @@ func printRunSummary(w io.Writer, s runSummary) {
 	if s.stateDirGiven {
 		stateFlag = " --state-dir " + shellQuote(s.stateDir)
 	}
-	agentFlag := "" // 既定 (claude) 以外は、再開のコマンドにも --agent が要る
-	if s.agent.name != "" && s.agent.name != claudeProfile.name {
+	agentFlag := "" // 既定のエージェント以外は、再開のコマンドにも --agent が要る
+	if s.agent.name != "" && !isDefaultAgent(s.agent.name) {
 		agentFlag = " --agent " + s.agent.name
 	}
 	fmt.Fprintln(w)

@@ -367,3 +367,94 @@ func TestRunOpenCodeRejectsScriptAndWrongFlag(t *testing.T) {
 		t.Errorf("環境変数 GORO_OPENCODE のスクリプト:\n%s", r)
 	}
 }
+
+// エージェントを足す作業は、profile を 1 つ表に足すことだけ (goro の子プロセスにだけ、テスト用の第 3 の profile fakeagent を足してある。
+// fake の側の名前の登録は、テストの道具)。それだけで、--agent fakeagent が通り、状態が <state>/agents/fakeagent/ に作られ、
+// 環境変数・許可宛先・--login・セッションの記録・案内・usage が、そのエージェントのものになる。他のエージェントの状態には、触れない。
+func TestRunThirdAgent(t *testing.T) {
+	f := newRunFixture(t)
+	f.env = append(f.env, "GORO_FAKEAGENT="+f.exe)
+	envHas := func(kv map[string]string, name string) bool { return strings.Contains(","+kv["env"]+",", ","+name+",") }
+
+	// 起動: 環境変数は、共通 + fakeagent の profile のもの。檻の中の path は /opt/fakeagent/fakeagent。
+	r := f.goro(t, "run", "--agent", "fakeagent", "--repo", f.repo, "--", "probe", "stat:/opt/fakeagent/fakeagent", "stat:/opt/claude/claude", "mnt:/opt/fakeagent/fakeagent").mustOK(t)
+	_, res := parseOut(r.stdout)
+	if res["stat:/opt/fakeagent/fakeagent"] != "ok" || !strings.HasPrefix(res["stat:/opt/claude/claude"], "err") || res["mnt:/opt/fakeagent/fakeagent"] != "ro" {
+		t.Errorf("檻の中の実行ファイルの path: %v", res)
+	}
+	id := sessionID(t, r)
+	info := f.goro(t, "run", "--session", id, "--", "info").mustOK(t) // --agent を省略: 記録のエージェント
+	kv, _ := parseOut(info.stdout)
+	if !envHas(kv, "FAKEAGENT_MODE") || envHas(kv, "DISABLE_TELEMETRY") || envHas(kv, "OPENCODE_DISABLE_AUTOUPDATE") || kv["home"] != "/home/goro" {
+		t.Errorf("fakeagent の環境変数 = %s", kv["env"])
+	}
+	// 状態: <state>/agents/fakeagent/ だけ。他のエージェントの状態は、作らない・触れない。
+	if fi, err := os.Stat(f.agentPath("fakeagent", "home")); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("fakeagent の HOME: %v, %v", fi, err)
+	}
+	ents, err := os.ReadDir(filepath.Join(f.stateDir(), "agents"))
+	if err != nil || len(ents) != 1 || ents[0].Name() != "fakeagent" {
+		t.Errorf("agents/ の中 = %v, %v (fakeagent だけのはず)", ents, err)
+	}
+	// セッションの記録・一覧・案内。
+	if b, err := os.ReadFile(filepath.Join(f.stateDir(), "sessions", id, "agent")); err != nil || string(b) != "fakeagent\n" {
+		t.Errorf("セッションの記録 = %q, %v", b, err)
+	}
+	if line := lineWith(f.goro(t, "sessions").mustOK(t).stdout, id); !strings.HasSuffix(line, "  fakeagent  repo") {
+		t.Errorf("sessions の行 = %q", line)
+	}
+	for _, want := range []string{"goro run --agent fakeagent --session " + id + "\n", "fakeagent の続き (テスト用)"} {
+		if !strings.Contains(info.stderr, want) {
+			t.Errorf("終了後の案内に %q が無い:\n%s", want, info.stderr)
+		}
+	}
+	// 記録と違う --agent は断る (別のエージェントでは、使えない)。
+	if r := f.goro(t, "run", "--agent", "claude", "--session", id, "--", "info"); r.code != 1 || !strings.Contains(r.stderr, "このセッションは fakeagent で作られた") {
+		t.Errorf("別のエージェントでの再開:\n%s", r)
+	}
+
+	// 許可宛先: profile の hosts だけ (他のエージェントの宛先は、通らない)。
+	conn := f.goro(t, "run", "--agent", "fakeagent", "--repo", f.repo, "--", "connect", "fake.example:443", "api.anthropic.com:443", "opencode.ai:443").mustOK(t)
+	_, res = parseOut(conn.stdout)
+	if s := res["fake.example:443"]; s == "403" || strings.HasPrefix(s, "err") || s == "" {
+		t.Errorf("fakeagent の許可宛先 fake.example:443 = %q", s)
+	}
+	if res["api.anthropic.com:443"] != "403" || res["opencode.ai:443"] != "403" {
+		t.Errorf("他のエージェントの宛先が通る: %v", res)
+	}
+
+	// --login: profile の loginArgs で起動し、状態は agents/fakeagent/{home,login-work,login-run}。案内は profile のもの。
+	login := f.goro(t, "run", "--agent", "fakeagent", "--login", "--", "commit", "x.txt", "PLANT", "msg")
+	if !strings.Contains(login.stderr, "ログイン用に fakeagent を起動する (テスト用)") || !strings.Contains(login.stderr, "goro run --agent fakeagent --repo PATH") ||
+		!strings.Contains(login.stderr, "檻専用の HOME (ログイン状態が残る): "+f.agentPath("fakeagent", "home")) {
+		t.Errorf("--login の案内:\n%s", login.stderr)
+	}
+	for _, p := range []string{f.agentPath("fakeagent", "home", "login-marker"), f.agentPath("fakeagent", "login-work", "x.txt"), f.agentPath("fakeagent", "login-run", egressLogName)} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("--login の状態が、%s に無い: %v", p, err)
+		}
+	}
+
+	// スクリプトの拒否・--bin・環境変数の名前は、profile から: GORO_FAKEAGENT。
+	script := filepath.Join(f.dir, "fakeagent-wrapper")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if r := f.goro(t, "run", "--agent", "fakeagent", "--repo", f.repo, "--bin", script); r.code != 1 || !strings.Contains(r.stderr, "--bin か GORO_FAKEAGENT") || !strings.Contains(r.stderr, "/opt/fakeagent/bin/fakeagent") {
+		t.Errorf("スクリプトの fakeagent:\n%s", r)
+	}
+
+	// goro run -h の usage (子プロセスの goro = 表に第 3 の profile がある) に、profile の内容が出る。
+	h := f.goro(t, "run", "-h")
+	for _, want := range []string{"fakeagent", "GORO_FAKEAGENT", "fake.example:443", "login を起動する (テスト用の説明。この文が -h に出る)", "/quit", "claude (既定)"} {
+		if !strings.Contains(h.stderr, want) {
+			t.Errorf("-h に %q が無い:\n%s", want, h.stderr)
+		}
+	}
+	if _, err := os.Lstat(f.agentPath("claude")); err == nil {
+		t.Error("fakeagent の起動が、claude の状態 (agents/claude) を作った")
+	}
+	if _, err := os.Lstat(f.agentPath("opencode")); err == nil {
+		t.Error("fakeagent の起動が、opencode の状態 (agents/opencode) を作った")
+	}
+}

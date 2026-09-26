@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -42,8 +43,8 @@ func TestAgentProfiles(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := tc.p
-			if p.name != tc.name || p.jailExe != tc.jailExe || p.exeEnv() != tc.exeEnv {
-				t.Errorf("name・jailExe・exeEnv = %q・%q・%q, want %q・%q・%q", p.name, p.jailExe, p.exeEnv(), tc.name, tc.jailExe, tc.exeEnv)
+			if p.name != tc.name || p.jailExe() != tc.jailExe || p.exeEnv() != tc.exeEnv {
+				t.Errorf("name・jailExe・exeEnv = %q・%q・%q, want %q・%q・%q", p.name, p.jailExe(), p.exeEnv(), tc.name, tc.jailExe, tc.exeEnv)
 			}
 			if got := envNames(p); got != tc.env {
 				t.Errorf("env = %s\nwant %s", got, tc.env)
@@ -76,7 +77,7 @@ func TestAgentProfiles(t *testing.T) {
 	}
 	// 2 つの profile は、混ざらない (別の檻専用の HOME・別の檻の中の path・別の許可)。
 	a, b := claudeProfile, opencodeProfile
-	if a.jailExe == b.jailExe || a.exeEnv() == b.exeEnv() || a.name == b.name {
+	if a.jailExe() == b.jailExe() || a.exeEnv() == b.exeEnv() || a.name == b.name {
 		t.Errorf("profile が混ざる: %+v / %+v", a, b)
 	}
 	for _, h := range a.hosts() {
@@ -600,5 +601,121 @@ func TestAgentDirs(t *testing.T) {
 	}
 	if got := sockPathFor("/s", runOptions{login: true, agent: "opencode"}); got != "/s/agents/opencode/login-run/proxy.sock" {
 		t.Errorf("opencode の login の UDS = %q", got)
+	}
+}
+
+// agents の表 (と、それから導出するもの) の妥当性。エージェントを足したときに、表の書き間違いを、ここで見つける。
+func TestAgentTable(t *testing.T) {
+	nameRE := regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`) // session の記録の名前の形と同じ
+	seen := map[string]bool{}
+	for i, p := range agents {
+		t.Run(p.name, func(t *testing.T) {
+			if !nameRE.MatchString(p.name) {
+				t.Errorf("name %q が、[a-z][a-z0-9-]{0,31} の形でない (状態のディレクトリ名・セッションの記録・環境変数名の元)", p.name)
+			}
+			if seen[p.name] {
+				t.Errorf("name %q が、表の中で重なっている", p.name)
+			}
+			seen[p.name] = true
+			if got, want := p.jailExe(), "/opt/"+p.name+"/"+p.binName(); got != want {
+				t.Errorf("jailExe = %q, want %q", got, want)
+			}
+			if want := "GORO_" + strings.ToUpper(strings.ReplaceAll(p.name, "-", "_")); p.exeEnv() != want {
+				t.Errorf("exeEnv = %q, want %q", p.exeEnv(), want)
+			}
+			if p.hosts == nil || len(p.hosts()) == 0 || p.loginGuide == "" || p.loginUsage == "" || p.exitHint == "" || p.exeExample == "" {
+				t.Errorf("必須の項目が空: %+v", p)
+			}
+			if err := checkAllow(p.hosts()); err != nil {
+				t.Errorf("hosts を egress が受け付けない: %v", err)
+			}
+			if _, err := (bwrap.Spec{Host: bwrap.Host{Home: "/home/u"}, Env: p.env, Cmd: []string{"/bin/true"}}).Argv(); err != nil {
+				t.Errorf("env を bwrap が拒否する: %v", err)
+			}
+			for _, e := range p.env { // 共通の環境変数を、上書きしない
+				if slices.Contains([]string{"HOME", "PATH", "TERM", "LANG", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}, e.Key) {
+					t.Errorf("env %s は、共通の環境変数 (エージェントが上書きできない)", e.Key)
+				}
+			}
+			d := p.dirs("/s")
+			if !strings.HasPrefix(d.home, "/s/agents/"+p.name+"/") {
+				t.Errorf("dirs = %+v", d)
+			}
+			if i == 0 && defaultAgent().name != p.name {
+				t.Errorf("表の先頭 %q が、既定のエージェント %q でない", p.name, defaultAgent().name)
+			}
+		})
+	}
+	if _, ok := agentByName(legacySessionAgent); !ok {
+		t.Errorf("legacySessionAgent %q が、表に無い", legacySessionAgent)
+	}
+	// 環境変数の名前の規則: GORO_<NAME 大文字> (- は _)。claude の既存の名前は、規則どおり。
+	for name, want := range map[string]string{"claude": "GORO_CLAUDE", "opencode": "GORO_OPENCODE", "my-agent": "GORO_MY_AGENT", "a1": "GORO_A1"} {
+		if got := exeEnvName(name); got != want {
+			t.Errorf("exeEnvName(%q) = %q, want %q", name, got, want)
+		}
+	}
+	// bin が name と違うエージェント: PATH で探す名前と、檻の中のファイル名が、bin になる。
+	p := agentProfile{name: "foo", bin: "foo-cli"}
+	if p.binName() != "foo-cli" || p.jailExe() != "/opt/foo/foo-cli" || p.exeEnv() != "GORO_FOO" {
+		t.Errorf("bin つき: binName・jailExe・exeEnv = %q・%q・%q", p.binName(), p.jailExe(), p.exeEnv())
+	}
+	if got, err := resolveAgentExe(p, "", "", func(name string) (string, error) {
+		if name != "foo-cli" {
+			t.Errorf("PATH で探す名前 = %q, want foo-cli", name)
+		}
+		return "", exec.ErrNotFound
+	}); err == nil || !strings.Contains(err.Error(), "foo-cli が見つからない") || !strings.Contains(err.Error(), "GORO_FOO") {
+		t.Errorf("resolveAgentExe = %q, %v", got, err)
+	}
+}
+
+// withTestAgent は、テストの間だけ、agents の表に、profile を足す (終わると、戻す)。
+func withTestAgent(t *testing.T, p agentProfile) {
+	t.Helper()
+	saved := agents
+	agents = append(slices.Clone(agents), p)
+	t.Cleanup(func() { agents = saved })
+}
+
+// goro run -h の使い方は、agents の表から作る: 各エージェントの名前・実行ファイルを指す環境変数・既定の許可宛先・--login の説明・終了操作が
+// 出る。表に profile を足すだけで、usage・--agent の許容値・エラーの文言に反映される (usage のコードは、変えない)。
+func TestRunUsageFromProfiles(t *testing.T) {
+	usage := runUsage()
+	for _, p := range agents {
+		for _, want := range []string{p.name, p.exeEnv(), strings.Join(p.hosts(), " "), p.loginUsage, p.exitHint} {
+			if !strings.Contains(usage, want) {
+				t.Errorf("usage に、%s の %q が無い:\n%s", p.name, want, usage)
+			}
+		}
+	}
+	if !strings.Contains(usage, "claude (既定)") || strings.Contains(usage, "opencode (既定)") {
+		t.Errorf("既定のエージェントの印が、表の先頭でない:\n%s", usage)
+	}
+	if !strings.Contains(usage, "--bin PATH") || strings.Contains(usage, "--claude PATH") || strings.Contains(usage, "--opencode PATH") {
+		t.Errorf("--bin の説明が無い、または、エージェントごとのオプションが残っている:\n%s", usage)
+	}
+
+	// 第 3 のエージェントを表に足すだけで、usage・--agent の検査・エラーの文言に出る。
+	if strings.Contains(usage, testAgentProfile.name) {
+		t.Fatal("前提: 第 3 の profile が、まだ表に入っている")
+	}
+	withTestAgent(t, testAgentProfile)
+	usage = runUsage()
+	for _, want := range []string{testAgentProfile.name, "GORO_FAKEAGENT", "fake.example:443", testAgentProfile.loginUsage, testAgentProfile.exitHint, "claude か opencode か fakeagent"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("表に足した profile の %q が、usage に出ない:\n%s", want, usage)
+		}
+	}
+	var stderr bytes.Buffer
+	if o, err := parseRunArgs([]string{"--agent", "fakeagent", "--repo", "r"}, &stderr); err != nil || o.agent != "fakeagent" {
+		t.Errorf("表に足した --agent fakeagent = %+v, %v\n%s", o, err, stderr.String())
+	}
+	stderr.Reset()
+	if _, err := parseRunArgs([]string{"--agent", "nosuch", "--repo", "r"}, &stderr); err == nil || !strings.Contains(stderr.String(), "claude か opencode か fakeagent") {
+		t.Errorf("未知のエージェントのエラーに、表の名前が出ない: %v\n%s", err, stderr.String())
+	}
+	if p, ok := agentByName("fakeagent"); !ok || p.dirs("/s").loginRun != "/s/agents/fakeagent/login-run" {
+		t.Errorf("agentByName・dirs = %+v, %v", p, ok)
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-// 檻の中の path と、待ち受けるアドレス。エージェントの実行ファイルの path は、agentProfile.jailExe。
+// 檻の中の path と、待ち受けるアドレス。エージェントの実行ファイルの path は、agentProfile.jailExe()。
 const (
 	jailGoro      = "/opt/goro/goro"
 	jailRun       = "/run/goro"
@@ -24,7 +24,7 @@ type cageConfig struct {
 	Host bwrap.Host
 	// Agent は、檻の中で動かすエージェント。
 	Agent agentProfile
-	// AgentExe・GoroExe は、エージェント (Agent.jailExe に見せる) と goro 自身の実体 (symlink を辿ったもの)。ro で見せる。
+	// AgentExe・GoroExe は、エージェント (Agent.jailExe() に見せる) と goro 自身の実体 (symlink を辿ったもの)。ro で見せる。
 	AgentExe, GoroExe string
 	// CACerts は、ホストの /etc/ssl/certs (無ければ空)。ro で見せる。
 	CACerts string
@@ -51,14 +51,14 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		binds = append(binds, c.bind(c.CACerts, "/etc/ssl/certs", false))
 	}
 	binds = append(binds,
-		c.bind(c.AgentExe, c.Agent.jailExe, false),
+		c.bind(c.AgentExe, c.Agent.jailExe(), false),
 		c.bind(c.GoroExe, jailGoro, false),
 		c.bind(c.RunDir, jailRun, false),
 		c.bind(c.AgentHome, jailHome, true),
 		c.bind(c.Work, jailWork, true),
 	)
 	// --no-forward-tty: 端末のシグナルは、エージェントが直接受ける。init が転送すると、二重に届く (Ctrl-C が 2 回になる)。
-	cmd := []string{jailGoro, "init", "--listen", jailProxyAddr, "--upstream", jailRun + "/" + proxySockName, "--no-forward-tty", "--", c.Agent.jailExe}
+	cmd := []string{jailGoro, "init", "--listen", jailProxyAddr, "--upstream", jailRun + "/" + proxySockName, "--no-forward-tty", "--", c.Agent.jailExe()}
 	return bwrap.Spec{
 		Host: c.Host,
 		Symlinks: []bwrap.Symlink{

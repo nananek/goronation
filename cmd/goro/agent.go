@@ -12,13 +12,19 @@ import (
 
 // agentProfile は、goro run が檻の中で動かすエージェント 1 種類ごとの違い。檻の作り (何を bind し、どこを rw にし、通信をどう
 // 絞るか) と、セッション・export は、エージェントによらず同じで、ここに無いものは共通。
+//
+// エージェントごとに違うものは、すべて、この構造体のデータ (と、名前から導出するもの) で、「claude なら A・opencode なら B」の
+// 分岐は、コードに書かない。新しいエージェントを足す作業は、profile を 1 つ書いて、agents の表に足すことだけ (宛先は egress の
+// 関数、環境変数はこの定数の中)。名前から導出するもの: 環境変数 GORO_<NAME> (exeEnv)・檻の中の path (jailExe)・状態の
+// ディレクトリ <state>/agents/<name>/ (dirs)・--agent の値。
 type agentProfile struct {
-	// name は、--agent の値で、実行ファイルを指すオプション (--<name>) の名前。案内にも出す。
+	// name は、--agent の値で、エージェントの識別子: 状態のディレクトリ名・セッションの記録・環境変数の名前 (GORO_<NAME>) の元。
+	// [a-z][a-z0-9-]{0,31} (session の記録と同じ形)。表の中で、重ならない。
 	name string
+	// bin は、PATH で探す実行ファイルの名前。空なら name。
+	bin string
 	// exeExample は、スクリプトの実行ファイルを断るときに、指定する実体の例に出す path。
 	exeExample string
-	// jailExe は、檻の中での実行ファイルの path。
-	jailExe string
 	// env は、共通の環境変数 (HOME・PATH・TERM・LANG) に足す、そのエージェントの環境変数 (通信を止めるもの)。
 	env []bwrap.EnvVar
 	// hosts は、既定の許可宛先。呼ぶたびに新しい slice を返す。
@@ -27,6 +33,10 @@ type agentProfile struct {
 	loginArgs []string
 	// loginGuide は、--login の起動前に出す案内 (先頭の "goro run: " は、呼び手が付ける)。
 	loginGuide string
+	// loginUsage は、goro run -h の、このエージェントの --login の説明 (1 行)。
+	loginUsage string
+	// exitHint は、goro run -h の、このエージェントの終了操作 (1 語句)。
+	exitHint string
 	// resumeNote は、セッションの案内 (再開・取り出し) の後ろに出す 1 行 (空なら出さない)。
 	resumeNote string
 	// denyNotes は、拒否されたときに、説明を添える宛先 (と、その説明)。終了後の一覧には出し (隠さない)、説明を添えて、--allow の
@@ -34,14 +44,29 @@ type agentProfile struct {
 	denyNotes map[string]string
 }
 
-// exeEnv は、実行ファイルを指す環境変数の名前 (--<name> と同じ効果。テストにも使う)。
-func (p agentProfile) exeEnv() string { return "GORO_" + strings.ToUpper(p.name) }
+// binName は、PATH で探す実行ファイルの名前。
+func (p agentProfile) binName() string {
+	if p.bin != "" {
+		return p.bin
+	}
+	return p.name
+}
+
+// exeEnvName は、名前 name のエージェントの、実行ファイルを指す環境変数の名前 (--bin と同じ効果。--bin > この変数 > PATH): GORO_<NAME 大文字>。
+func exeEnvName(name string) string {
+	return "GORO_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+}
+
+// exeEnv は、p の、実行ファイルを指す環境変数の名前。
+func (p agentProfile) exeEnv() string { return exeEnvName(p.name) }
+
+// jailExe は、檻の中での実行ファイルの path: /opt/<name>/<実行ファイル名>。
+func (p agentProfile) jailExe() string { return "/opt/" + p.name + "/" + p.binName() }
 
 // claudeProfile は、claude (Claude Code) の profile。既定のエージェント。
 var claudeProfile = agentProfile{
 	name:       "claude",
 	exeExample: "/opt/claude-code/bin/claude",
-	jailExe:    "/opt/claude/claude",
 	// 通信を止める変数 (許可した宛先以外への、必須でない通信が、拒否として終了後の一覧に出て、必要な宛先に見えるのを避ける):
 	// CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC・DISABLE_TELEMETRY・DISABLE_ERROR_REPORTING・DISABLE_AUTOUPDATER に加えて、
 	// CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL (公式のプラグイン marketplace の自動インストール。これが無いと、
@@ -60,13 +85,14 @@ var claudeProfile = agentProfile{
 	loginArgs: nil,
 	loginGuide: "ログイン用に claude を対話起動する。テーマを選び、出た URL をホストのブラウザで開いてコードを貼り、" +
 		"Security notes で Enter を押したら、/exit で終える (onboarding を最後まで通らないと、次の起動が、ログイン画面からやり直しになる)",
+	loginUsage: "対話起動する (初回の onboarding = テーマ・ログイン・Security notes を通す。出た URL をホストのブラウザで開いてコードを貼り、Security notes で Enter を押したら /exit)",
+	exitHint:   "/exit",
 }
 
 // opencodeProfile は、opencode (OpenCode Zen を使う) の profile。実測 (opencode 1.18.32・檻の中) に基づく。
 var opencodeProfile = agentProfile{
 	name:       "opencode",
 	exeExample: "~/.opencode/bin/opencode",
-	jailExe:    "/opt/opencode/opencode",
 	// 通信を止める変数 (実在は、binary の RuntimeFlags で確認):
 	//   OPENCODE_DISABLE_AUTOUPDATE   更新の確認 (api.github.com) を止める (実測)
 	//   OPENCODE_DISABLE_MODELS_FETCH モデル一覧の取得 (models.opencode.ai) を止める。同梱の一覧で動く (実測: 一覧は、取得を許しても同じ)
@@ -85,6 +111,8 @@ var opencodeProfile = agentProfile{
 	loginArgs: []string{"auth", "login"},
 	loginGuide: "ログイン用に opencode の auth login を起動する。provider を選び (Zen なら OpenCode Zen)、https://opencode.ai/auth で作った " +
 		"API キーを貼ると、檻専用の HOME に保存されて終わる (ホストのブラウザの localhost に戻る方式の OAuth は、檻に届かない: API キーの方式を使う)",
+	loginUsage: "auth login を起動する (provider を選び、Zen なら https://opencode.ai/auth で作った API キーを貼る。終わると自分で終了する)",
+	exitHint:   "/exit",
 	resumeNote: "opencode の会話は、この --agent の檻専用の HOME に残る。続きは、起動後に /sessions で選ぶ。-- --continue は、同じ repo の直近の会話を開く",
 	denyNotes: map[string]string{
 		"registry.npmjs.org:443": "opencode が、起動のたびに、プラグインの依存 (@opencode-ai/plugin) の install を試す。失敗しても動くので、許可しなくてよい",
@@ -115,8 +143,18 @@ func (p agentProfile) dirs(stateDir string) agentDirs {
 	return agentDirs{home: filepath.Join(base, "home"), loginWork: filepath.Join(base, "login-work"), loginRun: filepath.Join(base, "login-run")}
 }
 
-// agents は、--agent に指定できるエージェント。先頭が既定。
+// agents は、--agent に指定できるエージェントの表。先頭が既定。エージェントを足すときは、ここに profile を足す。
 var agents = []agentProfile{claudeProfile, opencodeProfile}
+
+// defaultAgent は、--agent を省略したときのエージェント (表の先頭)。
+func defaultAgent() agentProfile { return agents[0] }
+
+// legacySessionAgent は、エージェントを記録する前に作ったセッション (agent の記録が無いもの) を作ったエージェント。そのころ、
+// 動かせるエージェントは claude だけだった (歴史の事実で、既定の選び方とは別)。
+const legacySessionAgent = "claude"
+
+// isDefaultAgent は、name が既定のエージェントか (既定は、案内のコマンドで --agent を省略できる)。
+func isDefaultAgent(name string) bool { return name == defaultAgent().name }
 
 // agentByName は、name (--agent の値) のエージェント。無ければ ok が false。
 func agentByName(name string) (p agentProfile, ok bool) {

@@ -12,10 +12,10 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-const sessionsUsage = `使い方: goro sessions [--state-dir DIR]
+var sessionsUsage = `使い方: goro sessions [--state-dir DIR]
 
 セッション (goro run --repo が作った private clone) の一覧を、古い順に表示する: ID・作成日時・エージェント・元の repo 名。
-エージェントは、セッションを作ったもの (記録の無い古いセッションは claude。記録を読めないものは ?)。goro run --session は、そのエージェントで動かす。
+エージェントは、セッションを作ったもの (記録の無い古いセッションは ` + legacySessionAgent + `。記録を読めないものは ?)。goro run --session は、そのエージェントで動かす。
 
   --state-dir DIR   状態を置く場所 (goro run と同じ。既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
 `
@@ -68,7 +68,7 @@ func printSessions(w io.Writer, list []session.Info) {
 		}
 		agent := in.Agent
 		if agent == "" {
-			agent = claudeProfile.name // エージェントを記録する前に作ったセッションは、claude で作られた
+			agent = legacySessionAgent // エージェントを記録する前に作ったセッション
 		}
 		fmt.Fprintf(w, "%s  %s  %s  %s\n", in.ID, in.Created.Local().Format("2006-01-02 15:04:05"), agent, repo)
 	}

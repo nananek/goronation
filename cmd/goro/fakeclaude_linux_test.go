@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
 // 檻の中では、テストバイナリが、実際の goro (/opt/goro/goro) と、偽の claude (/opt/claude/claude)・偽の opencode
@@ -24,13 +26,30 @@ import (
 func init() {
 	switch filepath.Base(os.Args[0]) {
 	case "goro":
+		// 実プロセスの goro (子プロセス) にだけ、テスト用の第 3 の profile を足す (テストの本体のプロセスの agents は、本物の 2 つのまま)。
+		// エージェントを足す作業は、この 1 つの profile を表に足すことだけ (TestRunThirdAgent)。
+		agents = append(agents, testAgentProfile)
 		syscall.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr))
-	case "claude", "opencode":
+	case "claude", "opencode", testAgentProfile.name:
 		syscall.Exit(fakeClaude(os.Args[1:]))
 	}
 }
 
-// fakeClaude は、偽のエージェント (claude・opencode)。最初の引数が、場面の名前で、結果を、標準出力に "キー=値" か "操作 => 結果" の行で出す
+// testAgentProfile は、テスト用の第 3 のエージェントの profile: 宛先と環境変数の定数を持つだけの、profile 1 つ。
+// 偽のエージェントの実行ファイル (テストバイナリ) は、檻の中の path の名前 (/opt/fakeagent/fakeagent) で、偽のエージェントとして動く。
+var testAgentProfile = agentProfile{
+	name:       "fakeagent",
+	exeExample: "/opt/fakeagent/bin/fakeagent",
+	env:        []bwrap.EnvVar{{Key: "FAKEAGENT_MODE", Value: "test"}},
+	hosts:      func() []string { return []string{"fake.example:443"} },
+	loginArgs:  []string{"login"},
+	loginGuide: "ログイン用に fakeagent を起動する (テスト用)",
+	loginUsage: "login を起動する (テスト用の説明。この文が -h に出る)",
+	exitHint:   "/quit",
+	resumeNote: "fakeagent の続き (テスト用)",
+}
+
+// fakeClaude は、偽のエージェント (claude・opencode・テスト用の第 3 のエージェント)。最初の引数が、場面の名前で、結果を、標準出力に "キー=値" か "操作 => 結果" の行で出す
 // (goro run は、標準入出力を、檻の中の claude に直結する)。場面は次の通り。
 //
 //	auth login [場面...]  opencode の --login のときの起動 (auth login)。HOME にログインの目印を作り、続きに場面があれば、それを動かす
@@ -52,12 +71,15 @@ func fakeClaude(args []string) int {
 		return 0
 	}
 	switch args[0] {
-	case "auth":
+	case "auth", "login":
 		if err := os.WriteFile("/home/goro/login-marker", []byte("logged-in\n"), 0o600); err != nil {
 			fmt.Println("marker-write-error=" + err.Error())
 		}
-		if len(args) > 2 && args[1] == "login" && !strings.HasPrefix(args[2], "-") { // auth login <場面> ...: 続きの場面も動かす
+		if args[0] == "auth" && len(args) > 2 && args[1] == "login" && !strings.HasPrefix(args[2], "-") { // auth login <場面> ...: 続きの場面も動かす
 			return fakeClaude(args[2:])
+		}
+		if args[0] == "login" && len(args) > 1 && !strings.HasPrefix(args[1], "-") { // login <場面> ... (第 3 のエージェント)
+			return fakeClaude(args[1:])
 		}
 		return fakeInfo(args)
 	case "info":
