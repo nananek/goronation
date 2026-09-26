@@ -29,6 +29,8 @@ var gitEnv = []bwrap.EnvVar{
 
 // gitSpec は、使い捨ての檻で git を実行する Spec。ネットワークは無く (bwrap の既定)、資格情報も無い。
 // /usr は ro、HOME と /tmp は tmpfs (使い捨て)。binds に、この実行が要るものだけを足す。
+// 端末は要らないので、NewSession (制御端末を持たせない) にする: 呼び手の端末に、檻からキーを注入できない
+// (TIOCSTI の確認も、要らなくなる)。
 func (s *Store) gitSpec(binds []bwrap.Bind, args ...string) bwrap.Spec {
 	return bwrap.Spec{
 		Host: s.host,
@@ -36,11 +38,12 @@ func (s *Store) gitSpec(binds []bwrap.Bind, args ...string) bwrap.Spec {
 			{Target: "usr/lib", Dst: "/lib"}, {Target: "usr/lib64", Dst: "/lib64"},
 			{Target: "usr/bin", Dst: "/bin"}, {Target: "usr/sbin", Dst: "/sbin"},
 		},
-		Tmpfs: []string{"/tmp", "/home/goro"},
-		Binds: append([]bwrap.Bind{{Src: "/usr", Dst: "/usr"}}, binds...),
-		Env:   gitEnv,
-		Chdir: "/tmp",
-		Cmd:   append([]string{gitBin}, args...),
+		Tmpfs:      []string{"/tmp", "/home/goro"},
+		Binds:      append([]bwrap.Bind{{Src: "/usr", Dst: "/usr"}}, binds...),
+		Env:        gitEnv,
+		Chdir:      "/tmp",
+		Cmd:        append([]string{gitBin}, args...),
+		NewSession: true,
 	}
 }
 
