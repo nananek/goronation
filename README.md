@@ -6,7 +6,13 @@ goronation は、**信頼できない AI コーディングエージェントを
 
 ## 現在の状態
 
-M0 (土台と spike) の途中です。リポジトリ土台 (multi-module workspace、CI の leg、import 制約テスト、CODEOWNERS、ADR の置き場) だけがあり、機能はまだありません。
+M0 (土台と spike) の途中です。リポジトリ土台 (multi-module workspace、CI の leg、import 制約テスト、CODEOWNERS、ADR の置き場) と、最初に使える形の `goro run` (下記) があります。
+
+## goro run (最初に使える形)
+
+`make build` の後、`bin/goro run --login` でログインし、`bin/goro run --repo PATH` で、その repo の private clone の中で claude を檻に入れて動かします。
+`bin/goro export ID` で成果 (コミット) を bundle にして取り出し、取り込みのコマンドを表示します。要るもの: Linux・bubblewrap (`/usr/bin/bwrap`)・native 版の claude。
+オプションは `bin/goro run -h`、規則と限界は `cmd/goro/doc.go` に書いてあります。
 
 ## 構成
 
