@@ -69,6 +69,9 @@
 // TestEmptyPackageDocPassesThrough が、通ることを固定している)。
 //
 //   - 文体、限界の質、「1 つの事実は 1 か所」、指示に見える文、中身の無い一文の package doc。
+//   - 見えない文字の検査は、書式制御文字 (Cf) までで、Cf でない見えない文字 (Hangul filler・点字の空白など) は通す。異体字セレクタ・
+//     結合文字は、絵文字・異体字・NFD の日本語に使うので、通す。逆に、ZWJ でつなぐ絵文字など、正当な Cf も error にする
+//     (TestForbiddenRune・TestInvisibleNonFormatPassesThrough が固定している)。
 //   - 書き込みは非原子的 (os.Root に Rename が無い)。書く前に、内容・予算・既存の項目との衝突を確かめる (checkPlan)。
 //     書き始めた後に残る失敗は、入出力の失敗 (ディスクの空きなど) と時間の予算で、壊れた出力が残るが、-check が検出する。
 //   - os.Root は、bind mount・/proc・デバイスファイルを禁止しない。名前そのものの、open の間の差し替えは、読む・切り詰める前の

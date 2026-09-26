@@ -55,10 +55,26 @@ func TestForbiddenRune(t *testing.T) {
 			t.Errorf("forbiddenRune(U+%04X) = false, want true", r)
 		}
 	}
-	allowed := []rune{'\n', '\t', ' ', 'a', '~', 0xa0, 0xa1, '日', 'ー', '。', 0x2010, 0x2027, 0x2030, 0x3000, 0xFF01, 0x1F600}
+	allowed := []rune{'\n', '\t', ' ', 'a', '~', 0xa0, 0xa1, '日', 'ー', '。', 0x2010, 0x2027, 0x2030, 0x3000, 0xFF01, 0x1F600,
+		// 結合文字 (Mn)・異体字セレクタ: 正当な文書に出る。Cf ではないので、禁止しない (Cf だけを禁止する境界)。
+		0x0301, 0x3099, 0x309A, // アクセント・濁点 (NFD の日本語)
+		0xFE0F,          // 絵文字の異体字セレクタ (VS16。⚠ の後ろに付く)
+		0xE0100,         // 漢字の異体字セレクタ (IVS の VS17。葛 の後ろに付く)
+		0x20E3, 0x1F3FB, // 囲みキーキャップ・肌の色の修飾子
+	}
 	for _, r := range allowed {
 		if forbiddenRune(r) {
 			t.Errorf("forbiddenRune(U+%04X) = true, want false", r)
+		}
+	}
+}
+
+// TestInvisibleNonFormatPassesThrough は、限界を固定する (doc.go の「限界」)。見えないが、Cf (書式制御文字) ではない文字
+// (Hangul filler・点字の空白・結合書記素ジョイナー) は、禁止しない。直して禁止したら、この期待を反転する。
+func TestInvisibleNonFormatPassesThrough(t *testing.T) {
+	for _, r := range []rune{0x034F, 0x2800, 0x3164, 0xFFA0} {
+		if forbiddenRune(r) {
+			t.Errorf("forbiddenRune(U+%04X) = true: 限界が直った (doc.go の「限界」も直す)", r)
 		}
 	}
 }
