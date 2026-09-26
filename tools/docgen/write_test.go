@@ -281,4 +281,68 @@ func TestWriteOutputsWritesNothingWhenPlanFails(t *testing.T) {
 			t.Errorf("error 文: %v", err)
 		}
 	})
+
+	t.Run("既存の生成物が、1 ファイルの上限を超える (比べるための読み取りが失敗する)", func(t *testing.T) {
+		tr, dir := writeRepo(t, map[string]string{"docs/reference/core.md": strings.Repeat("x", int(defaultLimits.MaxFileBytes)+1)})
+		if err := run(t, tr, dir); !errors.Is(err, errBudget) {
+			t.Errorf("errBudget にすべき: %v", err)
+		}
+	})
+}
+
+// TestCheckPlan は、checkPlan の予算の試算が、実際に書く・消すときの勘定と過不足なく一致し (ちょうどは通し、1 つ足りなければ
+// errBudget)、tree そのものの勘定を変えないことと、書く内容の検査をすることを確認する。試算が多く数えると、実際には足りる
+// repo を error にし、少なく数えると、書き始めた後に予算で止まる (一部だけが書かれた出力が残る)。
+func TestCheckPlan(t *testing.T) {
+	expected := map[string]string{"docs/reference/a.md": "aaa\n", "docs/reference/b.md": "bb\n"}
+	writes := []string{"docs/reference/a.md", "docs/reference/b.md"}
+	removes := []refEntry{{Path: "docs/reference/x.md"}, {Path: "docs/reference/y", Dir: true}}
+
+	// 実際に書く・消すときの勘定を測る (書く 2 つ・消す 2 つ)。
+	actual, dir := newTestTree(t, map[string]string{"docs/reference/x.md": "x\n"})
+	if err := os.MkdirAll(filepath.Join(dir, "docs", "reference", "y"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range writes {
+		if err := actual.writeFile(p, []byte(expected[p])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, e := range removes {
+		if err := actual.remove(e.Path); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for name, set := range map[string]func(l *limits, delta int){
+		"項目の数":   func(l *limits, d int) { l.MaxEntries = actual.entries + d },
+		"ファイルの数": func(l *limits, d int) { l.MaxFiles = actual.files + d },
+		"バイトの合計": func(l *limits, d int) { l.MaxTotalBytes = actual.bytes + int64(d) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, tc := range []struct {
+				delta int
+				ok    bool
+			}{{0, true}, {-1, false}} {
+				lim := defaultLimits
+				set(&lim, tc.delta)
+				tr, _ := newTestTreeLimits(t, nil, lim)
+				err := tr.checkPlan(expected, writes, removes, nil, nil)
+				if tc.ok && err != nil || !tc.ok && !errors.Is(err, errBudget) {
+					t.Errorf("実際の勘定 %+d の予算: error = %v (ok = %v)", tc.delta, err, tc.ok)
+				}
+				if tr.entries != 0 || tr.files != 0 || tr.bytes != 0 {
+					t.Errorf("checkPlan が、tree の勘定を変えた: 項目 %d・ファイル %d・バイト %d", tr.entries, tr.files, tr.bytes)
+				}
+			}
+		})
+	}
+
+	t.Run("書く内容が、文書として不正", func(t *testing.T) {
+		tr, _ := newTestTree(t, nil)
+		bad := map[string]string{"docs/reference/a.md": "改行で終わらない"}
+		if err := tr.checkPlan(bad, []string{"docs/reference/a.md"}, nil, nil, nil); err == nil {
+			t.Error("error にすべき")
+		}
+	})
 }
