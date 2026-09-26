@@ -133,6 +133,38 @@ func TestAllowList(t *testing.T) {
 	}
 }
 
+// export・sessions の使い方 (-h) と、引数の誤り。状態ディレクトリは、テストごとに別 (存在しない ID は、檻を起動する前に断る)。
+func TestExportSessionsUsageAndArgs(t *testing.T) {
+	state := shortDir(t)
+	for _, tc := range []struct {
+		name string
+		args []string
+		code int
+		want string // stdout か stderr に含まれる
+	}{
+		{"export -h", []string{"export", "-h"}, 0, "使い方: goro export"},
+		{"sessions -h", []string{"sessions", "-h"}, 0, "使い方: goro sessions"},
+		{"run -h", []string{"run", "-h"}, 0, "使い方: goro run"},
+		{"export の ID が無い", []string{"export", "--state-dir", state}, exitUsage, "セッション ID を 1 つ"},
+		{"export の ID が 2 つ", []string{"export", "--state-dir", state, "a", "b"}, exitUsage, "セッション ID を 1 つ"},
+		{"export の未知のフラグ", []string{"export", "--bogus"}, exitUsage, "bogus"},
+		{"存在しない ID", []string{"export", "--state-dir", state, "20260101-000000-aaaaaa"}, 1, "goro export:"},
+		{"形が違う ID", []string{"export", "--state-dir", state, "../etc"}, 1, "形が正しくない"},
+		{"sessions の余計な引数", []string{"sessions", "--state-dir", state, "x"}, exitUsage, "余計な引数"},
+		{"sessions (空)", []string{"sessions", "--state-dir", state}, 0, "セッションは無い"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := dispatch(tc.args, &stdout, &stderr); code != tc.code {
+				t.Errorf("終了コード = %d, want %d\nstdout: %s\nstderr: %s", code, tc.code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stdout.String()+stderr.String(), tc.want) {
+				t.Errorf("出力に %q が無い\nstdout: %s\nstderr: %s", tc.want, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
 func TestResolveClaude(t *testing.T) {
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
