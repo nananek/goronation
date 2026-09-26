@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -51,7 +52,7 @@ type runOptions struct {
 	stateDir      string // 空なら既定
 	claude        string // 空なら GORO_CLAUDE か PATH
 	allow         []string
-	claudeArgs    []string
+	agentArgs     []string // エージェントへの引数 (-- の後ろ)
 }
 
 // stringList は、何度でも書ける文字列のオプション。
@@ -86,7 +87,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	if err := flags.Parse(head); err != nil {
 		return o, err // flag が、理由と使い方を出している
 	}
-	o.allow, o.claudeArgs = allow, tail
+	o.allow, o.agentArgs = allow, tail
 
 	fail := func(format string, a ...any) (runOptions, error) {
 		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
@@ -143,27 +144,28 @@ func resolveExe(p string) (string, error) {
 	return real, nil
 }
 
-// resolveClaude は、檻に見せる claude の実体を決める: --claude、なければ環境変数 GORO_CLAUDE (テスト用に、同じ効果)、
-// なければ PATH の claude。どれも、symlink を辿った実体にする (native 版は、~/.local/bin/claude が、版ごとの実体への symlink)。
-func resolveClaude(flagVal, envVal string, lookPath func(string) (string, error)) (string, error) {
-	p := flagVal
-	if p == "" {
-		p = envVal
+// resolveAgentExe は、檻に見せるエージェント p の実体を決める: --<name>、なければ環境変数 (GORO_<NAME>。テスト用に、同じ効果)、
+// なければ PATH の <name>。どれも、symlink を辿った実体にする (claude の native 版は、~/.local/bin/claude が、版ごとの実体への
+// symlink)。スクリプト (先頭が #!) は、檻の中で、呼ぶ先の実体が見えず動かないので断る。
+func resolveAgentExe(p agentProfile, flagVal, envVal string, lookPath func(string) (string, error)) (string, error) {
+	path := flagVal
+	if path == "" {
+		path = envVal
 	}
-	if p == "" {
-		found, err := lookPath("claude")
+	if path == "" {
+		found, err := lookPath(p.name)
 		if err != nil {
-			return "", fmt.Errorf("claude が見つからない (PATH に置くか、--claude か GORO_CLAUDE で指す): %w", err)
+			return "", fmt.Errorf("%s が見つからない (PATH に置くか、--%s か %s で指す): %w", p.name, p.name, p.exeEnv(), err)
 		}
-		p = found
+		path = found
 	}
-	real, err := resolveExe(p)
+	real, err := resolveExe(path)
 	if err != nil {
-		return "", fmt.Errorf("claude (%s) を使えない: %w", p, err)
+		return "", fmt.Errorf("%s (%s) を使えない: %w", p.name, path, err)
 	}
 	if isScript(real) {
-		return "", fmt.Errorf("claude (%s) はスクリプト (先頭が #!) です。檻の中では、スクリプトが呼ぶ実体が見えず、動きません。"+
-			"実体の実行ファイルを --claude か GORO_CLAUDE で指定してください (例: /opt/claude-code/bin/claude)", real)
+		return "", fmt.Errorf("%s (%s) はスクリプト (先頭が #!) です。檻の中では、スクリプトが呼ぶ実体が見えず、動きません。"+
+			"実体の実行ファイルを --%s か %s で指定してください (例: %s)", p.name, real, p.name, p.exeEnv(), p.exeExample)
 	}
 	return real, nil
 }
@@ -218,6 +220,7 @@ type runTarget struct {
 }
 
 func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) int {
+	agent := claudeProfile
 	fail := func(format string, a ...any) int {
 		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
 		return 1
@@ -230,7 +233,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if err := checkSockPath(sockPathFor(stateDir, o)); err != nil {
 		return fail("%v", err)
 	}
-	claudeExe, err := resolveClaude(o.claude, os.Getenv("GORO_CLAUDE"), exec.LookPath)
+	agentExe, err := resolveAgentExe(agent, o.claude, os.Getenv(agent.exeEnv()), exec.LookPath)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -246,7 +249,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if err != nil {
 		return fail("%v", err)
 	}
-	agentHome := filepath.Join(stateDir, "home")
+	agentHome := filepath.Join(stateDir, agent.homeName)
 	if err := ensureDir(agentHome); err != nil {
 		return fail("エージェントの HOME を作れない: %v", err)
 	}
@@ -284,13 +287,12 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	}
 
 	if o.login {
-		fmt.Fprintln(stderr, "goro run: ログイン用に claude を対話起動する。テーマを選び、出た URL をホストのブラウザで開いてコードを貼り、"+
-			"Security notes で Enter を押したら、/exit で終える (onboarding を最後まで通らないと、次の起動が、ログイン画面からやり直しになる)")
+		fmt.Fprintln(stderr, "goro run: "+agent.loginGuide)
 	}
 	sum := runSummary{id: tgt.id, stateDir: stateDir, stateDirGiven: o.stateDir != "", agentHome: agentHome}
-	code := runCage(ctx, o, sw, tgt, cageConfig{
-		Host: host, ClaudeExe: claudeExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
-		RunDir: tgt.runDir, AgentHome: agentHome, Work: tgt.work, Term: os.Getenv("TERM"), Args: cageArgs(o),
+	code := runCage(ctx, o, agent, sw, tgt, cageConfig{
+		Host: host, Agent: agent, AgentExe: agentExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
+		RunDir: tgt.runDir, AgentHome: agentHome, Work: tgt.work, Term: os.Getenv("TERM"), Args: cageArgs(o, agent),
 	}, &sum, stderr)
 	printRunSummary(stderr, sum)
 	return code
@@ -307,16 +309,17 @@ func sockPathFor(stateDir string, o runOptions) string {
 	return filepath.Join(stateDir, "sessions", sampleSessionID, "run", proxySockName)
 }
 
-// cageArgs は、claude への引数 (利用者の引数だけ)。--login も、claude auth login ではなく、素の対話起動にする: 初回の onboarding
-// (テーマ・ログイン・Security notes) を通ると、claude が、認証情報と、onboarding の完了 (.claude.json の hasCompletedOnboarding)
-// を保存する。claude auth login は、認証情報しか保存せず、次の対話起動が、onboarding (ログイン画面を含む) からやり直しになる。
-func cageArgs(o runOptions) []string {
-	return o.claudeArgs
+// cageArgs は、エージェントへの引数: --login なら、エージェントの loginArgs の後ろに、利用者の引数を付ける。
+func cageArgs(o runOptions, p agentProfile) []string {
+	if o.login {
+		return append(slices.Clone(p.loginArgs), o.agentArgs...)
+	}
+	return o.agentArgs
 }
 
 // runCage は、egress を起こして、檻を起動し、終わるのを待つ。終了コードを返す。
-func runCage(ctx context.Context, o runOptions, sw *sigWatch, tgt runTarget, cfg cageConfig, sum *runSummary, stderr io.Writer) int {
-	proxy, err := startProxy(tgt.runDir, allowList(o.allow))
+func runCage(ctx context.Context, o runOptions, agent agentProfile, sw *sigWatch, tgt runTarget, cfg cageConfig, sum *runSummary, stderr io.Writer) int {
+	proxy, err := startProxy(tgt.runDir, allowList(agent, o.allow))
 	if err != nil {
 		fmt.Fprintf(stderr, "goro run: egress を起動できない: %v\n", err)
 		return 1

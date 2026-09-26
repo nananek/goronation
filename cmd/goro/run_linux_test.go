@@ -47,10 +47,10 @@ func TestParseRunArgs(t *testing.T) {
 		{"全部", []string{"--repo", "r", "--name", "N", "--email", "e@x.invalid", "--state-dir", "/s", "--claude", "/c",
 			"--allow", "a.example:443", "--allow", "b.example:8443", "--", "--resume", "x"},
 			runOptions{repo: "r", name: "N", email: "e@x.invalid", stateDir: "/s", claude: "/c",
-				allow: []string{"a.example:443", "b.example:8443"}, claudeArgs: []string{"--resume", "x"}}, ""},
+				allow: []string{"a.example:443", "b.example:8443"}, agentArgs: []string{"--resume", "x"}}, ""},
 		{"-- の後ろは、flag として読まない", []string{"--login", "--", "--repo", "--allow", "x"},
-			runOptions{login: true, claudeArgs: []string{"--repo", "--allow", "x"}}, ""},
-		{"-- の後ろが空", []string{"--repo", "r", "--"}, runOptions{repo: "r", claudeArgs: []string{}}, ""},
+			runOptions{login: true, agentArgs: []string{"--repo", "--allow", "x"}}, ""},
+		{"-- の後ろが空", []string{"--repo", "r", "--"}, runOptions{repo: "r", agentArgs: []string{}}, ""},
 		{"モードが無い", []string{"--allow", "a.example:443"}, runOptions{}, "ちょうど 1 つ"},
 		{"モードが 2 つ (repo と login)", []string{"--repo", "r", "--login"}, runOptions{}, "ちょうど 1 つ"},
 		{"モードが 2 つ (repo と session)", []string{"--repo", "r", "--session", "x"}, runOptions{}, "ちょうど 1 つ"},
@@ -82,7 +82,7 @@ func TestParseRunArgs(t *testing.T) {
 			}
 			if got.repo != tc.want.repo || got.session != tc.want.session || got.login != tc.want.login || got.name != tc.want.name ||
 				got.email != tc.want.email || got.stateDir != tc.want.stateDir || got.claude != tc.want.claude ||
-				!slices.Equal(got.allow, tc.want.allow) || !slices.Equal(got.claudeArgs, tc.want.claudeArgs) {
+				!slices.Equal(got.allow, tc.want.allow) || !slices.Equal(got.agentArgs, tc.want.agentArgs) {
 				t.Errorf("parseRunArgs = %+v, want %+v", got, tc.want)
 			}
 		})
@@ -107,17 +107,17 @@ func TestParseRunArgsHelp(t *testing.T) {
 
 // 許可の一覧は、既定 (claude の 2 宛先) に、--allow を重複なく足したもので、既定を外せない。checkAllow は、egress の検証そのもの。
 func TestAllowList(t *testing.T) {
-	if got := allowList(nil); !slices.Equal(got, egress.ClaudeHosts()) {
-		t.Errorf("allowList(nil) = %v, want %v", got, egress.ClaudeHosts())
+	if got := allowList(claudeProfile, nil); !slices.Equal(got, egress.ClaudeHosts()) {
+		t.Errorf("allowList(claudeProfile, nil) = %v, want %v", got, egress.ClaudeHosts())
 	}
-	got := allowList([]string{"x.example:443", "api.anthropic.com:443", "x.example:443", "y.example:8443"})
+	got := allowList(claudeProfile, []string{"x.example:443", "api.anthropic.com:443", "x.example:443", "y.example:8443"})
 	want := []string{"api.anthropic.com:443", "platform.claude.com:443", "x.example:443", "y.example:8443"}
 	if !slices.Equal(got, want) {
 		t.Errorf("allowList = %v, want %v", got, want)
 	}
-	a := allowList(nil)
+	a := allowList(claudeProfile, nil)
 	a[0] = "tampered:1"
-	if egress.ClaudeHosts()[0] != "api.anthropic.com:443" || allowList(nil)[0] != "api.anthropic.com:443" {
+	if egress.ClaudeHosts()[0] != "api.anthropic.com:443" || allowList(claudeProfile, nil)[0] != "api.anthropic.com:443" {
 		t.Error("allowList が、共有の slice を返している")
 	}
 	for _, ok := range []string{"a.example:443", "A.Example:443", "a-b.example.co:8443"} {
@@ -240,7 +240,7 @@ func TestResolveClaude(t *testing.T) {
 		{"環境変数のスクリプト", "", script, pathLookup, "", "--claude か GORO_CLAUDE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveClaude(tc.flagVal, tc.env, tc.look)
+			got, err := resolveAgentExe(claudeProfile, tc.flagVal, tc.env, tc.look)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("resolveClaude = %q, %v, want error に %q", got, err, tc.wantErr)
@@ -258,7 +258,8 @@ func TestResolveClaude(t *testing.T) {
 func testCage() cageConfig {
 	return cageConfig{
 		Host:      bwrap.Host{Home: "/home/u"},
-		ClaudeExe: "/home/u/.local/share/claude/versions/2.0.0",
+		Agent:     claudeProfile,
+		AgentExe:  "/home/u/.local/share/claude/versions/2.0.0",
 		GoroExe:   "/home/u/bin/goro",
 		CACerts:   "/etc/ssl/certs",
 		RunDir:    "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run",
@@ -335,7 +336,7 @@ func TestCageSpecBinds(t *testing.T) {
 
 	// HOME の外 (テストバイナリや /opt の claude) は、InHome が付かず、Argv も通る。CA が無ければ、その bind は無い。
 	c := testCage()
-	c.ClaudeExe, c.GoroExe, c.CACerts = "/opt/claude-real/claude", "/usr/local/bin/goro", ""
+	c.AgentExe, c.GoroExe, c.CACerts = "/opt/claude-real/claude", "/usr/local/bin/goro", ""
 	spec = cageSpec(c)
 	if _, err := spec.Argv(); err != nil {
 		t.Fatalf("HOME の外の claude で Argv が error: %v", err)
@@ -350,7 +351,7 @@ func TestCageSpecBinds(t *testing.T) {
 	}
 	// 機密の path にある claude・goro は、bwrap が拒否する (goro run が、それを回避しない)。
 	c = testCage()
-	c.ClaudeExe = "/home/u/.claude/local/claude"
+	c.AgentExe = "/home/u/.claude/local/claude"
 	if _, err := cageSpec(c).Argv(); err == nil {
 		t.Error("~/.claude の下の claude を、bwrap が拒否しない")
 	}
@@ -374,7 +375,7 @@ func TestCageEnv(t *testing.T) {
 		"xterm-256color": "xterm-256color", "screen.linux": "screen.linux", "": "dumb", "bad term": "dumb",
 		"x\ny": "dumb", "$(id)": "dumb", strings.Repeat("a", 65): "dumb", "tmux-256color": "tmux-256color",
 	} {
-		env := cageEnv(term)
+		env := cageEnv(claudeProfile, term)
 		if names(env) != wantNames {
 			t.Fatalf("環境変数の名前 = %s, want %s", names(env), wantNames)
 		}
@@ -391,13 +392,13 @@ func TestCageEnv(t *testing.T) {
 }
 
 func TestCageArgs(t *testing.T) {
-	if got := cageArgs(runOptions{login: true}); len(got) != 0 {
+	if got := cageArgs(runOptions{login: true}, claudeProfile); len(got) != 0 {
 		t.Errorf("--login = %v, want 引数なし (素の対話起動。claude auth login は、onboarding の完了を保存しない)", got)
 	}
-	if got := cageArgs(runOptions{login: true, claudeArgs: []string{"--extra"}}); !slices.Equal(got, []string{"--extra"}) {
+	if got := cageArgs(runOptions{login: true, agentArgs: []string{"--extra"}}, claudeProfile); !slices.Equal(got, []string{"--extra"}) {
 		t.Errorf("--login と引数 = %v", got)
 	}
-	if got := cageArgs(runOptions{repo: "r", claudeArgs: []string{"-p", "hi"}}); !slices.Equal(got, []string{"-p", "hi"}) {
+	if got := cageArgs(runOptions{repo: "r", agentArgs: []string{"-p", "hi"}}, claudeProfile); !slices.Equal(got, []string{"-p", "hi"}) {
 		t.Errorf("--repo と引数 = %v", got)
 	}
 }
@@ -469,7 +470,7 @@ func TestCheckSockPath(t *testing.T) {
 	}
 	// startProxy は、長すぎる run dir を、何も作らずに断る。
 	longRun := filepath.Join(dir, strings.Repeat("d", 100))
-	if _, err := startProxy(longRun, allowList(nil)); err == nil || !strings.Contains(err.Error(), "--state-dir") {
+	if _, err := startProxy(longRun, allowList(claudeProfile, nil)); err == nil || !strings.Contains(err.Error(), "--state-dir") {
 		t.Errorf("startProxy(長い path) = %v", err)
 	}
 	if _, err := os.Stat(longRun); err == nil {
@@ -513,14 +514,14 @@ func TestStartProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := startProxy(run, allowList([]string{"extra.invalid:443"}))
+	p, err := startProxy(run, allowList(claudeProfile, []string{"extra.invalid:443"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fi, err := os.Stat(p.sockPath); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("UDS の権限 = %v, %v, want 0600", fi, err)
 	}
-	if _, err := startProxy(run, allowList(nil)); err == nil || !strings.Contains(err.Error(), "すでに動いている") {
+	if _, err := startProxy(run, allowList(claudeProfile, nil)); err == nil || !strings.Contains(err.Error(), "すでに動いている") {
 		t.Errorf("同じ run dir の 2 つ目の startProxy = %v, want すでに動いている", err)
 	}
 	if got := connectVia(t, p.sockPath, "denied.example:443"); got != "403" {
@@ -549,7 +550,7 @@ func TestStartProxy(t *testing.T) {
 	}
 
 	// Close の後は、ロックが離れていて、もう一度起動できる。
-	p2, err := startProxy(run, allowList(nil))
+	p2, err := startProxy(run, allowList(claudeProfile, nil))
 	if err != nil {
 		t.Fatalf("Close の後の startProxy: %v", err)
 	}
@@ -573,7 +574,7 @@ func TestAuditLogNeverBlocksEgress(t *testing.T) {
 	w := blockingWriter{release: make(chan struct{})}
 	defer close(w.release)
 	audit := newAuditLog(w, 4, 1<<20)
-	srv := egress.New(egress.Config{Allow: allowList(nil), Audit: audit, MaxConns: 2})
+	srv := egress.New(egress.Config{Allow: allowList(claudeProfile, nil), Audit: audit, MaxConns: 2})
 	sock := tempSock(t)
 	l, err := net.Listen("unix", sock)
 	if err != nil {

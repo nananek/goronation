@@ -223,9 +223,9 @@ func (failListener) Accept() (net.Conn, error) { return nil, errors.New("検証�
 func (failListener) Close() error              { return nil }
 func (failListener) Addr() net.Addr            { return &net.UnixAddr{Net: "unix"} }
 
-// allowList は、egress に渡す許可の一覧: 既定 (egress.ClaudeHosts) に、--allow で足したものを、重複なく加える。
-func allowList(extra []string) []string {
-	out := egress.ClaudeHosts()
+// allowList は、egress に渡す許可の一覧: エージェント p の既定 (egress.ClaudeHosts など) に、--allow で足したものを、重複なく加える。
+func allowList(p agentProfile, extra []string) []string {
+	out := p.hosts()
 	for _, a := range extra {
 		if !slices.Contains(out, a) {
 			out = append(out, a)
