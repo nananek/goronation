@@ -85,8 +85,8 @@ func TestDocMentionsLimits(t *testing.T) {
 		fmt.Sprintf("packagedocは%d行まで。検査・強制を担うpackageは%d行まで", pkgDocMaxLines, enforcerDocMaxLines),
 		fmt.Sprintf("READMEは%d行・%s字、ADRは%d行・%s字まで", readmeMaxLines, comma(readmeMaxChars), adrMaxLines, comma(adrMaxChars)),
 		fmt.Sprintf("使い方のコードは、合計%d行以内", usageMaxCodeLines),
-		fmt.Sprintf("予算(%d秒・項目%s・ファイル%s・1ファイル1MiB・合計%dMiB・深さ%d)",
-			int(lim.Timeout.Seconds()), comma(lim.MaxEntries), comma(lim.MaxFiles), lim.MaxTotalBytes>>20, lim.MaxDepth),
+		fmt.Sprintf("予算(%d秒・項目%s・ファイル%s・1ファイル1MiB・合計%dMiB・構文解析する.goの合計%dMiB・深さ%d)",
+			int(lim.Timeout.Seconds()), comma(lim.MaxEntries), comma(lim.MaxFiles), lim.MaxTotalBytes>>20, lim.MaxGoBytes>>20, lim.MaxDepth),
 		fmt.Sprintf("%d秒の猶予", int(watchdogGrace.Seconds())),
 	}
 	if lim.MaxFileBytes != 1<<20 {

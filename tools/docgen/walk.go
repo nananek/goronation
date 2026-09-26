@@ -67,6 +67,7 @@ type tree struct {
 	entries  int
 	files    int
 	bytes    int64
+	goBytes  int64 // 構文解析する .go の、これまでの合計 (limits.MaxGoBytes)
 
 	// hook は、テストが、open の前後に、ファイルの差し替えを仕込む場所。本番は nil。
 	hook func(stage, name string)
@@ -142,6 +143,16 @@ func (t *tree) chargeFile(name string, size int64) error {
 		return fmt.Errorf("%w: %s が 1 ファイルの上限 %d バイトを超えた", errBudget, name, t.lim.MaxFileBytes)
 	}
 	return t.chargeBytes(name, size)
+}
+
+// chargeGo は、構文解析する .go (大きさ n) の勘定を足し、合計が limits.MaxGoBytes を超えたら error にする
+// (構文解析のメモリは、入力の大きさの数十倍になる)。ファイルの数・バイトの勘定 (chargeFile) とは別に数える。
+func (t *tree) chargeGo(name string, n int64) error {
+	t.goBytes += n
+	if t.goBytes > t.lim.MaxGoBytes {
+		return fmt.Errorf("%w: 構文解析する .go の合計が %d バイトを超えた (%s。構文解析は、入力の数十倍のメモリを使う)", errBudget, t.lim.MaxGoBytes, name)
+	}
+	return nil
 }
 
 func (t *tree) chargeBytes(name string, n int64) error {

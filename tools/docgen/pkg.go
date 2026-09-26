@@ -41,6 +41,11 @@ func (t *tree) readSources(inv *inventory) (*sources, error) {
 		if err := checkSource(p, b); err != nil {
 			return nil, err
 		}
+		if isPackageFile(p) { // 構文解析するものだけ数える (_test.go などは、読むだけ)
+			if err := t.chargeGo(p, int64(len(b))); err != nil {
+				return nil, err
+			}
+		}
 		s.Go[p] = b
 	}
 	for _, p := range inv.Markdown {
@@ -68,8 +73,7 @@ func (t *tree) readSources(inv *inventory) (*sources, error) {
 
 	byDir := map[string][]string{}
 	for _, p := range inv.Go {
-		name := path.Base(p)
-		if strings.HasSuffix(name, "_test.go") || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+		if !isPackageFile(p) {
 			continue
 		}
 		byDir[path.Dir(p)] = append(byDir[path.Dir(p)], p)
@@ -100,6 +104,13 @@ func (t *tree) readSources(inv *inventory) (*sources, error) {
 		s.Pkgs = append(s.Pkgs, &pkgSource{Dir: d, ImportPath: imp, Files: files})
 	}
 	return s, nil
+}
+
+// isPackageFile は、.go の path が、package を作る (構文解析する) ファイルか。go tool が build に使うものと同じ規則で、
+// _test.go と、. か _ で始まる名前は含めない。
+func isPackageFile(p string) bool {
+	name := path.Base(p)
+	return !strings.HasSuffix(name, "_test.go") && !strings.HasPrefix(name, ".") && !strings.HasPrefix(name, "_")
 }
 
 // moduleOf は、ディレクトリ dir を含む、最も近い module のディレクトリを返す (go.mod のあるところ)。
