@@ -4,6 +4,7 @@ use (
 	./cmd
 	./core
 	./egress
+	./hostfs
 	./sandbox
 	./tools/archtest
 	./tools/docgen
