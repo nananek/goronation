@@ -292,6 +292,8 @@ func TestLintLinks(t *testing.T) {
 		{"長い fence の中に短い fence", "````\n```\n[a](docs/none.md)\n```\n````\n", nil},
 		{"コードブロックの後は見る", "```\nx\n```\n[a](docs/none.md)\n", []string{readme + " md-link"}},
 		{"行内のコードは見ない", "`[a](docs/none.md)` と ``[b](javascript:x)``\n", nil},
+		{"閉じないバッククォートは、リンクを隠さない (行末)", "[a](docs/none.md) `\n", []string{readme + " md-link"}},
+		{"閉じないバッククォートは、リンクを隠さない (行頭)", "`` [a](docs/none.md) `\n", []string{readme + " md-link"}},
 		{"エスケープされた [ は見ない", "\\[a\\](docs/none.md)\n", nil},
 		{"1 行に複数", "[a](docs/none1.md) と [b](docs/none2.md)\n", []string{readme + " md-link", readme + " md-link"}},
 		{"%エンコード", "[a](docs/adr/0001-a%2Emd)\n", nil},
