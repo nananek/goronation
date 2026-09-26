@@ -47,7 +47,8 @@ type Capabilities struct {
 	KillsDescendants bool
 	// PrivatePIDs は、檻から、ホストのプロセスが見えないか。
 	PrivatePIDs bool
-	// ExtraEnv は、Spec.Env に無くても、バックエンドが檻に足す環境変数の名前 (bwrap は PWD)。
+	// ExtraEnv は、Spec.Env に無くても、バックエンドが檻に足す環境変数の名前 (bwrap は PWD)。資格情報らしい名前は、宣言できない (契約の検証が断る)。
+	// ホストの環境変数の値を、檻に渡してはならない (宣言の有無に依らない。適合テストが、ホストに置いた値が檻に漏れたら、不合格にする)。
 	ExtraEnv []string
 }
 

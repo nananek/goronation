@@ -8,6 +8,8 @@ import "errors"
 
 const osNoCTTY = 0
 
+func preadFd(fd int, buf []byte) (int, error) { return 0, errors.New("未対応") }
+
 func killSelf() {}
 
 func kill0(pid int) error { return errors.New("未対応") }

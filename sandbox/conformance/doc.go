@@ -20,10 +20,8 @@
 // # 限界
 //
 //   - 檻 1 つの待ち時間の上限は、既定で 30 秒。遅い環境は、環境変数 GORO_CONFORMANCE_TIMEOUT (例: 2m) で延ばす。
+//   - 合格は、契約の範囲の必要条件で、十分条件ではない。範囲外: Mach IPC・XPC・pasteboard・LaunchServices・AppleEvents・Keychain・IPC/UTS/cgroup の namespace・共有の /dev・/tmp。
+//   - hidden-host は、偽の fixture の path だけを見る。システムの機密 (/etc/ssh など) と、/dev の実体は見ない。
 //   - 端末の注入の検査は、pty の用意 (pty_<OS>.go) が要る。Linux だけがある。無い OS では、その項目は落ちる (実装を足す)。
 //   - 観測は、Go の標準ライブラリだけ (stat・ReadDir・write・dial・env・fd)。/proc・CapEff・エラー文言などの、バックエンド固有の性質は、バックエンドの側のテストが見る。
-//
-// # 関連
-//
-// docs/adr/0001-repository-layout.md
 package conformance

@@ -10,6 +10,9 @@ import (
 	"unsafe"
 )
 
+// preadFd は、fd の先頭から buf に読む (fd の位置は動かさない)。
+func preadFd(fd int, buf []byte) (int, error) { return syscall.Pread(fd, buf, 0) }
+
 // osNoCTTY は、端末を開くとき、制御端末にしない flag (O_NOCTTY)。
 const osNoCTTY = syscall.O_NOCTTY
 

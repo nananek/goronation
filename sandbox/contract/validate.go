@@ -2,6 +2,7 @@ package contract
 
 import (
 	"fmt"
+	"maps"
 	"net/netip"
 	"path/filepath"
 	"slices"
@@ -33,6 +34,12 @@ func (r Rules) Validate(s sandbox.Spec) error {
 	if err := r.Host.check(); err != nil {
 		return reject("Host: %v", err)
 	}
+	// バックエンドが檻に足す環境変数の宣言 (ExtraEnv) も、資格情報らしい名前・不正な名前は断る (宣言で、資格情報を通させない)。
+	for i, name := range r.Caps.ExtraEnv {
+		if err := CheckEnv(name, ""); err != nil {
+			return reject("Capabilities.ExtraEnv[%d]: %v (バックエンドの宣言。資格情報らしい名前は、宣言しても足せない)", i, err)
+		}
+	}
 	if err := CheckPath(s.Exec); err != nil {
 		return reject("Exec: %v (PATH は検索しない)", err)
 	}
@@ -62,11 +69,32 @@ func (r Rules) Validate(s sandbox.Spec) error {
 		if guest == "/" {
 			return reject("%s: 檻の中の path が / (丸ごと置き換えられない)", what)
 		}
+		for _, p := range r.Policy.GuestReserved {
+			if Under(guest, p) {
+				return reject("%s: 檻の中の path %q が、バックエンドが常に作る %q の中 (作ったものを差し替えられない)", what, guest, p)
+			}
+		}
 		if prev, dup := guests[guest]; dup {
 			return reject("檻の中の path %q が重複している (%s と %s)", guest, prev, what)
 		}
 		guests[guest] = what
 		return nil
+	}
+	// System が占める path (基盤の bind と symlink) を先に取る: 同じ path の Mount・Scratch は、重複で断る。
+	var systemBinds, systemLinks, mountGuests []string
+	if s.System {
+		for _, p := range r.Policy.SystemPaths {
+			if err := claim("System", p); err != nil {
+				return err
+			}
+			systemBinds = append(systemBinds, p)
+		}
+		for _, p := range r.Policy.SystemLinks {
+			if err := claim("System", p); err != nil {
+				return err
+			}
+			systemLinks = append(systemLinks, p)
+		}
 	}
 	for _, g := range []struct {
 		name  string
@@ -84,6 +112,7 @@ func (r Rules) Validate(s sandbox.Spec) error {
 			if err := claim(what, m.Guest()); err != nil {
 				return err
 			}
+			mountGuests = append(mountGuests, m.Guest())
 			if err := r.checkSource(m, m.HostPath, g.write, true, nil); err != nil {
 				return reject("%s: %v", what, err)
 			}
@@ -96,6 +125,21 @@ func (r Rules) Validate(s sandbox.Spec) error {
 		}
 		if err := claim(what, p); err != nil {
 			return err
+		}
+		// Scratch (tmpfs) は、Mount より先に作られる。Mount・基盤の bind の内側に置くと、後から bind される Mount が Scratch を隠す
+		// (rw の Mount なら、書いたものがホストに残る。ro なら、書けない)。
+		for _, g := range slices.Concat(mountGuests, systemBinds) {
+			if p != g && Under(p, g) {
+				return reject("%s: 檻の中の path %q が、Mount か基盤 (%q) の内側 (後から bind される Mount が Scratch を隠し、ホストに残らない、に反する)", what, p, g)
+			}
+		}
+	}
+	// System の symlink の下には、何も置けない。
+	for _, g := range slices.Sorted(maps.Keys(guests)) {
+		for _, link := range systemLinks {
+			if g != link && Under(g, link) {
+				return reject("%s: 檻の中の path %q が、System の symlink %q の下 (symlink を辿って、別の path に届く)", guests[g], g, link)
+			}
 		}
 	}
 	if s.Egress != "" {
@@ -169,7 +213,7 @@ func (r Rules) checkSource(m sandbox.Mount, src string, write, lexical bool, tre
 
 // Resolve は、s の各 Mount の HostPath を、symlink を辿った実際の path にし、同じ規則で検証する (機密の path を指す symlink を、
 // 機密でない名前で見せないため)。ファイルシステムを見る。Validate に通った Spec に使う。辿れない・機密に重なるときは、ErrRejected を包んだ error を返す。
-// バックエンドは、起動器に、返した実際の path を渡す。
+// 起動器に、字面の path でなく、返した実際の path を渡すのは、バックエンドの責任 (bwrap のアダプタは、bwrap の Start が解決し直すので、この結果は検査にだけ使う)。
 func (r Rules) Resolve(s sandbox.Spec) (Resolved, error) {
 	host := r.Host
 	host.Home = evalOrSelf(host.Home)

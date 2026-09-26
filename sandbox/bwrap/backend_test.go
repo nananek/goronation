@@ -595,7 +595,8 @@ func TestBackendUsesLinuxPolicy(t *testing.T) {
 	b := New(adapterHost)
 	want := contract.LinuxPolicy()
 	if !slices.Equal(b.rules.Policy.ProtectedTrees, want.ProtectedTrees) || !slices.Equal(b.rules.Policy.ReadOnlyTrees, want.ReadOnlyTrees) ||
-		!slices.Equal(b.rules.Policy.WholeDenied, want.WholeDenied) {
+		!slices.Equal(b.rules.Policy.WholeDenied, want.WholeDenied) || !slices.Equal(b.rules.Policy.GuestReserved, want.GuestReserved) ||
+		!slices.Equal(b.rules.Policy.SystemPaths, want.SystemPaths) || !slices.Equal(b.rules.Policy.SystemLinks, want.SystemLinks) {
 		t.Errorf("契約の検証の Policy = %+v, want LinuxPolicy", b.rules.Policy)
 	}
 	if b.rules.Host.Home != adapterHost.Home || b.rules.Caps.PathRemap != b.Capabilities().PathRemap {
@@ -605,5 +606,32 @@ func TestBackendUsesLinuxPolicy(t *testing.T) {
 	_, err := b.Prepare(sandbox.Spec{Exec: "/opt/x/x", Read: []sandbox.Mount{{HostPath: "/etc/ssh", GuestPath: "/x"}}})
 	if !errors.Is(err, sandbox.ErrRejected) || !strings.Contains(err.Error(), "HostPath") {
 		t.Errorf("/etc/ssh: %v, want 契約の検証 (HostPath) の ErrRejected", err)
+	}
+}
+
+// TestSystemPlacementMatchesPolicy は、アダプタが System で作る配置 (/usr の bind と 4 つの symlink) が、契約の表 (Policy の SystemPaths・SystemLinks) と、
+// 同じことを確認する (表が違うと、契約の検証は、基盤が占める path を、取り違える)。/proc・/dev を常に作ることも、表 (GuestReserved) と同じ。
+func TestSystemPlacementMatchesPolicy(t *testing.T) {
+	b := New(adapterHost)
+	bs := b.translate(sandbox.Spec{Exec: "/opt/x/x", System: true})
+	var links, binds []string
+	for _, l := range bs.Symlinks {
+		links = append(links, l.Dst)
+	}
+	for _, bd := range bs.Binds {
+		binds = append(binds, bd.Dst)
+	}
+	pol := contract.LinuxPolicy()
+	if !slices.Equal(links, pol.SystemLinks) || !slices.Equal(binds, pol.SystemPaths) {
+		t.Errorf("System の配置: symlink %q・bind %q, want Policy の %q・%q", links, binds, pol.SystemLinks, pol.SystemPaths)
+	}
+	argv, err := b.translate(sandbox.Spec{Exec: "/opt/x/x"}).Argv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range pol.GuestReserved {
+		if !slices.Contains(argv, p) {
+			t.Errorf("bwrap が常に作る path %s が、argv に無い (表 GuestReserved と食い違う)", p)
+		}
 	}
 }

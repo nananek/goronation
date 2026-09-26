@@ -318,7 +318,7 @@ func runRole(t *testing.T, nb NewBackend, role string) {
 		}
 		select {}
 	case "fdleak":
-		s := minimalSpec(caps, exe, "-fdread", fmt.Sprint(fdLeakFd))
+		s := minimalSpec(caps, exe, "-fdscan", fmt.Sprintf("%d-%d", fdLeakLo, fdLeakHi))
 		s.Stdout, s.Stderr = os.Stdout, os.Stderr
 		cage, err := b.Start(context.Background(), s)
 		if err != nil {
@@ -341,8 +341,12 @@ func runRole(t *testing.T, nb NewBackend, role string) {
 	}
 }
 
-// fdLeakFd は、fdleak の役が、CLOEXEC なしで持つ fd の番号。
-const fdLeakFd = 9
+// fdLeakLo と fdLeakHi は、fdleak の役が、CLOEXEC なしで持つ fd の範囲 (全部が、偽の資格情報のファイル)。実装が、固定の範囲 (3〜9 など) だけを閉じても、
+// 見逃さない広さ (RLIMIT_NOFILE の既定 1024 の、直前まで)。
+const (
+	fdLeakLo = 3
+	fdLeakHi = 1023
+)
 
 // reexec は、テストバイナリを、役 role で再実行する (Run を呼んだテストだけを動かす)。標準出力は pipe で読む。
 func (c *C) reexec(role string, files []*os.File, env ...string) (*exec.Cmd, io.ReadCloser) {

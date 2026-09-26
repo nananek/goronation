@@ -69,6 +69,11 @@ type Policy struct {
 	WholeDenied []string
 	// ReadOnlyTrees は、Read でだけ見せられる path (システムの領域)。
 	ReadOnlyTrees []string
+	// GuestReserved は、檻の中で、バックエンドが常に作る path。その path 自体と、その中には、Mount も Scratch も置けない (作ったものを差し替える)。
+	GuestReserved []string
+	// SystemPaths と SystemLinks は、Spec.System が true のとき、基盤が占める、檻の中の path。SystemPaths は bind で、同じ path には置けない (中には置ける)。
+	// SystemLinks は symlink で、その path 自体にも、中にも、置けない (symlink を辿って、別の path に届く)。
+	SystemPaths, SystemLinks []string
 }
 
 // LinuxPolicy は、Linux の Policy。呼ぶたびに、新しい slice を返す。
@@ -81,6 +86,9 @@ func LinuxPolicy() Policy {
 		},
 		WholeDenied:   []string{"/tmp", "/var/tmp"},
 		ReadOnlyTrees: []string{"/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/opt", "/etc", "/var"},
+		GuestReserved: []string{"/proc", "/dev"},
+		SystemPaths:   []string{"/usr"},
+		SystemLinks:   []string{"/lib", "/lib64", "/bin", "/sbin"},
 	}
 }
 

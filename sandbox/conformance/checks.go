@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/nananek/goronation/core/sandbox"
+	"github.com/nananek/goronation/sandbox/contract"
 )
 
 // check は、全バックエンドが満たす項目 (P0)。capCheck は、Cap つきの項目: run が返す値 (満たしたか) が、宣言と一致することを確かめる。
@@ -105,11 +106,18 @@ func checkHiddenHost(c *C) {
 // checkEnvClean は、檻の環境変数が、Spec.Env (と、バックエンドが宣言した ExtraEnv) だけであることを確かめる。
 // ホストの環境変数に、資格情報らしいものがあっても、檻には渡らない。
 func checkEnvClean(c *C) {
-	for k, v := range map[string]string{
+	planted := map[string]string{
 		"SSH_AUTH_SOCK": "/tmp/fake-agent", "GH_TOKEN": "ghp_fake", "ANTHROPIC_API_KEY": "sk-ant-fake",
 		"AWS_SECRET_ACCESS_KEY": "fake", "GORO_HOST_ONLY": "fake", "HOME": "/home/fake-host-home",
-	} {
+	}
+	for k, v := range planted {
 		c.t.Setenv(k, v)
+	}
+	// 宣言した ExtraEnv は、資格情報らしい名前・不正な名前ではいけない (宣言で、漏れを許可させない)。
+	for _, name := range c.caps.ExtraEnv {
+		if err := contract.CheckEnv(name, ""); err != nil {
+			c.t.Errorf("Capabilities.ExtraEnv に宣言した %q が、環境変数の規則に反する: %v", name, err)
+		}
 	}
 	s := c.spec()
 	rep := c.mustReport(s)
@@ -121,6 +129,10 @@ func checkEnvClean(c *C) {
 	for _, kv := range rep.Env {
 		k, v, _ := strings.Cut(kv, "=")
 		got[k] = v
+		// ホストに置いた値が、檻に出てはいけない (ExtraEnv に宣言していても、漏れは漏れ)。
+		if pv, ok := planted[k]; ok && v == pv {
+			c.t.Errorf("ホストの環境変数 %s=%q が、檻に漏れた (ExtraEnv の宣言に関わらず)", k, v)
+		}
 		if w, ok := want[k]; ok {
 			if v != w {
 				c.t.Errorf("環境変数 %s = %q, want %q", k, v, w)
@@ -442,7 +454,8 @@ func checkTerminalDetached(c *C) {
 	}
 }
 
-// checkInheritedFD は、起動する側のプロセスが持つ、CLOEXEC でない fd が、檻に届かないことを確かめる。
+// checkInheritedFD は、起動する側のプロセスが持つ、CLOEXEC でない fd (3 から 1023 まで、全部) が、檻に届かないことを確かめる。
+// 固定の範囲 (3〜9 など) だけを閉じる実装は、範囲の外の fd を、檻に渡す。
 func checkInheritedFD(c *C) {
 	f, err := os.CreateTemp(c.fx.root, "secret")
 	if err != nil {
@@ -455,8 +468,11 @@ func checkInheritedFD(c *C) {
 	if _, err := f.Seek(0, 0); err != nil {
 		c.t.Fatal(err)
 	}
-	files := make([]*os.File, fdLeakFd-3+1)
-	files[fdLeakFd-3] = f
+	// 3 から 1023 までの、すべての fd に、同じファイルを持たせる (ExtraFiles は、同じ *os.File を、何度でも複製する)。
+	files := make([]*os.File, fdLeakHi-fdLeakLo+1)
+	for i := range files {
+		files[i] = f
+	}
 	cmd, out := c.reexec("fdleak", files)
 	b, _ := io.ReadAll(out)
 	_ = cmd.Wait()
@@ -464,11 +480,18 @@ func checkInheritedFD(c *C) {
 	if strings.Contains(text, "START_ERR:") {
 		c.t.Fatalf("呼び手の役が、檻を起動できなかった: %s", text)
 	}
-	if strings.Contains(text, c.fx.marker) {
-		c.t.Errorf("起動する側の fd %d が、檻の中で読めた", fdLeakFd)
+	var rep report
+	found := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "{") && json.Unmarshal([]byte(line), &rep) == nil {
+			found = true
+		}
 	}
-	if !strings.Contains(text, `"FdRead"`) {
-		c.t.Errorf("probe の報告が無い (檻が動かなかった):\n%s", text)
+	if !found {
+		c.t.Fatalf("probe の報告が無い (檻が動かなかった):\n%s", text)
+	}
+	if len(rep.FdLeaks) != 0 {
+		c.t.Errorf("起動する側の fd %v が、檻の中で読めた (継承した fd %d〜%d の、全部を閉じていない)", rep.FdLeaks, fdLeakLo, fdLeakHi)
 	}
 }
 

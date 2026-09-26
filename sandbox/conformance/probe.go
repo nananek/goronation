@@ -37,7 +37,7 @@ type report struct {
 	Dials      map[string]string // 接続を試した宛先 (tcp) → "" (成功) か error
 	UDS        map[string]string // socket に ping を送った結果 → 応答か error
 	MarkerHits []string          // marker を含むファイル
-	FdRead     string            // -fdread の結果 (読めた中身。読めなければ "err: ...")
+	FdLeaks    []int             // -fdscan で、偽の資格情報の中身 (markerPrefix) を読めた fd の番号
 	Tiocsti    string            // -tiocsti の結果 ("" = 注入できた。それ以外は、失敗の理由)
 	Kill0      string            // -kill0 の結果 ("" = そのプロセスが見える。"esrch" = 見えない)
 	TTYOpen    string            // -opentty の結果 (制御端末 /dev/tty を開けたか。"" = 開けた)
@@ -59,7 +59,7 @@ func probeMain(args []string) {
 	fl.Var(&dials, "dial", "接続を試す宛先 (tcp)")
 	fl.Var(&udss, "uds", "ping を送る Unix ドメインソケット")
 	marker := fl.String("marker", "", "この文字列を含むファイルを、/ から探す")
-	fdread := fl.Int("fdread", -1, "この fd から読む")
+	fdscan := fl.String("fdscan", "", "この範囲 (LO-HI) の fd から、偽の資格情報の中身を読めるか探す")
 	tiocsti := fl.Bool("tiocsti", false, "標準入力の端末に、TIOCSTI を試す")
 	kill0 := fl.Int("kill0", 0, "この pid に、シグナル 0 を送る")
 	opentty := fl.Bool("opentty", false, "制御端末 /dev/tty を開く")
@@ -159,8 +159,8 @@ func probeMain(args []string) {
 	if *marker != "" {
 		r.MarkerHits = findMarker(*marker)
 	}
-	if *fdread >= 0 {
-		r.FdRead = readFd(*fdread)
+	if *fdscan != "" {
+		r.FdLeaks = scanFds(*fdscan)
 	}
 	if *tiocsti {
 		r.Tiocsti = tiocstiOn(0)
@@ -187,18 +187,26 @@ func errString(err error) string {
 	return err.Error()
 }
 
-// readFd は、fd から読む (継承した fd が、檻に届いていないことの確認)。読めなければ "err: ..."。
-func readFd(fd int) string {
-	f := os.NewFile(uintptr(fd), "inherited")
-	if f == nil {
-		return "err: fd が無い"
+// markerPrefix は、fixture の偽の資格情報の中身の先頭 (継承した fd から読めたら、漏れ)。
+const markerPrefix = "GORO-CONFORMANCE-SECRET-"
+
+// scanFds は、範囲 "LO-HI" の fd を、先頭から pread し、markerPrefix で始まる中身を読めた fd を返す (継承した fd が、檻に届いていないことの確認)。
+// os.NewFile は使わない (fd を、ガベージコレクションが閉じて、probe 自身の fd を壊す)。pread は、fd の位置を動かさない。
+func scanFds(spec string) []int {
+	lo, hi, ok := strings.Cut(spec, "-")
+	a, err1 := strconv.Atoi(lo)
+	b, err2 := strconv.Atoi(hi)
+	if !ok || err1 != nil || err2 != nil {
+		return nil
 	}
-	buf := make([]byte, 256)
-	n, err := f.Read(buf)
-	if err != nil && n == 0 {
-		return "err: " + err.Error()
+	var leaks []int
+	buf := make([]byte, len(markerPrefix))
+	for fd := a; fd <= b; fd++ {
+		if n, err := preadFd(fd, buf); err == nil && n == len(buf) && string(buf) == markerPrefix {
+			leaks = append(leaks, fd)
+		}
 	}
-	return string(buf[:n])
+	return leaks
 }
 
 // skipDirs は、marker の探索で見ない、システムのディレクトリ。

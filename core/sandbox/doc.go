@@ -23,8 +23,5 @@
 //
 //   - この package は型と文言だけで、強制しない。強制は実装 (sandbox/*) と、検証の共通部品 (sandbox/contract) が行う。
 //   - Capabilities が false の項目は、満たさない。適合テストは、「満たさない」ことも確かめる (改善しても悪化しても赤くなる)。
-//
-// # 関連
-//
-// docs/adr/0001-repository-layout.md
+//   - 契約の範囲は、path・環境変数・fd・ネットワーク・プロセス・端末。OS 固有の経路 (macOS の Mach IPC・pasteboard・LaunchServices・Keychain など) は範囲外で、バックエンドが別に塞ぐ。
 package sandbox
