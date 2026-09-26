@@ -164,8 +164,14 @@ func TestReadFileNonRegular(t *testing.T) {
 	for _, name := range []string{"fifo.go", "link.go", "ext.go", "."} {
 		t.Run(name, func(t *testing.T) {
 			within(t, 5*time.Second, func() {
-				if b, err := tr.readFile(name); err == nil {
+				b, err := tr.readFile(name)
+				if err == nil {
 					t.Errorf("error を返すべき: %q", b)
+					return
+				}
+				// FIFO は、そのものが通常のファイルではない (差し替えではない) と、error 文で分かる。
+				if name == "fifo.go" && !strings.Contains(err.Error(), "開いたものが") {
+					t.Errorf("FIFO の error 文が、種類の違いを言っていない: %v", err)
 				}
 			})
 		})
