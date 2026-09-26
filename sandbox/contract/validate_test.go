@@ -136,18 +136,16 @@ func TestValidateRejects(t *testing.T) {
 	}
 }
 
-// TestValidateEgressDirIsReadOnly は、Egress の親ディレクトリを Write で見せると断る (檻が、ソケットを差し替えられる) ことを確認する。
+// TestValidateEgressDirIsReadOnly は、Egress の親ディレクトリを、Write でも見せようとすると (同じ GuestPath)、重複で断ることを確認する
+// (檻が、ソケットを差し替えられない)。親が Read で、別の dir が Write のときは通る。
 func TestValidateEgressDirIsReadOnly(t *testing.T) {
 	s := okSpec()
-	s.Read = s.Read[:1]                                                                     // /run/goro を、Read から外す
-	s.Write = append(s.Write, sandbox.Mount{HostPath: "/data/run", GuestPath: "/run/goro"}) // Write で見せる
-	err := testRules().Validate(s)
-	if err == nil || !strings.Contains(err.Error(), "Read に無い") {
-		t.Errorf("Egress の親ディレクトリが Write のとき: %v", err)
+	s.Write = append(s.Write, sandbox.Mount{HostPath: "/data/run3", GuestPath: "/run/goro"})
+	if err := testRules().Validate(s); err == nil || !strings.Contains(err.Error(), "重複") {
+		t.Errorf("Egress の親ディレクトリを Write でも見せたとき: %v, want 重複", err)
 	}
-	s.Read = append(s.Read, sandbox.Mount{HostPath: "/data/run3", GuestPath: "/run/other"})
-	s.Egress = "/run/other/p.sock"
-	s.Write = append(s.Write, sandbox.Mount{HostPath: "/data/run4", GuestPath: "/run/other2"})
+	s = okSpec()
+	s.Write = append(s.Write, sandbox.Mount{HostPath: "/data/run4", GuestPath: "/run/other"})
 	if err := testRules().Validate(s); err != nil {
 		t.Errorf("Egress の親が Read で、別の dir が Write のときは通る: %v", err)
 	}

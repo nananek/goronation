@@ -15,7 +15,7 @@
 //   - resolved: Resolve は、symlink を辿った実体にも、同じ規則をかける (機密を指す symlink を、別の名前で見せない)。
 //   - env-allowlist: 環境変数の名前は英数字と _ だけ。資格情報らしい名前 (SSH_AUTH_SOCK・*_TOKEN・AWS_* など) と、重複は断る。
 //   - path-form: 絶対・クリーンで、制御文字を含まない path だけ。GuestPath が HostPath と違うのは、PathRemap のバックエンドだけ。
-//   - egress-dir: Egress の親ディレクトリは、Read で見せ、Write では見せない。Loopback は、loopback の IP リテラル:ポートだけ。
+//   - egress-dir: Egress の親ディレクトリは、Read で見せる (同じ GuestPath の Write は、重複で断る)。Loopback は、loopback の IP リテラル:ポートだけ。
 //   - inherited-fd: CloseOnExecFrom は、継承した fd (3 以降) を close-on-exec にする。できなければ error。
 //
 // # 限界

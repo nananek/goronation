@@ -103,11 +103,9 @@ func (r Rules) Validate(s sandbox.Spec) error {
 			return reject("Egress: %v", err)
 		}
 		dir := filepath.Dir(s.Egress)
+		// Write に、同じ GuestPath の Mount は置けない (重複で断る)ので、Read で見えれば、ro になる (檻が、ソケットを差し替えられない)。
 		if !slices.ContainsFunc(s.Read, func(m sandbox.Mount) bool { return m.Guest() == dir }) {
 			return reject("Egress %q の親ディレクトリ %q が、Read に無い (ソケットは作り直されるので、ディレクトリを見せる)", s.Egress, dir)
-		}
-		if slices.ContainsFunc(s.Write, func(m sandbox.Mount) bool { return m.Guest() == dir }) {
-			return reject("Egress %q の親ディレクトリ %q が、Write に入っている (檻がソケットを差し替えられる)", s.Egress, dir)
 		}
 	}
 	for i, l := range s.Loopback {

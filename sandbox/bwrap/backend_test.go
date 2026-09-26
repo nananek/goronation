@@ -3,6 +3,7 @@ package bwrap
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/nananek/goronation/core/sandbox"
@@ -477,6 +478,9 @@ func TestBackendPrepareRejects(t *testing.T) {
 		"GuestPath が /proc の中 (bwrap 固有)": func(s *sandbox.Spec) { s.Read = []sandbox.Mount{{HostPath: "/data/x", GuestPath: "/proc/x"}} },
 		"GuestPath が /dev の中 (bwrap 固有)":  func(s *sandbox.Spec) { s.Read = []sandbox.Mount{{HostPath: "/data/x", GuestPath: "/dev/x"}} },
 		"Scratch が /proc の中 (bwrap 固有)":   func(s *sandbox.Spec) { s.Scratch = []string{"/proc/x"} },
+		"Egress の親が Read に無い (契約のみ)":      func(s *sandbox.Spec) { s.Egress = "/run/goro/proxy.sock" },
+		"loopback でない待ち受け (契約のみ)":         func(s *sandbox.Spec) { s.Loopback = []string{"0.0.0.0:3128"} },
+		"Read と Write の GuestPath の重複":    func(s *sandbox.Spec) { s.Read = []sandbox.Mount{m("/data/a")}; s.Write = []sandbox.Mount{m("/data/b")} },
 	} {
 		s := base()
 		mutate(&s)
@@ -582,5 +586,24 @@ func TestContractAgreesWithBwrap(t *testing.T) {
 	}
 	if n < 250 {
 		t.Errorf("比べた数 = %d, want 250 以上 (表が空振りしていないか)", n)
+	}
+}
+
+// TestBackendUsesLinuxPolicy は、アダプタが、契約の検証に、Linux の表 (LinuxPolicy) と、bwrap の宣言 (Capabilities) と、渡された Host を使うことを確認する
+// (配線を誤ると、契約の検証が、機密の表を持たないまま通す。bwrap 自身の検証は、別に働くので、他のテストでは見えない)。
+func TestBackendUsesLinuxPolicy(t *testing.T) {
+	b := New(adapterHost)
+	want := contract.LinuxPolicy()
+	if !slices.Equal(b.rules.Policy.ProtectedTrees, want.ProtectedTrees) || !slices.Equal(b.rules.Policy.ReadOnlyTrees, want.ReadOnlyTrees) ||
+		!slices.Equal(b.rules.Policy.WholeDenied, want.WholeDenied) {
+		t.Errorf("契約の検証の Policy = %+v, want LinuxPolicy", b.rules.Policy)
+	}
+	if b.rules.Host.Home != adapterHost.Home || b.rules.Caps.PathRemap != b.Capabilities().PathRemap {
+		t.Errorf("契約の検証の Host・Caps = %+v・%+v", b.rules.Host, b.rules.Caps)
+	}
+	// 契約の検証が、この表で、bwrap の検証より先に断る (文言で、どちらが断ったかを見る)。
+	_, err := b.Prepare(sandbox.Spec{Exec: "/opt/x/x", Read: []sandbox.Mount{{HostPath: "/etc/ssh", GuestPath: "/x"}}})
+	if !errors.Is(err, sandbox.ErrRejected) || !strings.Contains(err.Error(), "HostPath") {
+		t.Errorf("/etc/ssh: %v, want 契約の検証 (HostPath) の ErrRejected", err)
 	}
 }
