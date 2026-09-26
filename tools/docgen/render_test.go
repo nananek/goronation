@@ -1,6 +1,7 @@
 package main
 
 import (
+	"go/doc/comment"
 	"reflect"
 	"regexp"
 	"strings"
@@ -508,6 +509,34 @@ func TestOutputPathCollisions(t *testing.T) {
 				t.Errorf("error にすべき: %v", sortedKeys(res.Expected))
 			}
 		})
+	}
+}
+
+// TestInlineRejectsUnknownParts は、行内の未知の部品を、黙って落とさず、error にすることを確認する。
+// comment.Italic は、Parser.Words を設定したときだけ作られる。docgen は設定しない (Package.Parser は設定しない)
+// ので、扱わない。将来、作られるようになれば、素通りせず、この error で気づく。
+func TestInlineRejectsUnknownParts(t *testing.T) {
+	if got, err := (&renderer{}).inline([]comment.Text{comment.Plain("a"), comment.Italic("b")}); err == nil {
+		t.Errorf("error にすべき: %q", got)
+	}
+}
+
+// TestDocLinkToOtherPackage は、他の package の識別子への doc link が、同じ名前のこの package の識別子の anchor に
+// リンクされない (コードとして出る) ことを確認する。
+func TestDocLinkToOtherPackage(t *testing.T) {
+	res, err := analyzeFiles(t, map[string]string{
+		"core/doc.go": docComment("Package core は、テスト。", "", "契約。", "", "[strings.Builder] は他の package の型で、[Builder] はこの package の型。") + "package core\n",
+		"core/x.go":   "package core\n\n// Builder は、この package の型。\ntype Builder struct{}\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := res.Expected["docs/reference/core.md"]
+	if strings.Contains(page, "[`strings.Builder`](") {
+		t.Errorf("他の package の型が、この package の anchor にリンクされた:\n%s", page)
+	}
+	if !strings.Contains(page, "`strings.Builder`") || !strings.Contains(page, "[`Builder`](#Builder)") {
+		t.Errorf("`strings.Builder` はコード、[`Builder`](#Builder) はリンクで出るはず:\n%s", page)
 	}
 }
 

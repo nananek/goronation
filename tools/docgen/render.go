@@ -114,8 +114,6 @@ func flatten(ts []comment.Text) string {
 		switch x := t.(type) {
 		case comment.Plain:
 			b.WriteString(string(x))
-		case comment.Italic:
-			b.WriteString(string(x))
 		case *comment.Link:
 			b.WriteString(flatten(x.Text))
 		case *comment.DocLink:
@@ -136,14 +134,6 @@ func (r *renderer) inline(ts []comment.Text) (string, error) {
 				return "", err
 			}
 			b.WriteString(s)
-		case comment.Italic:
-			s, err := normalize(kindText, string(x))
-			if err != nil {
-				return "", err
-			}
-			if strings.TrimSpace(s) != "" {
-				b.WriteString("*" + s + "*")
-			}
 		case *comment.Link:
 			label, err := r.inline(x.Text)
 			if err != nil {
