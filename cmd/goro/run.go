@@ -28,14 +28,14 @@ func runUsage() string {
 	fmt.Fprintf(&b, "使い方: goro run (--repo PATH | --session ID | --login) [--agent NAME] [オプション] [-- エージェントへの引数...]\n\n")
 	fmt.Fprintf(&b, "エージェント (%s) を、檻 (ネットワークの無い bwrap) の中で、ホストの repo の private clone の上で動かす。\n", agentNames())
 	b.WriteString("ホストの作業ツリー・.git・~/.ssh・エージェントの設定と認証情報 (~/.claude など)・環境変数は、檻から見えない。clone されるのはコミット済みの内容だけ。\n\n")
-	fmt.Fprintf(&b, "  --agent NAME      動かすエージェント: %s (省略は %s)。ログイン状態・会話の履歴は、エージェントごとに別の檻専用の HOME に残る\n", agentNames(), def.name)
+	fmt.Fprintf(&b, "  --agent NAME      動かすエージェント: %s (省略は %s)。ログイン状態はエージェントごとに 1 つ (全 repo で共有)、会話の履歴・メモリ・trust の承認は repo ごとに別\n", agentNames(), def.name)
 	b.WriteString(`  --repo PATH       PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
-  --session ID      前の goro run のセッションを再開する (同じ clone が見える)。エージェントは、そのセッションを作ったもの (--agent は省略できる。別のエージェントは断る)
-  --login           repo・clone 無しで、空の作業ディレクトリでエージェントのログインを行う (ログイン状態は、檻専用の HOME に残る)。エージェントごとの起動は、下の「エージェント」
+  --session ID      前の goro run のセッションを再開する (同じ clone と HOME が見える)。エージェントは、そのセッションを作ったもの (--agent は省略できる。別のエージェントは断る)
+  --login           repo・clone 無しで、空の作業ディレクトリでエージェントのログインを行う (ログイン状態は、認証情報のディレクトリに残り、全 repo の檻で使う)。エージェントごとの起動は、下の「エージェント」
                     ログインは、エージェント自身の画面で行う。goro は出力を解釈しない (端末に直結する)。
   --name N          clone の user.name (--repo のとき。既定は goro)
   --email E         clone の user.email (--repo のとき)
-  --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)。セッションは <DIR>/sessions/、エージェントごとの HOME・ログイン用のディレクトリは <DIR>/agents/<エージェント名>/
+  --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)。セッションは <DIR>/sessions/、エージェントごとの認証情報 (auth/)・repo ごとの HOME (homes/)・ログイン用のディレクトリは <DIR>/agents/<エージェント名>/
   --bin PATH        動かすエージェントの実行ファイル (既定は、環境変数 GORO_<エージェント名の大文字> か、PATH の実行ファイル。下の「エージェント」)
   --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は、エージェントごと。下の「エージェント」)
   -- ARGS...        エージェントに渡す引数 (--login のときは、そのエージェントのログインの引数の後ろに付く)
@@ -353,12 +353,13 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 		return fail("goro 自身の実行ファイルを決められない: %v", err)
 	}
 	dirs := agent.dirs(stateDir)
-	agentHome := dirs.home
-	if err := ensureDir(agentHome); err != nil {
-		return fail("エージェントの HOME を作れない: %v", err)
+	// 認証情報の置き場は、エージェントごとに 1 つ (全 repo・--login の檻で共有する)。中身は、ホストは読まない。
+	if err := ensureDir(dirs.auth); err != nil {
+		return fail("認証情報のディレクトリを作れない: %v", err)
 	}
 
 	var tgt runTarget
+	var home string // repo ごとの HOME (--login では、ログイン用の HOME)
 	switch {
 	case o.login:
 		tgt = runTarget{work: dirs.loginWork, runDir: dirs.loginRun}
@@ -366,6 +367,10 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 			if err := ensureDir(d); err != nil {
 				return fail("ログイン用のディレクトリを作れない: %v", err)
 			}
+		}
+		home = dirs.loginHome
+		if err := ensureHome(agent, home, false); err != nil { // 種は置かない: 初回の設定を、最後まで通す
+			return fail("ログイン用の HOME を作れない: %v", err)
 		}
 	default:
 		sess := existing
@@ -376,6 +381,18 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 			}
 			fmt.Fprintf(stderr, "goro run: セッション %s を作った\n", sess.ID)
 		}
+		// HOME は repo ごと: セッションが記録した repo のキーの HOME (同じ repo のセッションは、同じ HOME。別の repo の HOME は、この檻に入らない)。
+		key, err := store.HomeKey(sess)
+		switch {
+		case err != nil:
+			return fail("セッションを使えない: %s", strings.TrimPrefix(err.Error(), "session: "))
+		case key == "":
+			return fail("このセッションは、HOME を repo ごとに分ける前に作った (使えない)。新しく作る: goro run%s --repo PATH", agentFlagFor(agent))
+		}
+		home = dirs.homeFor(key)
+		if err := ensureHome(agent, home, true); err != nil {
+			return fail("HOME を作れない: %v", err)
+		}
 		if err := os.MkdirAll(sess.Run, 0o700); err != nil {
 			return fail("run dir を作れない: %v", err)
 		}
@@ -385,10 +402,10 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if o.login {
 		fmt.Fprintln(stderr, "goro run: "+agent.loginGuide())
 	}
-	sum := runSummary{id: tgt.id, stateDir: stateDir, stateDirGiven: o.stateDir != "", agentHome: agentHome, agent: agent}
+	sum := runSummary{id: tgt.id, stateDir: stateDir, stateDirGiven: o.stateDir != "", authDir: dirs.auth, agent: agent}
 	code := runCage(ctx, o, agent, sw, tgt, cageConfig{
 		Host: host, Agent: agent, AgentExe: agentExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
-		RunDir: tgt.runDir, AgentHome: agentHome, Work: tgt.work, Term: os.Getenv("TERM"), Args: cageArgs(o, agent),
+		RunDir: tgt.runDir, AgentHome: home, AuthDir: dirs.auth, Work: tgt.work, Term: os.Getenv("TERM"), Args: cageArgs(o, agent),
 	}, &sum, stderr)
 	printRunSummary(stderr, sum)
 	return code
@@ -501,8 +518,8 @@ const maxDeniedShown = 10
 type runSummary struct {
 	id            string // セッション ID。--login では空
 	stateDir      string
-	stateDirGiven bool // --state-dir を指定したか (再開のコマンドに含める)
-	agentHome     string
+	stateDirGiven bool         // --state-dir を指定したか (再開のコマンドに含める)
+	authDir       string       // 認証情報の置き場 (--login の終了後に案内する)
 	agent         agentProfile // 空 (ゼロ値) は既定のエージェントとして扱う
 	started       bool         // 檻を起動できたか
 	logPath       string       // egress の監査ログ (起動できなかったときは空)
@@ -523,13 +540,13 @@ func printRunSummary(w io.Writer, s runSummary) {
 	if s.stateDirGiven {
 		stateFlag = " --state-dir " + shellQuote(s.stateDir)
 	}
-	agentFlag := "" // 既定のエージェント以外は、再開のコマンドにも --agent が要る
-	if s.agent.name != "" && !isDefaultAgent(s.agent.name) {
-		agentFlag = " --agent " + s.agent.name
+	agentFlag := ""
+	if s.agent.name != "" {
+		agentFlag = agentFlagFor(s.agent)
 	}
 	fmt.Fprintln(w)
 	if s.id == "" {
-		fmt.Fprintf(w, "ログイン状態: %s\n", sanitize(s.agentHome))
+		fmt.Fprintf(w, "ログイン状態: %s\n", sanitize(s.authDir))
 		fmt.Fprintf(w, "次は: goro run%s%s --repo PATH\n", agentFlag, stateFlag)
 	} else {
 		fmt.Fprintf(w, "セッション: %s\n", s.id)
@@ -567,6 +584,14 @@ func printRunSummary(w io.Writer, s runSummary) {
 	if s.serveErr != nil {
 		fmt.Fprintf(w, "egress が異常終了した: %v\n", s.serveErr)
 	}
+}
+
+// agentFlagFor は、案内のコマンドに足す " --agent NAME" (既定のエージェントなら、要らないので空)。
+func agentFlagFor(p agentProfile) string {
+	if isDefaultAgent(p.name) {
+		return ""
+	}
+	return " --agent " + p.name
 }
 
 // shellQuote は、s を、シェルの 1 語 (単一引用符で囲んだもの) にする。

@@ -3,8 +3,13 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/nananek/goronation/egress"
 	"github.com/nananek/goronation/sandbox/bwrap"
@@ -38,9 +43,35 @@ type agentProfile struct {
 	exitHint string
 	// resumeUsage は、goro run -h の、このエージェントの会話の続きの説明 (空なら出さない)。実行時のメッセージには、出さない。
 	resumeUsage string
+	// creds は、認証情報だけを、repo をまたいで共有するための、エージェントごとのデータ (下の credentials)。
+	creds credentials
+	// seed は、repo ごとの HOME を作るときに置くファイル (エージェントの初回の設定を飛ばすためのもの)。ログイン用の HOME には、置かない
+	// (ログインで、初回の設定を、最後まで通す)。認証情報・アカウントの情報は、入れない (下の credentials)。
+	seed []homeFile
 	// denyNotes は、拒否されたときに、宛先の後ろに添える短い一言 (10 文字前後。原因の推測・経緯は書かない)。終了後の一覧には出し
 	// (隠さない)、--allow の例には使わない。許可しなくてよいもの (動作に影響しない) と、許可より先にすることがあるものを書く。
 	denyNotes map[string]string
+}
+
+// homeFile は、repo ごとの HOME を作るときに置くファイル 1 つ。
+type homeFile struct {
+	path    string // HOME からの相対 path (クリーンで、HOME の外へ出ない)
+	content string
+}
+
+// credentials は、認証情報を、repo をまたいで共有する仕組みのデータ。エージェントごとの認証用ディレクトリ (<state>/agents/<name>/auth/) を、
+// 全ての檻 (--login も repo も) に jailAuth (rw) で見せる。エージェントに、そこを使わせる方法は、次の 2 つ (両方でもよい):
+//
+//   - env: エージェントが、認証情報の置き場を変えられるとき、その環境変数 (値は jailAuth)。書き込み・更新のロックも、そこに閉じる。
+//   - linkDir・files: 置き場を変えられないとき、HOME の linkDir の下に、files の各名前の symlink (→ jailAuth/<名前>) を作る。エージェントが
+//     その場で書くものだけに使える (rename で置き換えると、symlink が、その HOME だけの普通のファイルになり、共有から外れる)。
+//
+// ホストは、認証用ディレクトリの中身を、読まない・解釈しない (檻が書く敵対入力を、読む場所を作らない)。アカウントの表示情報のように、
+// エージェントが、起動のたびに認証情報から作り直すものは、認証情報にも種にも入れない (claude の .claude.json の oauthAccount)。
+type credentials struct {
+	env     []bwrap.EnvVar
+	linkDir string
+	files   []string
 }
 
 // loginGuide は、--login の起動前に出す案内 (先頭の "goro run: " は、呼び手が付ける)。エージェントの画面の内容 (項目名・手順・URL) は、
@@ -88,6 +119,12 @@ var claudeProfile = agentProfile{
 	// --login も、claude auth login ではなく、素の対話起動にする: 初回の onboarding (テーマ・ログイン・Security notes) を通ると、
 	// claude が、認証情報と、onboarding の完了 (.claude.json の hasCompletedOnboarding) を保存する。claude auth login は、
 	// 認証情報しか保存せず、次の対話起動が、onboarding (ログイン画面を含む) からやり直しになる。
+	// 認証情報 (.credentials.json) は、rename で書き換える (単一ファイルの bind は使えない) が、環境変数で、置き場 (と、更新のロック) だけを
+	// 別のディレクトリに移せる (実測: 読み・書き・ロックが、そのディレクトリの中に閉じる)。.claude.json の oauthAccount は、起動のたびに、
+	// 認証情報から取り直される (実測: 別のアカウントのものが残る HOME でも、起動で直る) ので、種にも共有にも入れない。
+	creds: credentials{env: []bwrap.EnvVar{{Key: "CLAUDE_SECURESTORAGE_CONFIG_DIR", Value: jailAuth}}},
+	// 種は、初回の設定 (テーマ・ログイン・Security notes の確認) を、飛ばすためだけ。/work の trust の確認は、repo ごとの初回に出る (意図どおり)。
+	seed:       []homeFile{{path: ".claude.json", content: "{\"hasCompletedOnboarding\": true}\n"}},
 	loginArgs:  nil,
 	loginUsage: "対話起動する (初回の設定とログインは、claude 自身の画面で行う。最後まで通らないと、次の起動がやり直しになる)",
 	exitHint:   "/exit",
@@ -114,10 +151,13 @@ var opencodeProfile = agentProfile{
 	hosts: egress.OpenCodeHosts,
 	// opencode に onboarding は無い (認証を保存すれば、次の起動は、そのまま使える)。--login は、auth login (provider を選び、
 	// Zen なら API キーを貼る) を起動する: 終わると、自分で終了する。
+	// auth.json (provider の API キー・OAuth) と mcp-auth.json (MCP の認証) は、その場で書く (実測: 同じ inode。symlink を辿って書き、symlink は保たれる)
+	// ので、HOME からの symlink で、共有の認証用ディレクトリに向ける。会話の履歴 (opencode.db)・設定・状態は、repo ごとの HOME に残る。
+	creds:       credentials{linkDir: ".local/share/opencode", files: []string{"auth.json", "mcp-auth.json"}},
 	loginArgs:   []string{"auth", "login"},
 	loginUsage:  "auth login を起動する (ログインは、opencode 自身の画面で行う。API キーは https://opencode.ai/auth で作る。ホストのブラウザの localhost に戻る方式の OAuth は、檻に届かないので使えない)",
 	exitHint:    "/exit か Ctrl-C",
-	resumeUsage: "会話は、そのエージェント専用の HOME に残る。続きは、起動後に /sessions で選ぶ (-- --continue は、同じ repo の直近の会話を開く)",
+	resumeUsage: "会話は、repo ごとの HOME に残る (別の repo の会話は見えない)。続きは、起動後に /sessions で選ぶ (-- --continue は、直近の会話を開く)",
 	denyNotes: map[string]string{
 		"registry.npmjs.org:443": "許可不要",
 		"models.opencode.ai:443": "許可不要",
@@ -130,20 +170,97 @@ const agentsDirName = "agents"
 
 // agentDirs は、エージェント 1 種類の状態のディレクトリ (すべて絶対 path)。
 type agentDirs struct {
-	// home は、檻専用の HOME (ログイン状態・会話の履歴が残る)。エージェントごとに別にする。
-	home string
+	// auth は、認証情報の置き場 (ログイン状態)。全ての檻 (--login も repo も) に、jailAuth で rw で見せる。エージェントごとに別で、全 repo で共有する。
+	auth string
+	// homes は、repo ごとの HOME を置く場所: <homes>/<repo のキー>/ (homeFor)。会話の履歴・メモリ・trust の承認などは、repo ごとに、ここに残る。
+	homes string
+	// loginHome は、--login の檻の HOME (repo の HOME とは別。種は置かない)。
+	loginHome string
 	// loginWork・loginRun は、--login の空の作業ディレクトリ (/work) と run dir (egress の UDS・監査ログ)。エージェントごとに別にする:
 	// 共有すると、片方のエージェントの檻が /work に置いた設定 (opencode.json・.claude/settings.json など) が、もう片方の --login の檻
-	// (そのエージェントの HOME の認証情報を持つ) で読まれて動く。run dir の監査ログ (過去の拒否宛先) も混ざる。
+	// (そのエージェントの認証情報を持つ) で読まれて動く。run dir の監査ログ (過去の拒否宛先) も混ざる。
 	loginWork, loginRun string
 }
 
-// dirs は、状態ディレクトリ stateDir の下の、p の状態のディレクトリ: <state>/agents/<name>/{home,login-work,login-run}。
+// homeFor は、repo のキー key の HOME (<homes>/<key>)。key は、session.Store.HomeKey が確かめた形 (16 桁の 16 進) を渡す。
+func (d agentDirs) homeFor(key string) string { return filepath.Join(d.homes, key) }
+
+// dirs は、状態ディレクトリ stateDir の下の、p の状態のディレクトリ: <state>/agents/<name>/{auth,homes,login-home,login-work,login-run}。
 // エージェントの状態の置き場は、ここだけ (どのエージェントも、同じ形。名前だけが違う)。セッションは、エージェント共通の
-// <state>/sessions/<id> で、そこに作ったエージェントの記録がある。
+// <state>/sessions/<id> で、そこに作ったエージェントと repo のキーの記録がある。
 func (p agentProfile) dirs(stateDir string) agentDirs {
 	base := filepath.Join(stateDir, agentsDirName, p.name)
-	return agentDirs{home: filepath.Join(base, "home"), loginWork: filepath.Join(base, "login-work"), loginRun: filepath.Join(base, "login-run")}
+	return agentDirs{
+		auth: filepath.Join(base, "auth"), homes: filepath.Join(base, "homes"), loginHome: filepath.Join(base, "login-home"),
+		loginWork: filepath.Join(base, "login-work"), loginRun: filepath.Join(base, "login-run"),
+	}
+}
+
+// ensureHome は、HOME ディレクトリ home (0700) を用意する。無ければ、認証情報の symlink (p.creds.linkDir・files) と、seed が true なら
+// 種のファイル (p.seed) を置いて作る。ある HOME は、中を見ない・直さない (檻の状態)。
+//
+// 置く場所は、ホストが作った新しい一時ディレクトリの中だけ (檻が置いたものを辿らない) で、rename で home に据える: 途中で止まっても、
+// 種の無い中途半端な HOME が残らない。同じ場所を同時に用意する goro run は、ロックで直列にする (後の方は、先の方の HOME を使う)。
+func ensureHome(p agentProfile, home string, seed bool) error {
+	parent := filepath.Dir(home)
+	if err := ensureDir(parent); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(filepath.Join(parent, ".lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close() // 閉じると、ロックも外れる
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	if fi, err := os.Lstat(home); err == nil {
+		if !fi.IsDir() { // symlink も、ここで断る (Lstat は、辿らない)
+			return fmt.Errorf("%s がディレクトリではない", home)
+		}
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	tmp, err := os.MkdirTemp(parent, ".new-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp) // rename に成功した後は、もう無い
+	var files []homeFile
+	if seed {
+		files = p.seed
+	}
+	for _, f := range files {
+		if !filepath.IsLocal(f.path) {
+			return fmt.Errorf("%s の seed の path %q が、HOME の外を指す", p.name, f.path)
+		}
+		dst := filepath.Join(tmp, f.path)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, []byte(f.content), 0o600); err != nil {
+			return err
+		}
+	}
+	if len(p.creds.files) > 0 {
+		if !filepath.IsLocal(p.creds.linkDir) {
+			return fmt.Errorf("%s の認証情報の linkDir %q が、HOME の外を指す", p.name, p.creds.linkDir)
+		}
+		dir := filepath.Join(tmp, p.creds.linkDir)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		for _, name := range p.creds.files {
+			if name == "" || name == "." || name == ".." || name != filepath.Base(name) {
+				return fmt.Errorf("%s の認証情報のファイル名 %q が、名前 1 つでない", p.name, name)
+			}
+			if err := os.Symlink(jailAuth+"/"+name, filepath.Join(dir, name)); err != nil {
+				return err
+			}
+		}
+	}
+	return os.Rename(tmp, home)
 }
 
 // agents は、--agent に指定できるエージェントの表。先頭が既定。エージェントを足すときは、ここに profile を足す。
