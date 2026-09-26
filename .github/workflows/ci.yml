@@ -1,0 +1,68 @@
+name: CI
+
+# job 名 (base / bwrap) は、ブランチ保護の required check 名として固定する。
+# 2 つの leg は同じ `make check` を回し、環境だけを変える。
+# 外部の Action は commit SHA でピン留めする (末尾のコメントが tag)。
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+env:
+  # skip の理由と bwrap の版を、ログに出す。
+  GO_TEST_EXTRA: -v
+
+jobs:
+  # 基盤なしの leg。bwrap が「無い」ことを保証して回す。
+  # bwrap を要するテストは skip される (理由がログに出る)。
+  base:
+    name: base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.work
+          cache: false # 外部依存が無く、go.sum も無い
+      - name: bwrap が無いことを保証する
+        run: |
+          if dpkg -s bubblewrap >/dev/null 2>&1; then
+            sudo apt-get purge -y bubblewrap
+          fi
+          # `! test -e` は、bash -e では失敗しても止まらないため、`test ! -e` にする。
+          test ! -e /usr/bin/bwrap
+          echo "/usr/bin/bwrap は無い (base leg)"
+      - run: make check
+
+  # 実行層の leg。bwrap が使えなければ、skip ではなく fail する。
+  bwrap:
+    name: bwrap
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GORO_REQUIRE_BWRAP: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.work
+          cache: false # 外部依存が無く、go.sum も無い
+      - name: bubblewrap を入れる
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          /usr/bin/bwrap --version
+      # 必要 (CI で確認した): 無いと、AppArmor の userns の制限で bwrap が起動しない
+      # (ubuntu-24.04・bubblewrap 0.9.0 で "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted")。
+      - name: unprivileged user namespace の制限を外す
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: make check

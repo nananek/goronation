@@ -1,0 +1,7 @@
+# 既定の担当。
+* @nananek
+
+# /sandbox/seatbelt/ (macOS) は、M4 で macOS の保守者が決まってから追記する。
+# 例: /sandbox/seatbelt/ @<macOS の保守者>
+# 注意: 「Code Owner のレビュー必須」のブランチ保護は、オーナーが 1 人だと
+# 自分の PR を承認できず詰まる。2 人目の保守者が決まるまで有効化しない。
