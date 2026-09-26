@@ -21,7 +21,7 @@
 // # 限界
 //
 //   - 許可した宛先 (api.anthropic.com・opencode.ai など) 経由の持ち出しは防げない (TLS の中身を見ない)。大量の拒否 CONNECT で監査の予算 (8 MiB) を使い切られると、以降の宛先は egress.log に載らない (捨てた行数は終了時に表示する)。
-//   - 檻の HOME は、repo ごとに、同じ repo の全セッションで共有する (履歴・メモリが続く)。同じ repo の別セッションの檻は、共有の /home/goro の UDS などで通信でき、--allow は同じ repo のセッション間の境界ではない。認証情報 (auth/) は、そのエージェントの全 repo の檻から読み書きでき (信頼できない repo の檻も)、許可した宛先経由で持ち出せる。
+//   - 檻の HOME は、repo ごとに、同じ repo の全セッションで共有する (履歴・メモリが続く)。同じ repo の別セッションの檻は、共有の /home/goro の UDS などで通信でき、--allow は同じ repo のセッション間の境界ではない。認証情報 (auth/) は、そのエージェントの全 repo の檻から読み書きでき (信頼できない repo の檻も)、許可した宛先経由で持ち出せ、別のアカウントに差し替えられる。信頼できない repo の檻が auth/ に置いた symlink は、別の repo のセッションが認証情報を書くときに辿られ、その檻の自分のファイル (HOME・clone) を壊せる (opencode の symlink 方式。claude は rename で書くので当たらない。破壊のみで、読みも内容の指定もできない)。repo のキーは実 path で、repo の実体ではない: 同じ path に別の repo を置くと、履歴・メモリ・trust を引き継ぐ。
 //   - 端末に直結するため、檻が端末に任意のエスケープシーケンスを書ける (pty の中継とフィルタは未実装。TIOCSTI は legacy_tiocsti の確認で塞ぐ)。termios は、終了後に戻す。
 //   - 起動後の Ctrl-C は、エージェントの中断として効く (goro 自身は終了しない。終了はエージェントの終了操作か SIGTERM)。seccomp・cap-drop は未実装。repo は、ローカルの path だけ。Linux (bwrap) だけ。檻からホストの localhost には届かず、ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。
 //
