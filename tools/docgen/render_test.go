@@ -500,13 +500,22 @@ func TestOutputPathCollisions(t *testing.T) {
 		"索引と同じ名前":     {"README/doc.go": doc("readme"), "README/go.mod": "module example.com/m/README\n"},
 		// core の文書 core.md はファイルで、core.md/sub の文書 core.md/sub.md は、core.md をディレクトリにする。
 		"ファイルとディレクトリ": {"core/doc.go": doc("core"), "core.md/go.mod": "module example.com/m/coremd\n", "core.md/sub/doc.go": doc("sub")},
+		// 大文字小文字を区別しない環境では、ファイル lib.md (package の Lib) と、ディレクトリ lib.md が衝突する (逆も同じ)。
+		"ファイルとディレクトリ (ファイルが大文字)":   {"Lib/go.mod": "module example.com/m/Lib\n", "Lib/doc.go": doc("lib"), "lib.md/go.mod": "module example.com/m/libmd\n", "lib.md/sub/doc.go": doc("sub")},
+		"ファイルとディレクトリ (ディレクトリが大文字)": {"lib/go.mod": "module example.com/m/lib\n", "lib/doc.go": doc("lib"), "Lib.md/go.mod": "module example.com/m/Libmd\n", "Lib.md/sub/doc.go": doc("sub")},
+		// 親のディレクトリは、直近だけでなく、祖先のすべてを見る (core.md/a/b の文書 core.md/a/b.md の祖先に core.md がある)。
+		"ファイルと、祖先のディレクトリ": {"core/doc.go": doc("core"), "core.md/go.mod": "module example.com/m/coremd\n", "core.md/a/b/doc.go": doc("b")},
 	}
 	for name, extra := range cases {
 		t.Run(name, func(t *testing.T) {
 			files := scaffold(extra)
 			tr, _ := newTestTree(t, files)
-			if res, err := tr.analyze(); err == nil {
-				t.Errorf("error にすべき: %v", sortedKeys(res.Expected))
+			res, err := tr.analyze()
+			if err == nil {
+				t.Fatalf("error にすべき: %v", sortedKeys(res.Expected))
+			}
+			if !strings.Contains(err.Error(), "衝突する") {
+				t.Errorf("衝突の error にすべき: %v", err)
 			}
 		})
 	}
