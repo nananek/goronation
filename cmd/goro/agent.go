@@ -93,11 +93,13 @@ var claudeProfile = agentProfile{
 var opencodeProfile = agentProfile{
 	name:       "opencode",
 	exeExample: "~/.opencode/bin/opencode",
-	// 通信を止める変数 (実在は、binary の RuntimeFlags で確認):
-	//   OPENCODE_DISABLE_AUTOUPDATE   更新の確認 (api.github.com) を止める (実測)
-	//   OPENCODE_DISABLE_MODELS_FETCH モデル一覧の取得 (models.opencode.ai) を止める。同梱の一覧で動く (実測: 一覧は、取得を許しても同じ)
-	//   OPENCODE_DISABLE_SHARE        会話の共有 (share) を止める。project の設定に share: auto があっても、共有しない
-	//   OPENCODE_DISABLE_LSP_DOWNLOAD LSP サーバーの自動 download (github.com) を止める
+	// 通信を止める変数。名前の実在は、binary の RuntimeFlags で確認した。実測したのは、次の 4 つを同時に設定すると、api.github.com
+	// (更新の確認) と models.opencode.ai (モデル一覧) の拒否が消えたこと (変数ごとの切り分けはしていない)。それぞれが止めるはずのものは、
+	// 変数の名前と opencode の挙動からの推定で、SHARE と LSP_DOWNLOAD の通信の抑止は、測っていない:
+	//   OPENCODE_DISABLE_AUTOUPDATE   更新の確認 (api.github.com)
+	//   OPENCODE_DISABLE_MODELS_FETCH モデル一覧の取得 (models.opencode.ai)。同梱の一覧で動く (実測: 一覧は、取得を許しても同じ 77 件)
+	//   OPENCODE_DISABLE_SHARE        会話の共有 (share)。project の設定に share: auto があっても、共有しない
+	//   OPENCODE_DISABLE_LSP_DOWNLOAD LSP サーバーの自動 download (github.com)
 	// 止められないもの: プラグインの依存の install (registry.npmjs.org。失敗しても動く)。denyNotes に書く。
 	env: []bwrap.EnvVar{
 		{Key: "OPENCODE_DISABLE_AUTOUPDATE", Value: "1"},
