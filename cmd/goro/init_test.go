@@ -162,8 +162,11 @@ func TestInitStdio(t *testing.T) {
 	}
 }
 
-func TestInitForwardsSignals(t *testing.T) {
-	cmd := initCmd(t, "127.0.0.1:0", "/nonexistent/up.sock", nil, selfCmd(t, "sigrecorder")...)
+// startSigRecorder は、goro init (extra の引数つき) の子として sigrecorder を起動し、"ready" が出るまで待つ。
+// next は、子が出した次の 1 行を返す (5 秒来なければ、テストを止める)。
+func startSigRecorder(t *testing.T, extra []string) (cmd *exec.Cmd, next func() string) {
+	t.Helper()
+	cmd = initCmd(t, "127.0.0.1:0", "/nonexistent/up.sock", extra, selfCmd(t, "sigrecorder")...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +183,7 @@ func TestInitForwardsSignals(t *testing.T) {
 			lines <- sc.Text()
 		}
 	}()
-	next := func() string {
+	next = func() string {
 		select {
 		case line, ok := <-lines:
 			if !ok {
@@ -195,6 +198,11 @@ func TestInitForwardsSignals(t *testing.T) {
 	if got := next(); got != "ready" {
 		t.Fatalf("最初の行 = %q, want ready", got)
 	}
+	return cmd, next
+}
+
+func TestInitForwardsSignals(t *testing.T) {
+	cmd, next := startSigRecorder(t, nil)
 
 	// 1 つずつ送り、子が受けたことを見てから、次を送る (init 自身は、これらで死なない)。
 	for _, sig := range []syscall.Signal{syscall.SIGWINCH, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM} {
@@ -207,9 +215,34 @@ func TestInitForwardsSignals(t *testing.T) {
 	}
 
 	// 子は SIGTERM で 5 で終わる。init は、その終了コードで終わる。
-	err = cmd.Wait()
+	err := cmd.Wait()
 	if got := exitCode(t, err, cmd); got != 5 {
 		t.Errorf("終了コード = %d, want 5", got)
+	}
+}
+
+// --no-forward-tty: 端末のシグナル (SIGWINCH・SIGINT・SIGQUIT) は、子に転送しない (子が端末を共有して、直接受けるとき、
+// 転送すると二重に届く)。init 自身は、受けても終わらない。SIGHUP・SIGTERM は、これまで通り転送する。
+func TestInitNoForwardTTY(t *testing.T) {
+	cmd, next := startSigRecorder(t, []string{"--no-forward-tty"})
+
+	// 転送されないものを先に送る。転送されていれば、子の出力の最初の行が、これらになる。
+	for _, sig := range []syscall.Signal{syscall.SIGWINCH, syscall.SIGINT, syscall.SIGQUIT} {
+		if err := cmd.Process.Signal(sig); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, sig := range []syscall.Signal{syscall.SIGHUP, syscall.SIGTERM} {
+		if err := cmd.Process.Signal(sig); err != nil {
+			t.Fatal(err)
+		}
+		if got := next(); got != sig.String() {
+			t.Fatalf("%v を送ったが、子が受けたのは %q (端末のシグナルが、転送されている)", sig, got)
+		}
+	}
+	err := cmd.Wait()
+	if got := exitCode(t, err, cmd); got != 5 {
+		t.Errorf("終了コード = %d, want 5 (init が、端末のシグナルで終わった)", got)
 	}
 }
 
@@ -396,19 +429,21 @@ func TestParseInitArgs(t *testing.T) {
 			want initConfig
 		}{
 			{"-- あり", append(append([]string{}, base...), "--", "claude", "-p"),
-				initConfig{listen, upstream, false, []string{"claude", "-p"}}},
+				initConfig{listen, upstream, false, []string{"claude", "-p"}, false}},
 			{"-- なし。CMD 以降は、flag に見えても子の引数", append(append([]string{}, base...), "claude", "--listen", "x"),
-				initConfig{listen, upstream, false, []string{"claude", "--listen", "x"}}},
+				initConfig{listen, upstream, false, []string{"claude", "--listen", "x"}, false}},
 			{"-- の後の - で始まるコマンド", append(append([]string{}, base...), "--", "--odd"),
-				initConfig{listen, upstream, false, []string{"--odd"}}},
+				initConfig{listen, upstream, false, []string{"--odd"}, false}},
 			{"--no-proxy-env", append(append([]string{}, base...), "--no-proxy-env", "--", "c"),
-				initConfig{listen, upstream, true, []string{"c"}}},
+				initConfig{listen, upstream, true, []string{"c"}, false}},
+			{"--no-forward-tty", append(append([]string{}, base...), "--no-forward-tty", "--", "c"),
+				initConfig{listen, upstream, false, []string{"c"}, true}},
 			{"= で書く", []string{"--listen=127.0.0.1:8080", "--upstream=" + upstream, "c"},
-				initConfig{"127.0.0.1:8080", upstream, false, []string{"c"}}},
+				initConfig{"127.0.0.1:8080", upstream, false, []string{"c"}, false}},
 			{"IPv6 の loopback", []string{"--listen", "[::1]:0", "--upstream", upstream, "c"},
-				initConfig{"[::1]:0", upstream, false, []string{"c"}}},
+				initConfig{"[::1]:0", upstream, false, []string{"c"}, false}},
 			{"127.0.0.0/8 の loopback", []string{"--listen", "127.0.0.2:0", "--upstream", upstream, "c"},
-				initConfig{"127.0.0.2:0", upstream, false, []string{"c"}}},
+				initConfig{"127.0.0.2:0", upstream, false, []string{"c"}, false}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				var stderr bytes.Buffer
