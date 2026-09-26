@@ -15,6 +15,8 @@
 //     コミット済みの内容だけで、origin は外す。clone は、元の repo と、object を共有しない。
 //   - no-host-git: ホストは、clone の中で git を実行しない (.git/config・hooks は、檻が書ける)。export は、clone を ro で bind した
 //     使い捨ての檻で bundle を作る。
+//   - agent-recorded: CreateOptions.Agent は、セッションの直下の agent (0600。檻に bind しない場所) に、clone より先に書く。Store.Agent が
+//     読み、記録が無ければ空、壊れていれば error (clone に残る設定を、別のエージェントの檻で動かさない判断は、呼び手がする)。
 //   - bundle-checked: bundle は、hostfs で、通常のファイル・上限 (512 MiB)・ヘッダを検査してから、path を返す。
 //   - safe-fetch: 取り込みのコマンドには、名前が安全な refs/heads/* だけを書き (名前は檻が決める)、transfer.fsckObjects=true を付ける。
 //     タグと submodule は、自動では取り込まない (--no-tags・--no-recurse-submodules)。

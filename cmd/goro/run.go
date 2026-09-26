@@ -8,9 +8,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -18,30 +20,61 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-const runUsage = `使い方: goro run (--repo PATH | --session ID | --login) [オプション] [-- claudeへの引数...]
-
-claude を、檻 (ネットワークの無い bwrap) の中で、ホストの repo の private clone の上で動かす。
-ホストの作業ツリー・.git・~/.claude・~/.ssh・環境変数は、檻から見えない。clone されるのはコミット済みの内容だけ。
-
-  --repo PATH       PATH (ローカルの repo) の private clone を作り、その中で claude を起動する
-  --session ID      前の goro run のセッションを再開する (同じ clone が見える)
-  --login           repo・clone 無しで、空の作業ディレクトリで claude を対話起動する (初回の onboarding = テーマ・ログイン・Security notes を通す。ログイン状態は、檻専用の HOME に残る)
+// runUsage は、goro run -h の使い方。エージェントごとの記述 (既定の許可宛先・実行ファイルを指す環境変数・--login・終了操作) は、
+// agents の表 (agentProfile) から作る: エージェントを足しても、ここは変えない。
+func runUsage() string {
+	var b strings.Builder
+	def := defaultAgent()
+	fmt.Fprintf(&b, "使い方: goro run (--repo PATH | --session ID | --login) [--agent NAME] [オプション] [-- エージェントへの引数...]\n\n")
+	fmt.Fprintf(&b, "エージェント (%s) を、檻 (ネットワークの無い bwrap) の中で、ホストの repo の private clone の上で動かす。\n", agentNames())
+	b.WriteString("ホストの作業ツリー・.git・~/.ssh・エージェントの設定と認証情報 (~/.claude など)・環境変数は、檻から見えない。clone されるのはコミット済みの内容だけ。\n\n")
+	fmt.Fprintf(&b, "  --agent NAME      動かすエージェント: %s (省略は %s)。ログイン状態・会話の履歴は、エージェントごとに別の檻専用の HOME に残る\n", agentNames(), def.name)
+	b.WriteString(`  --repo PATH       PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
+  --session ID      前の goro run のセッションを再開する (同じ clone が見える)。エージェントは、そのセッションを作ったもの (--agent は省略できる。別のエージェントは断る)
+  --login           repo・clone 無しで、空の作業ディレクトリでエージェントのログインを行う (ログイン状態は、檻専用の HOME に残る)。エージェントごとの起動は、下の「エージェント」
+                    ログインは、エージェント自身の画面で行う。goro は出力を解釈しない (端末に直結する)。
   --name N          clone の user.name (--repo のとき。既定は goro)
   --email E         clone の user.email (--repo のとき)
-  --state-dir DIR   状態 (セッション・檻専用の HOME) を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
-  --claude PATH     claude の実行ファイル (既定は環境変数 GORO_CLAUDE か、PATH の claude)
-  --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は api.anthropic.com:443 と platform.claude.com:443)
-  -- ARGS...        claude に渡す引数
+  --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)。セッションは <DIR>/sessions/、エージェントごとの HOME・ログイン用のディレクトリは <DIR>/agents/<エージェント名>/
+  --bin PATH        動かすエージェントの実行ファイル (既定は、環境変数 GORO_<エージェント名の大文字> か、PATH の実行ファイル。下の「エージェント」)
+  --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は、エージェントごと。下の「エージェント」)
+  -- ARGS...        エージェントに渡す引数 (--login のときは、そのエージェントのログインの引数の後ろに付く)
 
+エージェント:
+`)
+	for _, p := range agents {
+		title := p.name
+		if p.name == def.name {
+			title += " (既定)"
+		}
+		fmt.Fprintf(&b, "  %s\n", title)
+		fmt.Fprintf(&b, "      実行ファイル: 環境変数 %s か、PATH の %s\n", p.exeEnv(), p.binName())
+		fmt.Fprintf(&b, "      既定の許可宛先: %s\n", strings.Join(p.hosts(), " "))
+		fmt.Fprintf(&b, "      --login: %s\n", p.loginUsage)
+		fmt.Fprintf(&b, "      終了: %s\n", p.exitHint)
+		if p.resumeUsage != "" {
+			fmt.Fprintf(&b, "      続き: %s\n", p.resumeUsage)
+		}
+	}
+	fmt.Fprintf(&b, `
 例:
-  goro run --login                    初回。テーマを選び、出た URL をホストのブラウザで開いてコードを貼り、Security notes で Enter を押したら、/exit で終える
-  goro run --repo ~/work/foo          foo の private clone の中で claude と対話する
-  goro run --session ID -- --resume   再開する (-- の後ろは claude への引数)
-  goro export ID                      成果 (コミット) を bundle にして、取り込みのコマンドを表示する
+  goro run --login                          既定のエージェント (%s) のログイン (別のエージェントは、--agent NAME を足す)
+  goro run --repo ~/work/foo                foo の private clone の中で、既定のエージェントと対話する
+  goro run --agent NAME --repo ~/work/foo   同じことを、エージェントを選んで行う
+  goro run --session ID -- ARGS...          再開する (エージェントは、そのセッションを作ったもの。-- の後ろはエージェントへの引数)
+  goro export ID                            成果 (コミット) を bundle にして、取り込みのコマンドを表示する
 
-起動後の Ctrl-C は、claude の中断として効く (goro run 自身は終了しない)。止めるときは、claude の終了操作か、別の端末から goro run に SIGTERM。
+限界: 檻からホストの localhost には届かない。ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。
+
+起動後の Ctrl-C は、エージェントの中断として効く (goro run 自身は終了しない)。止めるときは、エージェントの終了操作 (上の「終了」) か、別の端末から goro run に SIGTERM。
 終わると、セッション ID・再開と取り出しのコマンド・拒否された宛先を表示する。
-`
+`, def.name)
+	return b.String()
+}
+
+// removedFlags は、廃止したオプションの名前 (使うと、--bin を教える error にする)。エージェントごとの実行ファイルのオプション
+// (--claude) は、エージェントが増えるたびにオプションが増えるので、--bin 1 つにした。
+var removedFlags = []string{"claude"}
 
 // runOptions は、goro run の引数。
 type runOptions struct {
@@ -49,9 +82,10 @@ type runOptions struct {
 	login         bool
 	name, email   string
 	stateDir      string // 空なら既定
-	claude        string // 空なら GORO_CLAUDE か PATH
+	agent         string // 動かすエージェント (agents の表の name)。空は、--session なら記録のエージェント、それ以外は既定
+	bin           string // 動かすエージェントの実行ファイル。空なら GORO_<NAME> か PATH
 	allow         []string
-	claudeArgs    []string
+	agentArgs     []string // エージェントへの引数 (-- の後ろ)
 }
 
 // stringList は、何度でも書ける文字列のオプション。
@@ -73,7 +107,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	}
 	flags := flag.NewFlagSet("goro run", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.Usage = func() { fmt.Fprint(stderr, runUsage) }
+	flags.Usage = func() {} // 使い方は、-h のときだけ (下)。エラーには、-h の案内 1 行だけを添える
 	var allow stringList
 	flags.StringVar(&o.repo, "repo", "", "")
 	flags.StringVar(&o.session, "session", "", "")
@@ -81,20 +115,33 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	flags.StringVar(&o.name, "name", "", "")
 	flags.StringVar(&o.email, "email", "", "")
 	flags.StringVar(&o.stateDir, "state-dir", "", "")
-	flags.StringVar(&o.claude, "claude", "", "")
+	flags.StringVar(&o.agent, "agent", "", "") // 空 = 省略
+	flags.StringVar(&o.bin, "bin", "", "")
+	for _, name := range removedFlags {
+		flags.Func(name, "", func(string) error {
+			return fmt.Errorf("廃止した。--bin PATH を使う (環境変数 %s は、そのまま使える)", exeEnvName(name))
+		})
+	}
 	flags.Var(&allow, "allow", "")
 	if err := flags.Parse(head); err != nil {
-		return o, err // flag が、理由と使い方を出している
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(stderr, runUsage())
+		} else {
+			fmt.Fprintln(stderr, "使い方: goro run -h") // flag が、理由を出している
+		}
+		return o, err
 	}
-	o.allow, o.claudeArgs = allow, tail
+	o.allow, o.agentArgs = allow, tail
+	agentSet := false // --agent が書かれたか (省略と、空の値を区別する)
+	flags.Visit(func(f *flag.Flag) { agentSet = agentSet || f.Name == "agent" })
 
 	fail := func(format string, a ...any) (runOptions, error) {
 		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
-		fmt.Fprint(stderr, runUsage)
+		fmt.Fprintln(stderr, "使い方: goro run -h")
 		return o, errors.New("引数が不正")
 	}
 	if flags.NArg() > 0 {
-		return fail("余計な引数 %q (claude への引数は -- の後ろに書く)", flags.Arg(0))
+		return fail("余計な引数 %q (エージェントへの引数は -- の後ろに書く)", flags.Arg(0))
 	}
 	modes := 0
 	for _, set := range []bool{o.repo != "", o.session != "", o.login} {
@@ -106,12 +153,28 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 		return fail("--repo・--session・--login のうち、ちょうど 1 つが要る")
 	}
 	if (o.name != "" || o.email != "") && o.repo == "" {
-		return fail("--name と --email は、--repo のときだけ使える (clone の名義)")
+		return fail("--name と --email は、--repo のときだけ使える")
+	}
+	switch {
+	case agentSet:
+		if _, ok := agentByName(o.agent); !ok {
+			return fail("--agent は %s: %q", agentNames(), o.agent)
+		}
+	case o.session == "":
+		o.agent = defaultAgent().name // 既定。--session で省略したときは、空のまま: セッションを作ったエージェントで動かす (doRun が決める)
 	}
 	if err := checkAllow(o.allow); err != nil {
 		return fail("%v", err)
 	}
 	return o, nil
+}
+
+// profile は、o のエージェントの profile。--agent の値は、parseRunArgs が確かめてある (空は既定のエージェント)。
+func (o runOptions) profile() agentProfile {
+	if p, ok := agentByName(o.agent); ok {
+		return p
+	}
+	return defaultAgent()
 }
 
 func indexOf(s []string, v string) int {
@@ -143,27 +206,27 @@ func resolveExe(p string) (string, error) {
 	return real, nil
 }
 
-// resolveClaude は、檻に見せる claude の実体を決める: --claude、なければ環境変数 GORO_CLAUDE (テスト用に、同じ効果)、
-// なければ PATH の claude。どれも、symlink を辿った実体にする (native 版は、~/.local/bin/claude が、版ごとの実体への symlink)。
-func resolveClaude(flagVal, envVal string, lookPath func(string) (string, error)) (string, error) {
-	p := flagVal
-	if p == "" {
-		p = envVal
+// resolveAgentExe は、檻に見せるエージェント p の実体を決める: --bin、なければ環境変数 (GORO_<NAME>)、
+// なければ PATH の実行ファイル (binName)。どれも、symlink を辿った実体にする (claude の native 版は、~/.local/bin/claude が、版ごとの実体への
+// symlink)。スクリプト (先頭が #!) は、檻の中で、呼ぶ先の実体が見えず動かないので断る。
+func resolveAgentExe(p agentProfile, flagVal, envVal string, lookPath func(string) (string, error)) (string, error) {
+	path := flagVal
+	if path == "" {
+		path = envVal
 	}
-	if p == "" {
-		found, err := lookPath("claude")
-		if err != nil {
-			return "", fmt.Errorf("claude が見つからない (PATH に置くか、--claude か GORO_CLAUDE で指す): %w", err)
+	if path == "" {
+		found, err := lookPath(p.binName())
+		if err != nil { // err の中身 (exec: "...": executable file not found in $PATH) は、案内と同じことなので、出さない
+			return "", fmt.Errorf("%s が見つからない。PATH に置くか、--bin PATH か %s で指す", p.binName(), p.exeEnv())
 		}
-		p = found
+		path = found
 	}
-	real, err := resolveExe(p)
+	real, err := resolveExe(path)
 	if err != nil {
-		return "", fmt.Errorf("claude (%s) を使えない: %w", p, err)
+		return "", fmt.Errorf("%s (%s) を使えない: %w", p.name, path, err)
 	}
 	if isScript(real) {
-		return "", fmt.Errorf("claude (%s) はスクリプト (先頭が #!) です。檻の中では、スクリプトが呼ぶ実体が見えず、動きません。"+
-			"実体の実行ファイルを --claude か GORO_CLAUDE で指定してください (例: /opt/claude-code/bin/claude)", real)
+		return "", fmt.Errorf("%s (%s) はスクリプトで、檻の中では動かない。実体を --bin PATH か %s で指す (例: %s)", p.name, real, p.exeEnv(), p.exeExample)
 	}
 	return real, nil
 }
@@ -217,6 +280,44 @@ type runTarget struct {
 	runDir string // /run/goro に見せる
 }
 
+// pickAgent は、この goro run で動かすエージェントと、--session で再開する既存のセッション (--session でなければ nil) を決める。
+//
+// --session は、セッションを作ったエージェント (セッションの記録。記録の無い、エージェントを記録する前のセッションは legacySessionAgent) で
+// 動かす。clone には、エージェントが置いた設定 (.claude/settings.json・opencode.json など) が残り、次にそこで動く
+// エージェントが起動時に読んで実行する。別のエージェント (別の HOME の認証情報と、別の許可宛先を持つ) で使い回すと、
+// 片方の檻が置いたものが、もう片方の檻で動く。--agent を省略したときは、記録のエージェントで動き、記録と違う --agent は断る。
+func pickAgent(o runOptions, store *session.Store) (agentProfile, *session.Session, error) {
+	if o.session == "" {
+		return o.profile(), nil, nil
+	}
+	sess, err := store.Get(o.session)
+	if err == nil {
+		err = requireDir(sess.Clone)
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %s が無い。一覧: goro sessions", o.session)
+	}
+	if err != nil {
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %s。一覧: goro sessions", strings.TrimPrefix(err.Error(), "session: "))
+	}
+	name, err := store.Agent(sess)
+	if err != nil {
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %s", strings.TrimPrefix(err.Error(), "session: "))
+	}
+	if name == "" {
+		name = legacySessionAgent
+	}
+	recorded, ok := agentByName(name)
+	if !ok {
+		return agentProfile{}, nil, fmt.Errorf("このセッションのエージェント %q を、この goro は知らない", name)
+	}
+	if o.agent != "" && o.agent != recorded.name {
+		return agentProfile{}, nil, fmt.Errorf("このセッションは %s で作った。--agent %s では使えない。新しく作る: goro run --agent %s --repo PATH",
+			recorded.name, o.agent, o.agent)
+	}
+	return recorded, sess, nil
+}
+
 func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
 		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
@@ -230,7 +331,17 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if err := checkSockPath(sockPathFor(stateDir, o)); err != nil {
 		return fail("%v", err)
 	}
-	claudeExe, err := resolveClaude(o.claude, os.Getenv("GORO_CLAUDE"), exec.LookPath)
+	host := bwrap.CurrentHost()
+	store, err := session.NewStore(stateDir, host)
+	if err != nil {
+		return fail("%v", err)
+	}
+	// エージェントは、実行ファイルと HOME を決める前に知る (--session は、記録のエージェントで動かす)。
+	agent, existing, err := pickAgent(o, store)
+	if err != nil {
+		return fail("%v", err)
+	}
+	agentExe, err := resolveAgentExe(agent, o.bin, os.Getenv(agent.exeEnv()), exec.LookPath)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -241,12 +352,8 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if err != nil {
 		return fail("goro 自身の実行ファイルを決められない: %v", err)
 	}
-	host := bwrap.CurrentHost()
-	store, err := session.NewStore(stateDir, host)
-	if err != nil {
-		return fail("%v", err)
-	}
-	agentHome := filepath.Join(stateDir, "home")
+	dirs := agent.dirs(stateDir)
+	agentHome := dirs.home
 	if err := ensureDir(agentHome); err != nil {
 		return fail("エージェントの HOME を作れない: %v", err)
 	}
@@ -254,28 +361,20 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	var tgt runTarget
 	switch {
 	case o.login:
-		tgt = runTarget{work: filepath.Join(stateDir, "login-work"), runDir: filepath.Join(stateDir, "login-run")}
+		tgt = runTarget{work: dirs.loginWork, runDir: dirs.loginRun}
 		for _, d := range []string{tgt.work, tgt.runDir} {
 			if err := ensureDir(d); err != nil {
 				return fail("ログイン用のディレクトリを作れない: %v", err)
 			}
 		}
 	default:
-		var sess *session.Session
+		sess := existing
 		if o.repo != "" {
-			sess, err = store.Create(ctx, session.CreateOptions{Repo: o.repo, Name: o.name, Email: o.email})
+			sess, err = store.Create(ctx, session.CreateOptions{Repo: o.repo, Name: o.name, Email: o.email, Agent: agent.name})
 			if err != nil {
 				return fail("セッションを作れない: %v", err)
 			}
 			fmt.Fprintf(stderr, "goro run: セッション %s を作った\n", sess.ID)
-		} else {
-			sess, err = store.Get(o.session)
-			if err == nil {
-				err = requireDir(sess.Clone)
-			}
-			if err != nil {
-				return fail("セッションを使えない: %v", err)
-			}
 		}
 		if err := os.MkdirAll(sess.Run, 0o700); err != nil {
 			return fail("run dir を作れない: %v", err)
@@ -284,13 +383,12 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	}
 
 	if o.login {
-		fmt.Fprintln(stderr, "goro run: ログイン用に claude を対話起動する。テーマを選び、出た URL をホストのブラウザで開いてコードを貼り、"+
-			"Security notes で Enter を押したら、/exit で終える (onboarding を最後まで通らないと、次の起動が、ログイン画面からやり直しになる)")
+		fmt.Fprintln(stderr, "goro run: "+agent.loginGuide())
 	}
-	sum := runSummary{id: tgt.id, stateDir: stateDir, stateDirGiven: o.stateDir != "", agentHome: agentHome}
-	code := runCage(ctx, o, sw, tgt, cageConfig{
-		Host: host, ClaudeExe: claudeExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
-		RunDir: tgt.runDir, AgentHome: agentHome, Work: tgt.work, Term: os.Getenv("TERM"), Args: cageArgs(o),
+	sum := runSummary{id: tgt.id, stateDir: stateDir, stateDirGiven: o.stateDir != "", agentHome: agentHome, agent: agent}
+	code := runCage(ctx, o, agent, sw, tgt, cageConfig{
+		Host: host, Agent: agent, AgentExe: agentExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
+		RunDir: tgt.runDir, AgentHome: agentHome, Work: tgt.work, Term: os.Getenv("TERM"), Args: cageArgs(o, agent),
 	}, &sum, stderr)
 	printRunSummary(stderr, sum)
 	return code
@@ -302,21 +400,22 @@ const sampleSessionID = "00000000-000000-000000"
 // sockPathFor は、o の goro run が使う egress の UDS の path。セッションの ID は、同じ長さの例で代える。
 func sockPathFor(stateDir string, o runOptions) string {
 	if o.login {
-		return filepath.Join(stateDir, "login-run", proxySockName)
+		return filepath.Join(o.profile().dirs(stateDir).loginRun, proxySockName)
 	}
 	return filepath.Join(stateDir, "sessions", sampleSessionID, "run", proxySockName)
 }
 
-// cageArgs は、claude への引数 (利用者の引数だけ)。--login も、claude auth login ではなく、素の対話起動にする: 初回の onboarding
-// (テーマ・ログイン・Security notes) を通ると、claude が、認証情報と、onboarding の完了 (.claude.json の hasCompletedOnboarding)
-// を保存する。claude auth login は、認証情報しか保存せず、次の対話起動が、onboarding (ログイン画面を含む) からやり直しになる。
-func cageArgs(o runOptions) []string {
-	return o.claudeArgs
+// cageArgs は、エージェントへの引数: --login なら、エージェントの loginArgs の後ろに、利用者の引数を付ける。
+func cageArgs(o runOptions, p agentProfile) []string {
+	if o.login {
+		return append(slices.Clone(p.loginArgs), o.agentArgs...)
+	}
+	return o.agentArgs
 }
 
 // runCage は、egress を起こして、檻を起動し、終わるのを待つ。終了コードを返す。
-func runCage(ctx context.Context, o runOptions, sw *sigWatch, tgt runTarget, cfg cageConfig, sum *runSummary, stderr io.Writer) int {
-	proxy, err := startProxy(tgt.runDir, allowList(o.allow))
+func runCage(ctx context.Context, o runOptions, agent agentProfile, sw *sigWatch, tgt runTarget, cfg cageConfig, sum *runSummary, stderr io.Writer) int {
+	proxy, err := startProxy(tgt.runDir, allowList(agent, o.allow))
 	if err != nil {
 		fmt.Fprintf(stderr, "goro run: egress を起動できない: %v\n", err)
 		return 1
@@ -404,16 +503,18 @@ type runSummary struct {
 	stateDir      string
 	stateDirGiven bool // --state-dir を指定したか (再開のコマンドに含める)
 	agentHome     string
-	started       bool   // 檻を起動できたか
-	logPath       string // egress の監査ログ (起動できなかったときは空)
+	agent         agentProfile // 空 (ゼロ値) は既定のエージェントとして扱う
+	started       bool         // 檻を起動できたか
+	logPath       string       // egress の監査ログ (起動できなかったときは空)
 	denied        []deniedTarget
 	deniedMore    int
 	dropped       int64 // 捨てた監査の行
 	serveErr      error // egress の待ち受けの異常な終了
 }
 
-// printRunSummary は、goro run の終了後の案内を w に出す: セッション ID・再開と取り出しのコマンド・拒否された宛先。
-// 檻を起動できなかったときは、何も出さない。
+// printRunSummary は、goro run の終了後の案内を w に出す。ユーザーが次にすること (コマンド) と、拒否された宛先だけを、短く出す:
+// セッション ID・再開と取り出しのコマンド (--login なら、次のコマンド)・拒否された宛先 (許可するコマンドつき)。
+// 理由・経緯の説明は、出さない (goro run -h に書く)。檻を起動できなかったときは、何も出さない。
 func printRunSummary(w io.Writer, s runSummary) {
 	if !s.started {
 		return // 檻を起動できなかった: 原因は、すでに表示した。必ず失敗する再開や、中身の無い取り出しを案内しない
@@ -422,33 +523,49 @@ func printRunSummary(w io.Writer, s runSummary) {
 	if s.stateDirGiven {
 		stateFlag = " --state-dir " + shellQuote(s.stateDir)
 	}
+	agentFlag := "" // 既定のエージェント以外は、再開のコマンドにも --agent が要る
+	if s.agent.name != "" && !isDefaultAgent(s.agent.name) {
+		agentFlag = " --agent " + s.agent.name
+	}
 	fmt.Fprintln(w)
 	if s.id == "" {
-		fmt.Fprintf(w, "檻専用の HOME (ログイン状態が残る): %s\n", sanitize(s.agentHome))
-		fmt.Fprintf(w, "  次は: goro run%s --repo PATH\n", stateFlag)
+		fmt.Fprintf(w, "ログイン状態: %s\n", sanitize(s.agentHome))
+		fmt.Fprintf(w, "次は: goro run%s%s --repo PATH\n", agentFlag, stateFlag)
 	} else {
 		fmt.Fprintf(w, "セッション: %s\n", s.id)
-		fmt.Fprintf(w, "  再開:         goro run%s --session %s\n", stateFlag, s.id)
-		fmt.Fprintf(w, "  成果の取り出し: goro export%s %s\n", stateFlag, s.id)
-	}
-	if s.logPath != "" {
-		fmt.Fprintf(w, "egress の監査ログ: %s\n", sanitize(s.logPath))
+		fmt.Fprintf(w, "  再開:   goro run%s%s --session %s\n", agentFlag, stateFlag, s.id)
+		fmt.Fprintf(w, "  取り出し: goro export%s %s\n", stateFlag, s.id)
 	}
 	if len(s.denied) > 0 {
-		fmt.Fprintln(w, "許可の一覧に無く、拒否された宛先 (最大 10 件):")
+		fmt.Fprintln(w, "拒否された宛先:")
+		example := "" // --allow の例には、説明のある宛先 (許可不要・先にすることがあるもの) を使わない
 		for _, d := range s.denied {
-			fmt.Fprintf(w, "  %s (%d 回)\n", sanitize(d.Target), d.Count)
+			line := fmt.Sprintf("  %s (%d 回)", sanitize(d.Target), d.Count)
+			if note, ok := s.agent.denyNotes[d.Target]; ok {
+				line += " — " + note
+			} else if example == "" {
+				example = d.Target
+			}
+			fmt.Fprintln(w, line)
 		}
 		if s.deniedMore > 0 {
-			fmt.Fprintf(w, "  ほか %d 件 (監査ログを見る)\n", s.deniedMore)
+			fmt.Fprintf(w, "  ほか %d 件\n", s.deniedMore)
 		}
-		fmt.Fprintf(w, "  必要な宛先は、--allow HOST:PORT を付けて、もう一度起動する (例: --allow %s)\n", sanitize(s.denied[0].Target))
+		if example != "" || s.deniedMore > 0 {
+			if example == "" {
+				example = "HOST:PORT"
+			}
+			fmt.Fprintf(w, "許可するには、--allow %s を付けて起動する\n", sanitize(example))
+		}
+		if s.logPath != "" {
+			fmt.Fprintf(w, "監査ログ: %s\n", sanitize(s.logPath))
+		}
 	}
 	if s.dropped > 0 {
-		fmt.Fprintf(w, "注意: 監査の行を %d 行、書けずに捨てた (監査ログが欠けている)\n", s.dropped)
+		fmt.Fprintf(w, "監査の %d 行を、書けずに捨てた (ディスクを確認する)\n", s.dropped)
 	}
 	if s.serveErr != nil {
-		fmt.Fprintf(w, "注意: egress の待ち受けが異常に終わった: %v\n", s.serveErr)
+		fmt.Fprintf(w, "egress が異常終了した: %v\n", s.serveErr)
 	}
 }
 

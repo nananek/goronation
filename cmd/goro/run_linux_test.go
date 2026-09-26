@@ -44,13 +44,13 @@ func TestParseRunArgs(t *testing.T) {
 		{"--repo", []string{"--repo", "/r"}, runOptions{repo: "/r"}, ""},
 		{"--session", []string{"--session", "20260926-120000-abcdef"}, runOptions{session: "20260926-120000-abcdef"}, ""},
 		{"--login", []string{"--login"}, runOptions{login: true}, ""},
-		{"全部", []string{"--repo", "r", "--name", "N", "--email", "e@x.invalid", "--state-dir", "/s", "--claude", "/c",
+		{"全部", []string{"--repo", "r", "--name", "N", "--email", "e@x.invalid", "--state-dir", "/s", "--bin", "/c",
 			"--allow", "a.example:443", "--allow", "b.example:8443", "--", "--resume", "x"},
-			runOptions{repo: "r", name: "N", email: "e@x.invalid", stateDir: "/s", claude: "/c",
-				allow: []string{"a.example:443", "b.example:8443"}, claudeArgs: []string{"--resume", "x"}}, ""},
+			runOptions{repo: "r", name: "N", email: "e@x.invalid", stateDir: "/s", bin: "/c",
+				allow: []string{"a.example:443", "b.example:8443"}, agentArgs: []string{"--resume", "x"}}, ""},
 		{"-- の後ろは、flag として読まない", []string{"--login", "--", "--repo", "--allow", "x"},
-			runOptions{login: true, claudeArgs: []string{"--repo", "--allow", "x"}}, ""},
-		{"-- の後ろが空", []string{"--repo", "r", "--"}, runOptions{repo: "r", claudeArgs: []string{}}, ""},
+			runOptions{login: true, agentArgs: []string{"--repo", "--allow", "x"}}, ""},
+		{"-- の後ろが空", []string{"--repo", "r", "--"}, runOptions{repo: "r", agentArgs: []string{}}, ""},
 		{"モードが無い", []string{"--allow", "a.example:443"}, runOptions{}, "ちょうど 1 つ"},
 		{"モードが 2 つ (repo と login)", []string{"--repo", "r", "--login"}, runOptions{}, "ちょうど 1 つ"},
 		{"モードが 2 つ (repo と session)", []string{"--repo", "r", "--session", "x"}, runOptions{}, "ちょうど 1 つ"},
@@ -81,8 +81,8 @@ func TestParseRunArgs(t *testing.T) {
 				t.Fatalf("error: %v\n%s", err, stderr.String())
 			}
 			if got.repo != tc.want.repo || got.session != tc.want.session || got.login != tc.want.login || got.name != tc.want.name ||
-				got.email != tc.want.email || got.stateDir != tc.want.stateDir || got.claude != tc.want.claude ||
-				!slices.Equal(got.allow, tc.want.allow) || !slices.Equal(got.claudeArgs, tc.want.claudeArgs) {
+				got.email != tc.want.email || got.stateDir != tc.want.stateDir || got.bin != tc.want.bin ||
+				!slices.Equal(got.allow, tc.want.allow) || !slices.Equal(got.agentArgs, tc.want.agentArgs) {
 				t.Errorf("parseRunArgs = %+v, want %+v", got, tc.want)
 			}
 		})
@@ -107,17 +107,17 @@ func TestParseRunArgsHelp(t *testing.T) {
 
 // 許可の一覧は、既定 (claude の 2 宛先) に、--allow を重複なく足したもので、既定を外せない。checkAllow は、egress の検証そのもの。
 func TestAllowList(t *testing.T) {
-	if got := allowList(nil); !slices.Equal(got, egress.ClaudeHosts()) {
-		t.Errorf("allowList(nil) = %v, want %v", got, egress.ClaudeHosts())
+	if got := allowList(claudeProfile, nil); !slices.Equal(got, egress.ClaudeHosts()) {
+		t.Errorf("allowList(claudeProfile, nil) = %v, want %v", got, egress.ClaudeHosts())
 	}
-	got := allowList([]string{"x.example:443", "api.anthropic.com:443", "x.example:443", "y.example:8443"})
+	got := allowList(claudeProfile, []string{"x.example:443", "api.anthropic.com:443", "x.example:443", "y.example:8443"})
 	want := []string{"api.anthropic.com:443", "platform.claude.com:443", "x.example:443", "y.example:8443"}
 	if !slices.Equal(got, want) {
 		t.Errorf("allowList = %v, want %v", got, want)
 	}
-	a := allowList(nil)
+	a := allowList(claudeProfile, nil)
 	a[0] = "tampered:1"
-	if egress.ClaudeHosts()[0] != "api.anthropic.com:443" || allowList(nil)[0] != "api.anthropic.com:443" {
+	if egress.ClaudeHosts()[0] != "api.anthropic.com:443" || allowList(claudeProfile, nil)[0] != "api.anthropic.com:443" {
 		t.Error("allowList が、共有の slice を返している")
 	}
 	for _, ok := range []string{"a.example:443", "A.Example:443", "a-b.example.co:8443"} {
@@ -226,8 +226,8 @@ func TestResolveClaude(t *testing.T) {
 	}{
 		{"PATH の claude は、symlink を辿った実体", "", "", pathLookup, real, ""},
 		{"環境変数が PATH に勝つ", "", other, pathLookup, other, ""},
-		{"--claude が環境変数に勝つ", link, other, pathLookup, real, ""},
-		{"--claude は、symlink を辿る", link, "", noLookup, real, ""},
+		{"--bin が環境変数に勝つ", link, other, pathLookup, real, ""},
+		{"--bin は、symlink を辿る", link, "", noLookup, real, ""},
 		{"PATH に無い", "", "", noLookup, "", "claude が見つからない"},
 		{"実行できない", notExec, "", pathLookup, "", "実行できる通常のファイルではない"},
 		{"ディレクトリ", dir, "", pathLookup, "", "実行できる通常のファイルではない"},
@@ -237,10 +237,10 @@ func TestResolveClaude(t *testing.T) {
 		{"2 文字目だけ !", bang, "", pathLookup, bang, ""},
 		{"スクリプト (ラッパー)", script, "", pathLookup, "", "スクリプト"},
 		{"スクリプトへの symlink", scriptLink, "", pathLookup, "", "スクリプト"},
-		{"環境変数のスクリプト", "", script, pathLookup, "", "--claude か GORO_CLAUDE"},
+		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin PATH か GORO_CLAUDE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveClaude(tc.flagVal, tc.env, tc.look)
+			got, err := resolveAgentExe(claudeProfile, tc.flagVal, tc.env, tc.look)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("resolveClaude = %q, %v, want error に %q", got, err, tc.wantErr)
@@ -258,11 +258,12 @@ func TestResolveClaude(t *testing.T) {
 func testCage() cageConfig {
 	return cageConfig{
 		Host:      bwrap.Host{Home: "/home/u"},
-		ClaudeExe: "/home/u/.local/share/claude/versions/2.0.0",
+		Agent:     claudeProfile,
+		AgentExe:  "/home/u/.local/share/claude/versions/2.0.0",
 		GoroExe:   "/home/u/bin/goro",
 		CACerts:   "/etc/ssl/certs",
 		RunDir:    "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run",
-		AgentHome: "/home/u/.local/state/goro/home",
+		AgentHome: "/home/u/.local/state/goro/agents/claude/home",
 		Work:      "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone",
 		Term:      "xterm-256color",
 		Args:      []string{"--resume", "x y"},
@@ -286,7 +287,7 @@ func TestCageSpecGolden(t *testing.T) {
 		"--ro-bind", "/home/u/.local/share/claude/versions/2.0.0", "/opt/claude/claude",
 		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
 		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/home", "/home/goro",
+		"--bind", "/home/u/.local/state/goro/agents/claude/home", "/home/goro",
 		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
 		"--chdir", "/work",
 		"--clearenv",
@@ -335,7 +336,7 @@ func TestCageSpecBinds(t *testing.T) {
 
 	// HOME の外 (テストバイナリや /opt の claude) は、InHome が付かず、Argv も通る。CA が無ければ、その bind は無い。
 	c := testCage()
-	c.ClaudeExe, c.GoroExe, c.CACerts = "/opt/claude-real/claude", "/usr/local/bin/goro", ""
+	c.AgentExe, c.GoroExe, c.CACerts = "/opt/claude-real/claude", "/usr/local/bin/goro", ""
 	spec = cageSpec(c)
 	if _, err := spec.Argv(); err != nil {
 		t.Fatalf("HOME の外の claude で Argv が error: %v", err)
@@ -350,7 +351,7 @@ func TestCageSpecBinds(t *testing.T) {
 	}
 	// 機密の path にある claude・goro は、bwrap が拒否する (goro run が、それを回避しない)。
 	c = testCage()
-	c.ClaudeExe = "/home/u/.claude/local/claude"
+	c.AgentExe = "/home/u/.claude/local/claude"
 	if _, err := cageSpec(c).Argv(); err == nil {
 		t.Error("~/.claude の下の claude を、bwrap が拒否しない")
 	}
@@ -374,7 +375,7 @@ func TestCageEnv(t *testing.T) {
 		"xterm-256color": "xterm-256color", "screen.linux": "screen.linux", "": "dumb", "bad term": "dumb",
 		"x\ny": "dumb", "$(id)": "dumb", strings.Repeat("a", 65): "dumb", "tmux-256color": "tmux-256color",
 	} {
-		env := cageEnv(term)
+		env := cageEnv(claudeProfile, term)
 		if names(env) != wantNames {
 			t.Fatalf("環境変数の名前 = %s, want %s", names(env), wantNames)
 		}
@@ -391,13 +392,13 @@ func TestCageEnv(t *testing.T) {
 }
 
 func TestCageArgs(t *testing.T) {
-	if got := cageArgs(runOptions{login: true}); len(got) != 0 {
+	if got := cageArgs(runOptions{login: true}, claudeProfile); len(got) != 0 {
 		t.Errorf("--login = %v, want 引数なし (素の対話起動。claude auth login は、onboarding の完了を保存しない)", got)
 	}
-	if got := cageArgs(runOptions{login: true, claudeArgs: []string{"--extra"}}); !slices.Equal(got, []string{"--extra"}) {
+	if got := cageArgs(runOptions{login: true, agentArgs: []string{"--extra"}}, claudeProfile); !slices.Equal(got, []string{"--extra"}) {
 		t.Errorf("--login と引数 = %v", got)
 	}
-	if got := cageArgs(runOptions{repo: "r", claudeArgs: []string{"-p", "hi"}}); !slices.Equal(got, []string{"-p", "hi"}) {
+	if got := cageArgs(runOptions{repo: "r", agentArgs: []string{"-p", "hi"}}, claudeProfile); !slices.Equal(got, []string{"-p", "hi"}) {
 		t.Errorf("--repo と引数 = %v", got)
 	}
 }
@@ -405,7 +406,7 @@ func TestCageArgs(t *testing.T) {
 // egress の UDS の path が長すぎるときは、セッションの clone を作る前に断る (何も作らない: 孤児のセッションを残さない)。
 // 検査する path は、上限ちょうどまで通り、1 バイト超えると断る。--login は、別の (短い) path を使う。
 func TestRunRejectsLongSockPathBeforeCreate(t *testing.T) {
-	for name, o := range map[string]runOptions{"--repo": {repo: "x"}, "--session": {session: "x"}, "--login": {login: true}} {
+	for name, o := range map[string]runOptions{"--repo": {repo: "x"}, "--session": {session: "x"}, "--login": {login: true}, "--login (opencode)": {login: true, agent: "opencode"}} {
 		probe := sockPathFor("/x", o) // 状態ディレクトリ /x の分 (2 バイト) を除いた長さで、上限に合わせる
 		stateAt := func(total int) string { return "/" + strings.Repeat("a", total-len(probe)+1) }
 		if err := checkSockPath(sockPathFor(stateAt(maxSockPath), o)); err != nil {
@@ -424,7 +425,7 @@ func TestRunRejectsLongSockPathBeforeCreate(t *testing.T) {
 	long := filepath.Join(shortDir(t), strings.Repeat("s", 90))
 	for _, args := range [][]string{{"--repo", repo}, {"--session", "20260101-000000-aaaaaa"}, {"--login"}} {
 		var stderr bytes.Buffer
-		code := runRun(append([]string{"--state-dir", long, "--claude", self}, args...), &stderr)
+		code := runRun(append([]string{"--state-dir", long, "--bin", self}, args...), &stderr)
 		if code != 1 || !strings.Contains(stderr.String(), "--state-dir") || !strings.Contains(stderr.String(), "長すぎる") {
 			t.Errorf("%v: 終了コード = %d, stderr:\n%s", args, code, stderr.String())
 		}
@@ -469,7 +470,7 @@ func TestCheckSockPath(t *testing.T) {
 	}
 	// startProxy は、長すぎる run dir を、何も作らずに断る。
 	longRun := filepath.Join(dir, strings.Repeat("d", 100))
-	if _, err := startProxy(longRun, allowList(nil)); err == nil || !strings.Contains(err.Error(), "--state-dir") {
+	if _, err := startProxy(longRun, allowList(claudeProfile, nil)); err == nil || !strings.Contains(err.Error(), "--state-dir") {
 		t.Errorf("startProxy(長い path) = %v", err)
 	}
 	if _, err := os.Stat(longRun); err == nil {
@@ -513,15 +514,15 @@ func TestStartProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := startProxy(run, allowList([]string{"extra.invalid:443"}))
+	p, err := startProxy(run, allowList(claudeProfile, []string{"extra.invalid:443"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fi, err := os.Stat(p.sockPath); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("UDS の権限 = %v, %v, want 0600", fi, err)
 	}
-	if _, err := startProxy(run, allowList(nil)); err == nil || !strings.Contains(err.Error(), "すでに動いている") {
-		t.Errorf("同じ run dir の 2 つ目の startProxy = %v, want すでに動いている", err)
+	if _, err := startProxy(run, allowList(claudeProfile, nil)); err == nil || !strings.Contains(err.Error(), "別の goro run が使っている") {
+		t.Errorf("同じ run dir の 2 つ目の startProxy = %v, want 別の goro run が使っている", err)
 	}
 	if got := connectVia(t, p.sockPath, "denied.example:443"); got != "403" {
 		t.Errorf("許可外の宛先 = %s, want 403", got)
@@ -549,7 +550,7 @@ func TestStartProxy(t *testing.T) {
 	}
 
 	// Close の後は、ロックが離れていて、もう一度起動できる。
-	p2, err := startProxy(run, allowList(nil))
+	p2, err := startProxy(run, allowList(claudeProfile, nil))
 	if err != nil {
 		t.Fatalf("Close の後の startProxy: %v", err)
 	}
@@ -573,7 +574,7 @@ func TestAuditLogNeverBlocksEgress(t *testing.T) {
 	w := blockingWriter{release: make(chan struct{})}
 	defer close(w.release)
 	audit := newAuditLog(w, 4, 1<<20)
-	srv := egress.New(egress.Config{Allow: allowList(nil), Audit: audit, MaxConns: 2})
+	srv := egress.New(egress.Config{Allow: allowList(claudeProfile, nil), Audit: audit, MaxConns: 2})
 	sock := tempSock(t)
 	l, err := net.Listen("unix", sock)
 	if err != nil {
@@ -705,14 +706,14 @@ func TestPrintRunSummary(t *testing.T) {
 		"セッション: 20260926-120000-abcdef",
 		`goro run --state-dir '/tmp/s t'\''x' --session 20260926-120000-abcdef`,
 		`goro export --state-dir '/tmp/s t'\''x' 20260926-120000-abcdef`,
-		"egress の監査ログ: /tmp/s/run/egress.log",
-		"最大 10 件",
+		"監査ログ: /tmp/s/run/egress.log",
+		"拒否された宛先:",
 		"  cdn.example:443 (3 回)",
 		"  evil?[31m.example:443 (1 回)", // 制御文字は ? にする
 		"ほか 4 件",
 		"--allow cdn.example:443",
-		"2 行、書けずに捨てた",
-		"egress の待ち受けが異常に終わった: boom",
+		"監査の 2 行を、書けずに捨てた",
+		"egress が異常終了した: boom",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("案内に %q が無い:\n%s", want, got)
@@ -726,7 +727,7 @@ func TestPrintRunSummary(t *testing.T) {
 	w.Reset()
 	printRunSummary(&w, runSummary{id: "20260926-120000-abcdef", started: true, stateDir: "/x", logPath: "/x/log"})
 	got = w.String()
-	if strings.Contains(got, "--state-dir") || strings.Contains(got, "拒否") || strings.Contains(got, "注意") || !strings.Contains(got, "goro run --session 20260926-120000-abcdef") {
+	if strings.Contains(got, "--state-dir") || strings.Contains(got, "拒否") || strings.Contains(got, "監査") || !strings.Contains(got, "goro run --session 20260926-120000-abcdef") {
 		t.Errorf("既定の案内:\n%s", got)
 	}
 
@@ -734,7 +735,7 @@ func TestPrintRunSummary(t *testing.T) {
 	w.Reset()
 	printRunSummary(&w, runSummary{stateDir: "/x", agentHome: "/x/home", started: true, logPath: "/x/login-run/egress.log"})
 	got = w.String()
-	if !strings.Contains(got, "檻専用の HOME (ログイン状態が残る): /x/home") || !strings.Contains(got, "goro run --repo PATH") || strings.Contains(got, "セッション:") {
+	if !strings.Contains(got, "ログイン状態: /x/home") || !strings.Contains(got, "goro run --repo PATH") || strings.Contains(got, "セッション:") {
 		t.Errorf("--login の案内:\n%s", got)
 	}
 	// 檻を起動できなかったなら、何も案内しない (必ず失敗する再開・中身の無い取り出しを、案内しない)。--login も、セッションも。
@@ -753,7 +754,7 @@ func TestPrintRunSummary(t *testing.T) {
 func TestPrintSessionsAndBundle(t *testing.T) {
 	var w bytes.Buffer
 	printSessions(&w, nil)
-	if w.String() != "セッションは無い\n" {
+	if w.String() != "セッションは無い。作る: goro run --repo PATH\n" {
 		t.Errorf("空の一覧 = %q", w.String())
 	}
 	w.Reset()
@@ -885,10 +886,10 @@ func TestRunFailsBeforeCage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"存在しないセッション", []string{"--state-dir", state, "--claude", self, "--session", "20260101-000000-aaaaaa"}, "セッションを使えない"},
-		{"形が違うセッション ID", []string{"--state-dir", state, "--claude", self, "--session", "../x"}, "セッションを使えない"},
-		{"claude が無い", []string{"--state-dir", state, "--claude", filepath.Join(state, "none"), "--login"}, "claude"},
-		{"repo が無い", []string{"--state-dir", state, "--claude", self, "--repo", filepath.Join(state, "none")}, "セッションを作れない"},
+		{"存在しないセッション", []string{"--state-dir", state, "--bin", self, "--session", "20260101-000000-aaaaaa"}, "セッションを使えない"},
+		{"形が違うセッション ID", []string{"--state-dir", state, "--bin", self, "--session", "../x"}, "セッションを使えない"},
+		{"claude が無い", []string{"--state-dir", state, "--bin", filepath.Join(state, "none"), "--login"}, "claude"},
+		{"repo が無い", []string{"--state-dir", state, "--bin", self, "--repo", filepath.Join(state, "none")}, "セッションを作れない"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("GORO_CLAUDE", "")

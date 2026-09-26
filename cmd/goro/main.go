@@ -9,7 +9,7 @@ import (
 const usage = `使い方: goro <サブコマンド> [引数...]
 
 サブコマンド:
-  run       claude を、檻の中の private clone の上で動かす (goro run -h)
+  run       エージェント (claude・opencode) を、檻の中の private clone の上で動かす (goro run -h)
   export    セッションの成果を bundle にして取り出す (goro export -h)
   sessions  セッションの一覧を表示する (goro sessions -h)
   init      檻の中でリレーを起こし、子プロセスを起動する (goro init -h。goro run が使う)

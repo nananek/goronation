@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 )
 
@@ -28,7 +29,7 @@ const initUsage = `使い方: goro init --listen 127.0.0.1:PORT --upstream PATH 
 
 檻の中で最初に動く小さなリレー (goro run が起動する)。檻の loopback の TCP を、ホストの egress の Unix ドメインソケットへ
 中継しながら、子 (CMD) を起動する。子には、標準入出力と環境変数を引き継ぎ、HTTPS_PROXY・HTTP_PROXY (小文字も) を、待ち受け先を
-指す http の URL にして渡す (NO_PROXY は設定しない)。SIGINT・SIGTERM・SIGHUP・SIGQUIT・SIGWINCH は子に転送し、自分が PID 1 の
+指す http の URL にして渡し、loopback (127.0.0.1・localhost・::1) は proxy を通さない (NO_PROXY・no_proxy。既存の値には足す)。SIGINT・SIGTERM・SIGHUP・SIGQUIT・SIGWINCH は子に転送し、自分が PID 1 の
 ときは孤児を回収する。子の終了コード (シグナルで死んだら 128+番号) で終わる。引数の不正は 2、子を起動する前の失敗は 125、
 実行できないは 126、見つからないは 127。リレーは、宛先を見ずにバイト列を通す (許可先の判定は、上流の egress が行う)。
 init は、檻を作らず、自分が檻の中にいることも確かめない。
@@ -39,8 +40,17 @@ init は、檻を作らず、自分が檻の中にいることも確かめない
   --no-forward-tty  端末のシグナル (SIGINT・SIGQUIT・SIGWINCH) を、子に転送しない (子が端末を共有し、直接受けるとき。二重に届かない)
 `
 
-// proxyEnvKeys は、init が子に設定する環境変数 (NO_PROXY は設定しない)。
+// proxyEnvKeys は、init が子に設定する、proxy を指す環境変数。
 var proxyEnvKeys = []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}
+
+// noProxyKeys・noProxyLoopback は、init が子に設定する、proxy を通さない宛先の環境変数と、その宛先 (檻の loopback)。
+// 檻の中のプロセスが、同じ檻の中の別のプロセス (opencode の background service など) へ、http://127.0.0.1:PORT で繋ぐとき、
+// proxy 変数のままだと、その通信が egress に届き、拒否される (reason=method・405)。loopback は、檻の中の名前空間の loopback で、
+// ホストのものではない: 迂回しても、檻の外へは届かない (ネットワークが無い)。
+var (
+	noProxyKeys     = []string{"NO_PROXY", "no_proxy"}
+	noProxyLoopback = []string{"127.0.0.1", "localhost", "::1"}
+)
 
 // forwardedSignals は、子に転送するシグナル。
 var forwardedSignals = []os.Signal{
@@ -151,7 +161,34 @@ func runInit(args []string, stderr io.Writer) int {
 	return code
 }
 
-// childEnv は、setProxy なら、env の後ろに proxy 用の変数 (proxyAddr を指す) を足して返す。
+// mergeNoProxy は、env の NO_PROXY・no_proxy (同じ名前が複数あれば、最後のもの) の値を、この順に、重複なくまとめ、そこに noProxyLoopback の
+// うち無いものを足した、コンマ区切りの値を返す (大文字小文字は区別せずに比べる)。
+func mergeNoProxy(env []string) string {
+	var out []string
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v != "" && !slices.ContainsFunc(out, func(o string) bool { return strings.EqualFold(o, v) }) {
+			out = append(out, v)
+		}
+	}
+	for _, key := range noProxyKeys {
+		last := ""
+		for _, kv := range env {
+			if v, ok := strings.CutPrefix(kv, key+"="); ok {
+				last = v
+			}
+		}
+		for _, v := range strings.Split(last, ",") {
+			add(v)
+		}
+	}
+	for _, v := range noProxyLoopback {
+		add(v)
+	}
+	return strings.Join(out, ",")
+}
+
+// childEnv は、setProxy なら、env の後ろに proxy 用の変数 (proxyAddr を指す) と、loopback を迂回する NO_PROXY・no_proxy を足して返す。
 // 親の環境に同じ名前があっても、os/exec は、重複した名前の最後の値を使う。
 func childEnv(env []string, proxyAddr string, setProxy bool) []string {
 	if !setProxy {
@@ -160,6 +197,10 @@ func childEnv(env []string, proxyAddr string, setProxy bool) []string {
 	out := slices.Clone(env)
 	for _, key := range proxyEnvKeys {
 		out = append(out, key+"=http://"+proxyAddr)
+	}
+	noProxy := mergeNoProxy(env)
+	for _, key := range noProxyKeys {
+		out = append(out, key+"="+noProxy)
 	}
 	return out
 }

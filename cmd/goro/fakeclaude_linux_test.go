@@ -14,28 +14,59 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-// 檻の中では、テストバイナリが、実際の goro (/opt/goro/goro) と、偽の claude (/opt/claude/claude) の代わりに動く:
+// 檻の中では、テストバイナリが、実際の goro (/opt/goro/goro) と、偽の claude (/opt/claude/claude)・偽の opencode
+// (/opt/opencode/opencode。同じ偽のエージェント) の代わりに動く:
 // bwrap は、起動するコマンドを、その path を argv[0] にして実行するので、名前で選ぶ。init は、テストバイナリの
 // TestMain より先に走る。syscall.Exit は、-race のバイナリの、終了時の 1 秒の待ち (atexit_sleep_ms) を避ける
 // (檻に環境変数は渡らないので、GORACE では避けられない)。
 func init() {
 	switch filepath.Base(os.Args[0]) {
 	case "goro":
+		// 実プロセスの goro (子プロセス) にだけ、テスト用の第 3 の profile を足す (テストの本体のプロセスの agents は、本物の 2 つのまま)。
+		// エージェントを足す作業は、この 1 つの profile を表に足すことだけ (TestRunThirdAgent)。
+		agents = append(agents, testAgentProfile)
 		syscall.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr))
-	case "claude":
+	case "claude", "opencode", testAgentProfile.name:
 		syscall.Exit(fakeClaude(os.Args[1:]))
 	}
 }
 
-// fakeClaude は、偽の claude。最初の引数が、場面の名前で、結果を、標準出力に "キー=値" か "操作 => 結果" の行で出す
+// screenStdout・screenStderr は、偽のエージェント (screen) が出す、TUI の画面に見えるバイト列。goro の解釈 (パターンマッチ・
+// UTF-8 の検査・エスケープの除去など) が入ると、そのまま届かなくなる。
+const (
+	screenStdout = "\x1b[2J\x1b[H┌  Select integration\n│  Security notes: Login successful\n\xff\xfe\x00 not-utf8\n\x1b]0;title\x07Done\n"
+	screenStderr = "■ Timed out waiting for the background service to start\n\x1b[31m└  Failed\x1b[0m\n"
+)
+
+// testAgentProfile は、テスト用の第 3 のエージェントの profile: 宛先と環境変数の定数を持つだけの、profile 1 つ。
+// 偽のエージェントの実行ファイル (テストバイナリ) は、檻の中の path の名前 (/opt/fakeagent/fakeagent) で、偽のエージェントとして動く。
+var testAgentProfile = agentProfile{
+	name:        "fakeagent",
+	exeExample:  "/opt/fakeagent/bin/fakeagent",
+	env:         []bwrap.EnvVar{{Key: "FAKEAGENT_MODE", Value: "test"}},
+	hosts:       func() []string { return []string{"fake.example:443"} },
+	loginArgs:   []string{"login"},
+	loginUsage:  "login を起動する (テスト用の説明。この文が -h に出る)",
+	exitHint:    "/quit",
+	resumeUsage: "fakeagent の続きの説明 (テスト用。-h だけに出る)",
+}
+
+// fakeClaude は、偽のエージェント (claude・opencode・テスト用の第 3 のエージェント)。最初の引数が、場面の名前で、結果を、標準出力に "キー=値" か "操作 => 結果" の行で出す
 // (goro run は、標準入出力を、檻の中の claude に直結する)。場面は次の通り。
 //
-//	auth ...              --login のときの起動 (claude auth login)。引数と環境を出し、HOME にログインの目印を作る
+//	auth login [場面...]  opencode の --login のときの起動 (auth login)。HOME にログインの目印を作り、続きに場面があれば、それを動かす
+//	                      (なければ、引数と環境を出す)
 //	info                  引数・作業ディレクトリ・HOME・環境変数の名前・/work の中身を出す
 //	probe OP...           OP (stat:PATH・write:PATH・dial:ADDR・mnt:PATH) を試して、結果を出す。mnt は、PATH の mount が ro か rw か
 //	connect TARGET...     HTTPS_PROXY へ、TARGET の CONNECT を送り、応答の状態コードを出す
+//	screen                エージェントの画面に見える出力 (エスケープ・項目名・エラー文・不正な UTF-8・NUL) を、標準出力と標準エラーに出し、
+//	                      終了コード 3 で終わる (goro が、出力を読まず・解釈せず、そのまま通すことの確認)
+//	loopback [ADDR]       proxy の環境変数を守るクライアント (Bun・Node と同じ: NO_PROXY の宛先は直接、それ以外は HTTP_PROXY 経由) で、ADDR
+//	                      (無ければ、檻の中の loopback に自分で立てたサーバー) に GET し、"loopback => <状態コード> direct|proxy" を出す
 //	commit FILE TEXT MSG  /work に FILE を書いて、git commit する
 //	gitlog FILE           /work のコミットの一覧と、FILE の中身を出す
 //	marker                HOME のログインの目印を読む
@@ -50,9 +81,15 @@ func fakeClaude(args []string) int {
 		return 0
 	}
 	switch args[0] {
-	case "auth":
+	case "auth", "login":
 		if err := os.WriteFile("/home/goro/login-marker", []byte("logged-in\n"), 0o600); err != nil {
 			fmt.Println("marker-write-error=" + err.Error())
+		}
+		if args[0] == "auth" && len(args) > 2 && args[1] == "login" && !strings.HasPrefix(args[2], "-") { // auth login <場面> ...: 続きの場面も動かす
+			return fakeClaude(args[2:])
+		}
+		if args[0] == "login" && len(args) > 1 && !strings.HasPrefix(args[1], "-") { // login <場面> ... (第 3 のエージェント)
+			return fakeClaude(args[1:])
 		}
 		return fakeInfo(args)
 	case "info":
@@ -67,6 +104,12 @@ func fakeClaude(args []string) int {
 			fmt.Printf("%s => %s\n", target, fakeConnect(target))
 		}
 		return 0
+	case "screen":
+		os.Stdout.WriteString(screenStdout)
+		os.Stderr.WriteString(screenStderr)
+		return 3
+	case "loopback":
+		return fakeLoopback(args[1:])
 	case "commit":
 		if len(args) != 4 {
 			fmt.Println("commit: 引数が足りない")
@@ -123,6 +166,65 @@ func fakeClaude(args []string) int {
 	return 2
 }
 
+// fakeLoopback は、proxy の環境変数を守るクライアントとして、addr に GET する。addr が無ければ、檻の中の loopback にサーバーを立てて、それに GET する。
+// 宛先のホストが NO_PROXY (no_proxy) の項目に一致すれば直接、そうでなければ HTTP_PROXY に、絶対形式のリクエストを送る (Bun・Node と同じ)。
+func fakeLoopback(args []string) int {
+	addr := ""
+	if len(args) > 0 {
+		addr = args[0]
+	} else {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			fmt.Println("loopback => err: " + err.Error())
+			return 1
+		}
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					defer c.Close()
+					bufio.NewReader(c).ReadString('\n')
+					fmt.Fprint(c, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+				}()
+			}
+		}()
+		addr = l.Addr().String()
+	}
+	host, _, _ := net.SplitHostPort(addr)
+	direct := false
+	for _, key := range []string{"NO_PROXY", "no_proxy"} {
+		for _, item := range strings.Split(os.Getenv(key), ",") {
+			if item = strings.TrimSpace(item); item != "" && strings.EqualFold(item, host) {
+				direct = true
+			}
+		}
+	}
+	dial, request, route := addr, "GET / HTTP/1.1\r\nHost: "+addr+"\r\nConnection: close\r\n\r\n", "direct"
+	if !direct {
+		dial, route = strings.TrimPrefix(os.Getenv("HTTP_PROXY"), "http://"), "proxy"
+		request = "GET http://" + addr + "/ HTTP/1.1\r\nHost: " + addr + "\r\nConnection: close\r\n\r\n"
+	}
+	c, err := net.DialTimeout("tcp", dial, 5*time.Second)
+	if err != nil {
+		fmt.Println("loopback => err: " + err.Error())
+		return 0
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(10 * time.Second))
+	fmt.Fprint(c, request)
+	line, err := bufio.NewReader(c).ReadString('\n')
+	f := strings.Fields(line)
+	if err != nil && len(f) < 2 {
+		fmt.Println("loopback => err: " + err.Error())
+		return 0
+	}
+	fmt.Printf("loopback => %s %s\n", f[1], route)
+	return 0
+}
+
 // fakeInfo は、檻の中から見える、起動の状態を出す。
 func fakeInfo(args []string) int {
 	cwd, _ := os.Getwd()
@@ -137,8 +239,8 @@ func fakeInfo(args []string) int {
 			work = append(work, e.Name())
 		}
 	}
-	fmt.Printf("args=%q\ncwd=%s\nhome=%s\nenv=%s\nhttps_proxy=%s\nwork=%s\n",
-		args, cwd, os.Getenv("HOME"), strings.Join(names, ","), os.Getenv("HTTPS_PROXY"), strings.Join(work, ","))
+	fmt.Printf("args=%q\ncwd=%s\nhome=%s\nenv=%s\nhttps_proxy=%s\nno_proxy=%s\nwork=%s\n",
+		args, cwd, os.Getenv("HOME"), strings.Join(names, ","), os.Getenv("HTTPS_PROXY"), os.Getenv("NO_PROXY"), strings.Join(work, ","))
 	return 0
 }
 

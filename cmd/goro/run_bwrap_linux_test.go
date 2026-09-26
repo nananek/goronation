@@ -52,8 +52,10 @@ func newRunFixture(t *testing.T) *runFixture {
 	dir := shortDir(t)
 	f := &runFixture{dir: dir, home: filepath.Join(dir, "home"), repo: filepath.Join(dir, "repo"), exe: exe}
 	for path, content := range map[string]string{
-		filepath.Join(f.home, ".ssh", "id_test"):             "PRIVATE-KEY-MARKER\n",
-		filepath.Join(f.home, ".claude", "credentials.json"): "TOKEN-MARKER\n",
+		filepath.Join(f.home, ".ssh", "id_test"):                          "PRIVATE-KEY-MARKER\n",
+		filepath.Join(f.home, ".claude", "credentials.json"):              "TOKEN-MARKER\n",
+		filepath.Join(f.home, ".local", "share", "opencode", "auth.json"): "OPENCODE-AUTH-MARKER\n",
+		filepath.Join(f.home, ".config", "opencode", "opencode.json"):     "OPENCODE-CONFIG-MARKER\n",
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
@@ -62,7 +64,7 @@ func newRunFixture(t *testing.T) *runFixture {
 			t.Fatal(err)
 		}
 	}
-	f.env = []string{"HOME=" + f.home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "TERM=xterm-256color", "GORO_CLAUDE=" + exe}
+	f.env = []string{"HOME=" + f.home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "TERM=xterm-256color", "GORO_CLAUDE=" + exe, "GORO_OPENCODE=" + exe}
 	if err := os.Mkdir(f.repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +242,7 @@ func TestRunCommitExportFetchResume(t *testing.T) {
 		t.Fatalf("偽の claude が commit できていない: %s", run1)
 	}
 	id := sessionID(t, run1)
-	for _, want := range []string{"goro run --session " + id, "goro export " + id, "egress の監査ログ:"} {
+	for _, want := range []string{"goro run --session " + id, "goro export " + id} {
 		if !strings.Contains(run1.stderr, want) {
 			t.Errorf("終了後の案内に %q が無い:\n%s", want, run1.stderr)
 		}
@@ -343,7 +345,7 @@ func TestRunEgressAllowList(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"許可の一覧に無く、拒否された宛先", "example.com:443 (1 回)", "example.com:80 (1 回)", "--allow"} {
+	for _, want := range []string{"拒否された宛先", "example.com:443 (1 回)", "example.com:80 (1 回)", "--allow"} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("終了後の案内に %q が無い:\n%s", want, r.stderr)
 		}
@@ -436,12 +438,12 @@ func TestRunCageIsolation(t *testing.T) {
 	// 環境変数と、起動の状態。
 	info := f.goro(t, "run", "--repo", f.repo, "--", "info").mustOK(t)
 	kv, _ := parseOut(info.stdout)
-	if kv["home"] != "/home/goro" || kv["cwd"] != "/work" || kv["https_proxy"] != "http://127.0.0.1:3128" {
-		t.Errorf("HOME・cwd・HTTPS_PROXY = %q・%q・%q", kv["home"], kv["cwd"], kv["https_proxy"])
+	if kv["home"] != "/home/goro" || kv["cwd"] != "/work" || kv["https_proxy"] != "http://127.0.0.1:3128" || kv["no_proxy"] != "127.0.0.1,localhost,::1" {
+		t.Errorf("HOME・cwd・HTTPS_PROXY・NO_PROXY = %q・%q・%q・%q", kv["home"], kv["cwd"], kv["https_proxy"], kv["no_proxy"])
 	}
 	allowed := map[string]bool{}
 	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY",
-		"DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "PWD"} {
+		"DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "PWD"} {
 		allowed[n] = true
 	}
 	for _, n := range strings.Split(kv["env"], ",") {
@@ -468,19 +470,20 @@ func TestRunLogin(t *testing.T) {
 	if kv["args"] != `["auth" "--extra"]` {
 		t.Errorf("claude の引数 = %s, want [auth --extra] (--login は、claude auth login を付けない)", kv["args"])
 	}
-	if !strings.Contains(r.stderr, "Security notes で Enter を押したら") {
+	if !strings.Contains(r.stderr, "ログインの画面が出ます。画面の指示に従い、終わったら終了してください (終了: /exit)。") ||
+		strings.Contains(r.stderr, "Security notes") || strings.Contains(r.stderr, "テーマ") { // エージェントの画面の内容を、説明しない
 		t.Errorf("--login の起動前の案内が無い:\n%s", r.stderr)
 	}
 	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goro" {
 		t.Errorf("cwd・/work の中身・HOME = %q・%q・%q (空の作業ディレクトリのはず)", kv["cwd"], kv["work"], kv["home"])
 	}
-	if b, err := os.ReadFile(filepath.Join(f.stateDir(), "home", "login-marker")); err != nil || string(b) != "logged-in\n" {
-		t.Errorf("ログイン状態が、檻専用の HOME (<state>/home) に残っていない: %q, %v", b, err)
+	if b, err := os.ReadFile(f.agentPath("claude", "home", "login-marker")); err != nil || string(b) != "logged-in\n" {
+		t.Errorf("ログイン状態が、檻専用の HOME (<state>/agents/claude/home) に残っていない: %q, %v", b, err)
 	}
-	if _, err := os.Stat(filepath.Join(f.stateDir(), "login-run", egressLogName)); err != nil {
+	if _, err := os.Stat(f.agentPath("claude", "login-run", egressLogName)); err != nil {
 		t.Errorf("ログイン用の run dir に、監査ログが無い: %v", err)
 	}
-	if !strings.Contains(r.stderr, "檻専用の HOME (ログイン状態が残る)") || !strings.Contains(r.stderr, "goro run --repo PATH") || strings.Contains(r.stderr, "セッション:") {
+	if !strings.Contains(r.stderr, "ログイン状態: ") || !strings.Contains(r.stderr, "goro run --repo PATH") || strings.Contains(r.stderr, "セッション:") {
 		t.Errorf("--login の案内:\n%s", r.stderr)
 	}
 	if ss := f.goro(t, "sessions").mustOK(t); !strings.Contains(ss.stdout, "セッションは無い") {
@@ -496,7 +499,7 @@ func TestRunLogin(t *testing.T) {
 	// --state-dir
 	st := filepath.Join(f.dir, "st")
 	r = f.goro(t, "run", "--state-dir", st, "--login", "--", "auth").mustOK(t)
-	if _, err := os.Stat(filepath.Join(st, "home", "login-marker")); err != nil {
+	if _, err := os.Stat(filepath.Join(st, "agents", "claude", "home", "login-marker")); err != nil {
 		t.Errorf("--state-dir の下の HOME に、ログイン状態が無い: %v", err)
 	}
 	if !strings.Contains(r.stderr, "goro run --state-dir '"+st+"' --repo PATH") {
@@ -575,7 +578,7 @@ func TestRunSameSessionTwiceRefused(t *testing.T) {
 	}
 	id := ents[0].Name()
 	second := f.goro(t, "run", "--session", id, "--", "info")
-	if second.code != 1 || !strings.Contains(second.stderr, "すでに動いている") {
+	if second.code != 1 || !strings.Contains(second.stderr, "別の goro run が使っている") {
 		t.Errorf("2 つ目の goro run: %s", second)
 	}
 	// 1 つ目の UDS は、無事 (取り替えられていない)。
@@ -701,12 +704,12 @@ func TestRunStartFailureShowsOnlyCause(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("\x7fELF fake binary\n"), 0o755); err != nil { // #! で始めない (スクリプトは、その前に断られる)
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"run", "--repo", f.repo, "--claude", bad}, {"run", "--login", "--claude", bad}} {
+	for _, args := range [][]string{{"run", "--repo", f.repo, "--bin", bad}, {"run", "--login", "--bin", bad}} {
 		r := f.goro(t, args...)
 		if r.code != 1 || !strings.Contains(r.stderr, "檻を起動できない") {
 			t.Errorf("%v: 終了コード・原因の表示:\n%s", args, r)
 		}
-		for _, hint := range []string{"--session", "goro export", "セッション:", "次は:", "egress の監査ログ"} {
+		for _, hint := range []string{"--session", "goro export", "セッション:", "次は:", "監査ログ"} {
 			if strings.Contains(r.stderr, hint) {
 				t.Errorf("%v: 起動に失敗したのに、案内 %q が出ている:\n%s", args, hint, r.stderr)
 			}

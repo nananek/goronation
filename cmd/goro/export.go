@@ -36,7 +36,7 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if flags.NArg() != 1 {
-		fmt.Fprintf(stderr, "goro export: セッション ID を 1 つ指定する\n%s", exportUsage)
+		fmt.Fprintln(stderr, "goro export: セッション ID を 1 つ指定する。一覧: goro sessions")
 		return exitUsage
 	}
 	id := flags.Arg(0)

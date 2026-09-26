@@ -31,6 +31,9 @@ var homeSecrets = []string{
 	".ssh", ".aws", ".azure", ".kube", ".docker",
 	".netrc", ".git-credentials", ".npmrc", ".pypirc", ".password-store", ".codex", ".copilot", ".commandcode",
 	".config/gh", ".config/git", ".config/gcloud", ".config/op", ".local/share/keyrings",
+	// opencode: 認証情報 (auth.json・mcp-auth.json) と会話の履歴 (DB) は .local/share/opencode に、provider の設定 (API キーを
+	// 書けるもの) は .config/opencode にある。実行ファイルの公式の置き場 ~/.opencode/bin は、機密にしない (bind できる)。
+	".local/share/opencode", ".config/opencode",
 }
 
 // credEnvKeys・credEnvPrefixes・credEnvParts は、資格情報らしい環境変数の名前 (大文字にして比べる)。
