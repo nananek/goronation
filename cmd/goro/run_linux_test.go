@@ -44,9 +44,9 @@ func TestParseRunArgs(t *testing.T) {
 		{"--repo", []string{"--repo", "/r"}, runOptions{repo: "/r"}, ""},
 		{"--session", []string{"--session", "20260926-120000-abcdef"}, runOptions{session: "20260926-120000-abcdef"}, ""},
 		{"--login", []string{"--login"}, runOptions{login: true}, ""},
-		{"全部", []string{"--repo", "r", "--name", "N", "--email", "e@x.invalid", "--state-dir", "/s", "--claude", "/c",
+		{"全部", []string{"--repo", "r", "--name", "N", "--email", "e@x.invalid", "--state-dir", "/s", "--bin", "/c",
 			"--allow", "a.example:443", "--allow", "b.example:8443", "--", "--resume", "x"},
-			runOptions{repo: "r", name: "N", email: "e@x.invalid", stateDir: "/s", claude: "/c",
+			runOptions{repo: "r", name: "N", email: "e@x.invalid", stateDir: "/s", bin: "/c",
 				allow: []string{"a.example:443", "b.example:8443"}, agentArgs: []string{"--resume", "x"}}, ""},
 		{"-- の後ろは、flag として読まない", []string{"--login", "--", "--repo", "--allow", "x"},
 			runOptions{login: true, agentArgs: []string{"--repo", "--allow", "x"}}, ""},
@@ -81,7 +81,7 @@ func TestParseRunArgs(t *testing.T) {
 				t.Fatalf("error: %v\n%s", err, stderr.String())
 			}
 			if got.repo != tc.want.repo || got.session != tc.want.session || got.login != tc.want.login || got.name != tc.want.name ||
-				got.email != tc.want.email || got.stateDir != tc.want.stateDir || got.claude != tc.want.claude ||
+				got.email != tc.want.email || got.stateDir != tc.want.stateDir || got.bin != tc.want.bin ||
 				!slices.Equal(got.allow, tc.want.allow) || !slices.Equal(got.agentArgs, tc.want.agentArgs) {
 				t.Errorf("parseRunArgs = %+v, want %+v", got, tc.want)
 			}
@@ -226,8 +226,8 @@ func TestResolveClaude(t *testing.T) {
 	}{
 		{"PATH の claude は、symlink を辿った実体", "", "", pathLookup, real, ""},
 		{"環境変数が PATH に勝つ", "", other, pathLookup, other, ""},
-		{"--claude が環境変数に勝つ", link, other, pathLookup, real, ""},
-		{"--claude は、symlink を辿る", link, "", noLookup, real, ""},
+		{"--bin が環境変数に勝つ", link, other, pathLookup, real, ""},
+		{"--bin は、symlink を辿る", link, "", noLookup, real, ""},
 		{"PATH に無い", "", "", noLookup, "", "claude が見つからない"},
 		{"実行できない", notExec, "", pathLookup, "", "実行できる通常のファイルではない"},
 		{"ディレクトリ", dir, "", pathLookup, "", "実行できる通常のファイルではない"},
@@ -237,7 +237,7 @@ func TestResolveClaude(t *testing.T) {
 		{"2 文字目だけ !", bang, "", pathLookup, bang, ""},
 		{"スクリプト (ラッパー)", script, "", pathLookup, "", "スクリプト"},
 		{"スクリプトへの symlink", scriptLink, "", pathLookup, "", "スクリプト"},
-		{"環境変数のスクリプト", "", script, pathLookup, "", "--claude か GORO_CLAUDE"},
+		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin か GORO_CLAUDE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := resolveAgentExe(claudeProfile, tc.flagVal, tc.env, tc.look)
@@ -425,7 +425,7 @@ func TestRunRejectsLongSockPathBeforeCreate(t *testing.T) {
 	long := filepath.Join(shortDir(t), strings.Repeat("s", 90))
 	for _, args := range [][]string{{"--repo", repo}, {"--session", "20260101-000000-aaaaaa"}, {"--login"}} {
 		var stderr bytes.Buffer
-		code := runRun(append([]string{"--state-dir", long, "--claude", self}, args...), &stderr)
+		code := runRun(append([]string{"--state-dir", long, "--bin", self}, args...), &stderr)
 		if code != 1 || !strings.Contains(stderr.String(), "--state-dir") || !strings.Contains(stderr.String(), "長すぎる") {
 			t.Errorf("%v: 終了コード = %d, stderr:\n%s", args, code, stderr.String())
 		}
@@ -886,10 +886,10 @@ func TestRunFailsBeforeCage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"存在しないセッション", []string{"--state-dir", state, "--claude", self, "--session", "20260101-000000-aaaaaa"}, "セッションを使えない"},
-		{"形が違うセッション ID", []string{"--state-dir", state, "--claude", self, "--session", "../x"}, "セッションを使えない"},
-		{"claude が無い", []string{"--state-dir", state, "--claude", filepath.Join(state, "none"), "--login"}, "claude"},
-		{"repo が無い", []string{"--state-dir", state, "--claude", self, "--repo", filepath.Join(state, "none")}, "セッションを作れない"},
+		{"存在しないセッション", []string{"--state-dir", state, "--bin", self, "--session", "20260101-000000-aaaaaa"}, "セッションを使えない"},
+		{"形が違うセッション ID", []string{"--state-dir", state, "--bin", self, "--session", "../x"}, "セッションを使えない"},
+		{"claude が無い", []string{"--state-dir", state, "--bin", filepath.Join(state, "none"), "--login"}, "claude"},
+		{"repo が無い", []string{"--state-dir", state, "--bin", self, "--repo", filepath.Join(state, "none")}, "セッションを作れない"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("GORO_CLAUDE", "")

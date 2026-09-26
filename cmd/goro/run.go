@@ -32,8 +32,7 @@ const runUsage = `使い方: goro run (--repo PATH | --session ID | --login) [--
   --name N          clone の user.name (--repo のとき。既定は goro)
   --email E         clone の user.email (--repo のとき)
   --state-dir DIR   状態 (セッション・檻専用の HOME) を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
-  --claude PATH     claude の実行ファイル (既定は環境変数 GORO_CLAUDE か、PATH の claude。--agent claude のとき)
-  --opencode PATH   opencode の実行ファイル (既定は環境変数 GORO_OPENCODE か、PATH の opencode。--agent opencode のとき)
+  --bin PATH        動かすエージェントの実行ファイル (既定は環境変数 GORO_<エージェント名の大文字> (GORO_CLAUDE・GORO_OPENCODE) か、PATH のエージェント名)
   --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は claude が api.anthropic.com:443 と platform.claude.com:443、opencode が opencode.ai:443)
   -- ARGS...        エージェントに渡す引数 (--login のときは、opencode の auth login の後ろに付く)
 
@@ -49,6 +48,12 @@ const runUsage = `使い方: goro run (--repo PATH | --session ID | --login) [--
 終わると、セッション ID・再開と取り出しのコマンド・拒否された宛先を表示する。
 `
 
+// removedFlags は、廃止したオプションの名前と、その代わり (使うと、代わりを教える error にする)。
+// エージェントごとの実行ファイルのオプション (--claude) は、エージェントが増えるたびにオプションが増えるので、--bin 1 つにした。
+var removedFlags = map[string]string{
+	"claude": "--bin PATH (環境変数 GORO_CLAUDE は、そのまま使える)",
+}
+
 // runOptions は、goro run の引数。
 type runOptions struct {
 	repo, session string
@@ -56,8 +61,7 @@ type runOptions struct {
 	name, email   string
 	stateDir      string // 空なら既定
 	agent         string // 動かすエージェント (claude・opencode)。空は claude
-	claude        string // 空なら GORO_CLAUDE か PATH
-	opencode      string // 空なら GORO_OPENCODE か PATH
+	bin           string // 動かすエージェントの実行ファイル。空なら GORO_<NAME> か PATH
 	allow         []string
 	agentArgs     []string // エージェントへの引数 (-- の後ろ)
 }
@@ -90,8 +94,10 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	flags.StringVar(&o.email, "email", "", "")
 	flags.StringVar(&o.stateDir, "state-dir", "", "")
 	flags.StringVar(&o.agent, "agent", "", "") // 空 = 省略
-	flags.StringVar(&o.claude, "claude", "", "")
-	flags.StringVar(&o.opencode, "opencode", "", "")
+	flags.StringVar(&o.bin, "bin", "", "")
+	for name, instead := range removedFlags {
+		flags.Func(name, "", func(string) error { return fmt.Errorf("廃止した。実行ファイルは、%s で指す", instead) })
+	}
 	flags.Var(&allow, "allow", "")
 	if err := flags.Parse(head); err != nil {
 		return o, err // flag が、理由と使い方を出している
@@ -128,11 +134,6 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	case o.session == "":
 		o.agent = claudeProfile.name // 既定。--session で省略したときは、空のまま: セッションを作ったエージェントで動かす (doRun が決める)
 	}
-	if o.agent != "" {
-		if err := o.checkExeOptions(o.profile()); err != nil {
-			return fail("%v", err)
-		}
-	}
 	if err := checkAllow(o.allow); err != nil {
 		return fail("%v", err)
 	}
@@ -145,25 +146,6 @@ func (o runOptions) profile() agentProfile {
 		return p
 	}
 	return claudeProfile
-}
-
-// checkExeOptions は、動かさないエージェントの実行ファイルを指すオプション (--claude・--opencode) が無いことを確かめる:
-// 効かないオプションを、黙って無視せず、断る。
-func (o runOptions) checkExeOptions(agent agentProfile) error {
-	for _, other := range agents {
-		if other.name != agent.name && o.exeOption(other) != "" {
-			return fmt.Errorf("--%s は、--agent %s のときだけ使える (動かすエージェントは %s。実行ファイルを指すのは --%s)", other.name, other.name, agent.name, agent.name)
-		}
-	}
-	return nil
-}
-
-// exeOption は、エージェント p の実行ファイルを指すオプション (--claude・--opencode) の値。
-func (o runOptions) exeOption(p agentProfile) string {
-	if p.name == opencodeProfile.name {
-		return o.opencode
-	}
-	return o.claude
 }
 
 func indexOf(s []string, v string) int {
@@ -195,7 +177,7 @@ func resolveExe(p string) (string, error) {
 	return real, nil
 }
 
-// resolveAgentExe は、檻に見せるエージェント p の実体を決める: --<name>、なければ環境変数 (GORO_<NAME>。テスト用に、同じ効果)、
+// resolveAgentExe は、檻に見せるエージェント p の実体を決める: --bin、なければ環境変数 (GORO_<NAME>)、
 // なければ PATH の <name>。どれも、symlink を辿った実体にする (claude の native 版は、~/.local/bin/claude が、版ごとの実体への
 // symlink)。スクリプト (先頭が #!) は、檻の中で、呼ぶ先の実体が見えず動かないので断る。
 func resolveAgentExe(p agentProfile, flagVal, envVal string, lookPath func(string) (string, error)) (string, error) {
@@ -206,7 +188,7 @@ func resolveAgentExe(p agentProfile, flagVal, envVal string, lookPath func(strin
 	if path == "" {
 		found, err := lookPath(p.name)
 		if err != nil {
-			return "", fmt.Errorf("%s が見つからない (PATH に置くか、--%s か %s で指す): %w", p.name, p.name, p.exeEnv(), err)
+			return "", fmt.Errorf("%s が見つからない (PATH に置くか、--bin か %s で指す): %w", p.name, p.exeEnv(), err)
 		}
 		path = found
 	}
@@ -216,7 +198,7 @@ func resolveAgentExe(p agentProfile, flagVal, envVal string, lookPath func(strin
 	}
 	if isScript(real) {
 		return "", fmt.Errorf("%s (%s) はスクリプト (先頭が #!) です。檻の中では、スクリプトが呼ぶ実体が見えず、動きません。"+
-			"実体の実行ファイルを --%s か %s で指定してください (例: %s)", p.name, real, p.name, p.exeEnv(), p.exeExample)
+			"実体の実行ファイルを --bin か %s で指定してください (例: %s)", p.name, real, p.exeEnv(), p.exeExample)
 	}
 	return real, nil
 }
@@ -328,10 +310,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if err != nil {
 		return fail("%v", err)
 	}
-	if err := o.checkExeOptions(agent); err != nil { // --session で --agent を省略したとき、parseRunArgs は、まだ断れない
-		return fail("%v", err)
-	}
-	agentExe, err := resolveAgentExe(agent, o.exeOption(agent), os.Getenv(agent.exeEnv()), exec.LookPath)
+	agentExe, err := resolveAgentExe(agent, o.bin, os.Getenv(agent.exeEnv()), exec.LookPath)
 	if err != nil {
 		return fail("%v", err)
 	}

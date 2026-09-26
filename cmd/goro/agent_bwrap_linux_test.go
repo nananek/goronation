@@ -230,8 +230,6 @@ func TestRunSessionKeepsItsAgent(t *testing.T) {
 	if _, err := os.Lstat(f.agentPath("opencode", "home")); err == nil {
 		t.Error("断ったのに、opencode の HOME が作られた")
 	}
-	// --opencode を付けても、同じ (opencode では動かさない)。--agent を省略した --session に、動かさない側の実行ファイルを指すと断る。
-	refused(t, f.goro(t, "run", "--session", cid, "--opencode", f.exe, "--", "info"), "--opencode は、--agent opencode のときだけ使える", "動かすエージェントは claude")
 
 	// opencode が作ったセッション。
 	oid := sessionID(t, f.goro(t, "run", "--agent", "opencode", "--repo", f.repo, "--", "exit", "0").mustOK(t))
@@ -239,7 +237,6 @@ func TestRunSessionKeepsItsAgent(t *testing.T) {
 		t.Fatalf("opencode のセッションの記録 = %q, %v", b, err)
 	}
 	refused(t, f.goro(t, "run", "--agent", "claude", "--session", oid, "--", "info"), "このセッションは opencode で作られた", "--agent claude では使えない")
-	refused(t, f.goro(t, "run", "--session", oid, "--claude", f.exe, "--", "info"), "--claude は、--agent claude のときだけ使える", "動かすエージェントは opencode")
 
 	// --agent の省略・記録と同じ --agent: 記録のエージェントで動く。
 	for _, args := range [][]string{{"--session", cid}, {"--agent", "claude", "--session", cid}} {
@@ -340,23 +337,24 @@ func TestRunLoginDirsSeparateBothWays(t *testing.T) {
 	}
 }
 
-// opencode がスクリプト (npm のラッパーなど) なら、檻を起こす前に断る (セッションも作らない)。--agent opencode に --claude は効かない。
+// opencode がスクリプト (npm のラッパーなど) なら、檻を起こす前に断る (セッションも作らない)。--bin で指しても、同じ。
+// 廃止した --claude は、代わりを教えて断る。未知のエージェントも断る。
 func TestRunOpenCodeRejectsScriptAndWrongFlag(t *testing.T) {
 	f := newRunFixture(t)
 	script := filepath.Join(f.dir, "opencode-wrapper")
 	if err := os.WriteFile(script, []byte("#!/usr/bin/env node\nconsole.log('x')\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r := f.goro(t, "run", "--agent", "opencode", "--repo", f.repo, "--opencode", script)
-	if r.code != 1 || !strings.Contains(r.stderr, "スクリプト") || !strings.Contains(r.stderr, "--opencode か GORO_OPENCODE") {
+	r := f.goro(t, "run", "--agent", "opencode", "--repo", f.repo, "--bin", script)
+	if r.code != 1 || !strings.Contains(r.stderr, "スクリプト") || !strings.Contains(r.stderr, "--bin か GORO_OPENCODE") {
 		t.Errorf("スクリプトの opencode:\n%s", r)
 	}
 	if ss := f.goro(t, "sessions").mustOK(t); !strings.Contains(ss.stdout, "セッションは無い") {
 		t.Errorf("断ったのに、セッションが作られた:\n%s", ss.stdout)
 	}
-	r = f.goro(t, "run", "--agent", "opencode", "--repo", f.repo, "--claude", f.exe)
-	if r.code != exitUsage || !strings.Contains(r.stderr, "--claude は、--agent claude のときだけ") {
-		t.Errorf("--agent opencode の --claude:\n%s", r)
+	r = f.goro(t, "run", "--repo", f.repo, "--claude", f.exe)
+	if r.code != exitUsage || !strings.Contains(r.stderr, "廃止した。実行ファイルは、--bin PATH") {
+		t.Errorf("廃止した --claude:\n%s", r)
 	}
 	r = f.goro(t, "run", "--agent", "codex", "--repo", f.repo)
 	if r.code != exitUsage || !strings.Contains(r.stderr, "claude か opencode") {

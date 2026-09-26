@@ -2,7 +2,7 @@
 //
 // run は、ホストの repo の private clone (または前のセッション) の上で、ネットワークの無い bwrap の檻の中のエージェント (--agent claude か opencode。既定は claude) を動かし、
 // 檻の外向き通信を、ホストの egress (許可した宛先だけの CONNECT プロキシ) だけに絞る。export は、clone のコミットを bundle にして取り出す。
-// エージェントごとに違うのは、実行ファイルの解決 (--claude・--opencode、GORO_*、PATH。スクリプトは断る)・環境変数・既定の許可宛先・--login の起動・状態のディレクトリ (すべて <state>/agents/<名前>/{home,login-work,login-run}。どのエージェントも同じ形) だけ。セッションは、作ったエージェントを記録し (goro sessions に出る)、--session はそのエージェントで動かす (別の --agent は断る: clone に残る設定を、別の檻で動かさない)。
+// エージェントごとに違うのは、実行ファイルの解決 (--bin、GORO_<名前>、PATH。スクリプトは断る)・環境変数・既定の許可宛先・--login の起動・状態のディレクトリ (すべて <state>/agents/<名前>/{home,login-work,login-run}。どのエージェントも同じ形) だけ。セッションは、作ったエージェントを記録し (goro sessions に出る)、--session はそのエージェントで動かす (別の --agent は断る: clone に残る設定を、別の檻で動かさない)。
 // sessions は一覧を出し、init は、檻の中で最初に動くリレーで、run が起動する。オプションは goro <サブコマンド> -h に書く。
 //
 // # 使い方

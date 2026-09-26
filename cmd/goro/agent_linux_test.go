@@ -126,7 +126,7 @@ func TestParseRunArgsAgent(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
-		want runOptions // agent・claude・opencode だけを比べる
+		want runOptions // agent・bin だけを比べる
 		err  string
 	}{
 		{"既定は claude", []string{"--repo", "r"}, runOptions{agent: "claude"}, ""},
@@ -134,18 +134,18 @@ func TestParseRunArgsAgent(t *testing.T) {
 		{"--agent opencode", []string{"--agent", "opencode", "--repo", "r"}, runOptions{agent: "opencode"}, ""},
 		{"--agent opencode --login", []string{"--agent", "opencode", "--login", "--", "--extra"}, runOptions{agent: "opencode"}, ""},
 		{"--agent opencode --session", []string{"--agent=opencode", "--session", "x"}, runOptions{agent: "opencode"}, ""},
-		{"--opencode は opencode のとき", []string{"--agent", "opencode", "--opencode", "/o", "--repo", "r"}, runOptions{agent: "opencode", opencode: "/o"}, ""},
-		{"--claude は claude のとき", []string{"--claude", "/c", "--repo", "r"}, runOptions{agent: "claude", claude: "/c"}, ""},
+		{"--bin は、選んだエージェントの実行ファイル (opencode)", []string{"--agent", "opencode", "--bin", "/o", "--repo", "r"}, runOptions{agent: "opencode", bin: "/o"}, ""},
+		{"--bin は、選んだエージェントの実行ファイル (既定)", []string{"--bin", "/c", "--repo", "r"}, runOptions{agent: "claude", bin: "/c"}, ""},
 		{"未知のエージェント", []string{"--agent", "codex", "--repo", "r"}, runOptions{}, "claude か opencode"},
 		{"空のエージェント", []string{"--agent", "", "--repo", "r"}, runOptions{}, "claude か opencode"},
 		{"大文字", []string{"--agent", "OpenCode", "--repo", "r"}, runOptions{}, "claude か opencode"},
-		{"opencode に --claude", []string{"--agent", "opencode", "--claude", "/c", "--repo", "r"}, runOptions{}, "--claude は、--agent claude のときだけ"},
-		{"claude に --opencode", []string{"--opencode", "/o", "--repo", "r"}, runOptions{}, "--opencode は、--agent opencode のときだけ"},
+		{"廃止した --claude", []string{"--claude", "/c", "--repo", "r"}, runOptions{}, "廃止した。実行ファイルは、--bin PATH"},
+		{"廃止した --claude (--agent opencode でも)", []string{"--agent", "opencode", "--claude=/c", "--repo", "r"}, runOptions{}, "廃止した。実行ファイルは、--bin PATH"},
+		{"--opencode は、出荷していないので、未知のフラグ", []string{"--opencode", "/o", "--repo", "r"}, runOptions{}, "flag provided but not defined: -opencode"},
 		{"--login で省略は claude", []string{"--login"}, runOptions{agent: "claude"}, ""},
 		{"--session で省略は、空 (セッションを作ったエージェントで動かす)", []string{"--session", "x"}, runOptions{agent: ""}, ""},
 		{"--session と --agent claude", []string{"--session", "x", "--agent", "claude"}, runOptions{agent: "claude"}, ""},
-		{"--session で省略: 動かす側が未定なので、--opencode は、ここでは断らない (doRun が断る)", []string{"--session", "x", "--opencode", "/o"}, runOptions{agent: "", opencode: "/o"}, ""},
-		{"--session と --agent claude に --opencode", []string{"--session", "x", "--agent", "claude", "--opencode", "/o"}, runOptions{}, "--opencode は、--agent opencode のときだけ"},
+		{"--session で省略: --bin は、記録のエージェントの実行ファイル", []string{"--session", "x", "--bin", "/o"}, runOptions{agent: "", bin: "/o"}, ""},
 		{"-- の後ろの --agent は、flag ではない", []string{"--repo", "r", "--", "--agent", "opencode"}, runOptions{agent: "claude"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,14 +163,14 @@ func TestParseRunArgsAgent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("error: %v\n%s", err, stderr.String())
 			}
-			if got.agent != tc.want.agent || got.claude != tc.want.claude || got.opencode != tc.want.opencode {
-				t.Errorf("agent・claude・opencode = %q・%q・%q, want %q・%q・%q", got.agent, got.claude, got.opencode, tc.want.agent, tc.want.claude, tc.want.opencode)
+			if got.agent != tc.want.agent || got.bin != tc.want.bin {
+				t.Errorf("agent・bin = %q・%q, want %q・%q", got.agent, got.bin, tc.want.agent, tc.want.bin)
 			}
 		})
 	}
 }
 
-// opencode の実行ファイルの解決: PATH の opencode・GORO_OPENCODE・--opencode の順。スクリプトは、claude と同じく断る。
+// opencode の実行ファイルの解決: PATH の opencode・GORO_OPENCODE・--bin の順。スクリプトは、claude と同じく断る。
 func TestResolveOpenCode(t *testing.T) {
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -206,11 +206,11 @@ func TestResolveOpenCode(t *testing.T) {
 	}{
 		{"PATH の opencode は、symlink を辿った実体", "", "", pathLookup, real, ""},
 		{"環境変数が PATH に勝つ", "", real, pathLookup, real, ""},
-		{"--opencode が環境変数に勝つ", link, script, pathLookup, real, ""},
-		{"PATH に無い", "", "", noLookup, "", "opencode が見つからない (PATH に置くか、--opencode か GORO_OPENCODE で指す)"},
+		{"--bin が環境変数に勝つ", link, script, pathLookup, real, ""},
+		{"PATH に無い", "", "", noLookup, "", "opencode が見つからない (PATH に置くか、--bin か GORO_OPENCODE で指す)"},
 		{"存在しない", filepath.Join(dir, "none"), "", pathLookup, "", "opencode ("},
 		{"スクリプト (npm のラッパーなど)", script, "", pathLookup, "", "スクリプト"},
-		{"環境変数のスクリプト", "", script, pathLookup, "", "--opencode か GORO_OPENCODE"},
+		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin か GORO_OPENCODE"},
 		{"スクリプトの例は、opencode の置き場", script, "", pathLookup, "", "~/.opencode/bin/opencode"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -228,11 +228,11 @@ func TestResolveOpenCode(t *testing.T) {
 	}
 	// claude のエラーの文言は、opencode の値に置き換わらない。
 	_, err = resolveAgentExe(claudeProfile, "", "", noLookup)
-	if err == nil || !strings.Contains(err.Error(), "claude が見つからない (PATH に置くか、--claude か GORO_CLAUDE で指す)") {
+	if err == nil || !strings.Contains(err.Error(), "claude が見つからない (PATH に置くか、--bin か GORO_CLAUDE で指す)") {
 		t.Errorf("claude の見つからないエラー = %v", err)
 	}
 	_, err = resolveAgentExe(claudeProfile, script, "", pathLookup)
-	if err == nil || !strings.Contains(err.Error(), "--claude か GORO_CLAUDE") || !strings.Contains(err.Error(), "/opt/claude-code/bin/claude") {
+	if err == nil || !strings.Contains(err.Error(), "--bin か GORO_CLAUDE") || !strings.Contains(err.Error(), "/opt/claude-code/bin/claude") {
 		t.Errorf("claude のスクリプトのエラー = %v", err)
 	}
 	var pe *os.PathError

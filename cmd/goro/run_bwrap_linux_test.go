@@ -703,7 +703,7 @@ func TestRunStartFailureShowsOnlyCause(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("\x7fELF fake binary\n"), 0o755); err != nil { // #! で始めない (スクリプトは、その前に断られる)
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"run", "--repo", f.repo, "--claude", bad}, {"run", "--login", "--claude", bad}} {
+	for _, args := range [][]string{{"run", "--repo", f.repo, "--bin", bad}, {"run", "--login", "--bin", bad}} {
 		r := f.goro(t, args...)
 		if r.code != 1 || !strings.Contains(r.stderr, "檻を起動できない") {
 			t.Errorf("%v: 終了コード・原因の表示:\n%s", args, r)
