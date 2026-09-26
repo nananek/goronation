@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -243,6 +244,9 @@ func TestRunCommitExportFetchResume(t *testing.T) {
 		if !strings.Contains(run1.stderr, want) {
 			t.Errorf("終了後の案内に %q が無い:\n%s", want, run1.stderr)
 		}
+	}
+	if want, got := filepath.Join(f.stateDir(), "sessions", id, "run", proxySockName), sockPathFor(f.stateDir(), runOptions{repo: f.repo}); len(got) != len(want) {
+		t.Errorf("Create の前に調べる UDS の path (%d バイト) が、実際の path (%d バイト) と違う: session の ID の形が変わった", len(got), len(want))
 	}
 	if _, err := os.Stat(filepath.Join(f.repo, "hello.txt")); err == nil {
 		t.Error("ホストの元の repo に、檻の中の変更が入っている")
@@ -592,6 +596,117 @@ func TestRunExitCode(t *testing.T) {
 		}
 		if !strings.Contains(r.stderr, "セッション:") {
 			t.Errorf("claude が %d で終わったとき、案内が出ていない:\n%s", code, r.stderr)
+		}
+	}
+}
+
+// legacyTIOCSTIOff は、TIOCSTI が無効 (legacy_tiocsti = 0) か。端末に直結する檻は、そうでないと、起動しない (sandbox/bwrap の仕様)。
+func legacyTIOCSTIOff() (bool, string) {
+	b, err := os.ReadFile("/proc/sys/dev/tty/legacy_tiocsti")
+	if err != nil {
+		return false, err.Error()
+	}
+	return strings.TrimSpace(string(b)) == "0", strings.TrimSpace(string(b))
+}
+
+// 檻の中のプロセスが端末の設定 (raw・-echo・-isig) を変えても、goro run は、終了後 (正常終了でも、SIGTERM での取り消しでも)、
+// 起動前の termios (全部) に戻す。端末 (pty) は、標準入出力と制御端末にする。
+func TestRunRestoresTerminal(t *testing.T) {
+	f := newRunFixture(t)
+	if off, v := legacyTIOCSTIOff(); !off {
+		t.Skipf("legacy_tiocsti = %q: TIOCSTI が有効 (か確かめられない) ので、端末に直結する檻は起動しない", v)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		term bool // SIGTERM で止める
+	}{{"正常終了", []string{"rawtty"}, false}, {"SIGTERM での取り消し", []string{"rawtty", "hold"}, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			master, slave := openPty(t)
+			var out syncBuffer
+			go io.Copy(&out, master) // master を読み続ける (読まないと、pty の buffer が詰まる)
+			before := termOf(t, slave)
+
+			ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, f.exe, append([]string{"run", "--repo", f.repo, "--"}, tc.args...)...)
+			cmd.Args[0] = "goro"
+			cmd.Env = f.env
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+
+			deadline := time.Now().Add(runTimeout)
+			for !strings.Contains(out.String(), "raw-set") {
+				select {
+				case err := <-done:
+					t.Fatalf("raw-set が出る前に、goro が終わった: %v\n%s", err, out.String())
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("raw-set が出ない:\n%s", out.String())
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if termOf(t, slave) == before {
+				t.Fatal("前提: 檻の中の raw 化で、端末の設定が変わっていない (検査が空振りになる)")
+			}
+			if tc.term {
+				if err := syscall.Kill(cmd.Process.Pid, syscall.SIGTERM); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := master.Write([]byte("x")); err != nil { // 偽の claude を、正常に終わらせる
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				var ee *exec.ExitError
+				if tc.term != (errors.As(err, &ee) && ee.ExitCode() == 143) || (!tc.term && err != nil) {
+					t.Errorf("goro の終わり方: %v (want %s)", err, map[bool]string{true: "143", false: "0"}[tc.term])
+				}
+			case <-time.After(runTimeout):
+				t.Fatalf("goro が終わらない:\n%s", out.String())
+			}
+			if after := termOf(t, slave); after != before {
+				t.Errorf("goro の終了後、端末の設定が戻っていない:\n before %+v\n after  %+v\n出力:\n%s", before, after, out.String())
+			}
+		})
+	}
+}
+
+// 標準入力が端末でないときは、何も保存も戻しもしない (警告も出さない)。
+func TestRunNoTerminalNoWarning(t *testing.T) {
+	f := newRunFixture(t)
+	r := f.goro(t, "run", "--repo", f.repo, "--", "exit", "0").mustOK(t)
+	if strings.Contains(r.stderr, "端末の設定") {
+		t.Errorf("端末でないのに、端末の設定の警告が出ている:\n%s", r.stderr)
+	}
+}
+
+// 檻を起動できなかった (bwrap の Spec の拒否: ~/.claude の下の claude) ときは、原因だけを出し、必ず失敗する再開や、
+// 中身の無い取り出しを案内しない。--login も同じ。
+func TestRunStartFailureShowsOnlyCause(t *testing.T) {
+	f := newRunFixture(t)
+	bad := filepath.Join(f.home, ".claude", "bin", "claude") // ~/.claude の下は、bwrap の拒否リストに当たる
+	if err := os.MkdirAll(filepath.Dir(bad), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bad, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"run", "--repo", f.repo, "--claude", bad}, {"run", "--login", "--claude", bad}} {
+		r := f.goro(t, args...)
+		if r.code != 1 || !strings.Contains(r.stderr, "檻を起動できない") {
+			t.Errorf("%v: 終了コード・原因の表示:\n%s", args, r)
+		}
+		for _, hint := range []string{"--session", "goro export", "セッション:", "次は:", "egress の監査ログ"} {
+			if strings.Contains(r.stderr, hint) {
+				t.Errorf("%v: 起動に失敗したのに、案内 %q が出ている:\n%s", args, hint, r.stderr)
+			}
 		}
 	}
 }

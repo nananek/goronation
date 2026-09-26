@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 // 檻の中では、テストバイナリが、実際の goro (/opt/goro/goro) と、偽の claude (/opt/claude/claude) の代わりに動く:
@@ -41,6 +42,8 @@ func init() {
 //	sigcount              ready を出し、最初のシグナルから 1 秒間の SIGINT・SIGQUIT の数を出す
 //	hold                  ready を出し、殺されるまで待つ
 //	exit N                終了コード N で終わる
+//	rawtty [hold]         標準入力の端末を raw・-echo・-isig にして、raw-set を出す。hold なら、殺されるまで待つ。そうでなければ、
+//	                      端末から 1 バイト届くまで待って終わる (raw の間に、テストが端末の設定を確かめられるように)
 func fakeClaude(args []string) int {
 	if len(args) == 0 {
 		fmt.Println("scenario=none")
@@ -91,6 +94,23 @@ func fakeClaude(args []string) int {
 	case "hold":
 		fmt.Println("ready")
 		select {}
+	case "rawtty":
+		st, err := saveTermios(0)
+		if st == nil {
+			fmt.Printf("not-a-tty err=%v\n", err)
+			return 1
+		}
+		raw := rawOf(st.t)
+		if err := ioctl(0, syscall.TCSETS, unsafe.Pointer(&raw)); err != nil {
+			fmt.Println("tcsets-error=" + err.Error())
+			return 1
+		}
+		fmt.Println("raw-set")
+		if len(args) > 1 && args[1] == "hold" {
+			select {}
+		}
+		os.Stdin.Read(make([]byte, 1))
+		return 0
 	case "exit":
 		if len(args) == 2 {
 			if n, err := strconv.Atoi(args[1]); err == nil {

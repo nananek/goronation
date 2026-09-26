@@ -373,6 +373,41 @@ func TestCageArgs(t *testing.T) {
 	}
 }
 
+// egress の UDS の path が長すぎるときは、セッションの clone を作る前に断る (何も作らない: 孤児のセッションを残さない)。
+// 検査する path は、上限ちょうどまで通り、1 バイト超えると断る。--login は、別の (短い) path を使う。
+func TestRunRejectsLongSockPathBeforeCreate(t *testing.T) {
+	for name, o := range map[string]runOptions{"--repo": {repo: "x"}, "--session": {session: "x"}, "--login": {login: true}} {
+		probe := sockPathFor("/x", o) // 状態ディレクトリ /x の分 (2 バイト) を除いた長さで、上限に合わせる
+		stateAt := func(total int) string { return "/" + strings.Repeat("a", total-len(probe)+1) }
+		if err := checkSockPath(sockPathFor(stateAt(maxSockPath), o)); err != nil {
+			t.Errorf("%s: 上限ちょうど (%d バイト) が通らない: %v", name, maxSockPath, err)
+		}
+		if err := checkSockPath(sockPathFor(stateAt(maxSockPath+1), o)); err == nil {
+			t.Errorf("%s: 上限を 1 バイト超えても、通る", name)
+		}
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	long := filepath.Join(shortDir(t), strings.Repeat("s", 90))
+	for _, args := range [][]string{{"--repo", repo}, {"--session", "20260101-000000-aaaaaa"}, {"--login"}} {
+		var stderr bytes.Buffer
+		code := runRun(append([]string{"--state-dir", long, "--claude", self}, args...), &stderr)
+		if code != 1 || !strings.Contains(stderr.String(), "--state-dir") || !strings.Contains(stderr.String(), "長すぎる") {
+			t.Errorf("%v: 終了コード = %d, stderr:\n%s", args, code, stderr.String())
+		}
+		if strings.Contains(stderr.String(), "セッション") || strings.Contains(stderr.String(), "--session") {
+			t.Errorf("%v: 何も作らずに断るはずが、セッションの案内が出ている:\n%s", args, stderr.String())
+		}
+		if _, err := os.Stat(long); err == nil {
+			t.Fatalf("%v: 断ったのに、状態ディレクトリ %s を作っている", args, long)
+		}
+	}
+}
+
 func TestCheckSockPath(t *testing.T) {
 	ok := "/" + strings.Repeat("a", maxSockPath-1)
 	if err := checkSockPath(ok); err != nil {
@@ -633,7 +668,7 @@ func TestParseDenied(t *testing.T) {
 func TestPrintRunSummary(t *testing.T) {
 	var w bytes.Buffer
 	printRunSummary(&w, runSummary{
-		id: "20260926-120000-abcdef", stateDir: "/tmp/s t'x", stateDirGiven: true, agentHome: "/tmp/s t'x/home", logPath: "/tmp/s/run/egress.log",
+		id: "20260926-120000-abcdef", started: true, stateDir: "/tmp/s t'x", stateDirGiven: true, agentHome: "/tmp/s t'x/home", logPath: "/tmp/s/run/egress.log",
 		denied: []deniedTarget{{"cdn.example:443", 3}, {"evil\x1b[31m.example:443", 1}}, deniedMore: 4, dropped: 2, serveErr: errors.New("boom"),
 	})
 	got := w.String()
@@ -660,7 +695,7 @@ func TestPrintRunSummary(t *testing.T) {
 
 	// 既定の state dir と、拒否が無いとき: 余計なものを出さない。
 	w.Reset()
-	printRunSummary(&w, runSummary{id: "20260926-120000-abcdef", stateDir: "/x", logPath: "/x/log"})
+	printRunSummary(&w, runSummary{id: "20260926-120000-abcdef", started: true, stateDir: "/x", logPath: "/x/log"})
 	got = w.String()
 	if strings.Contains(got, "--state-dir") || strings.Contains(got, "拒否") || strings.Contains(got, "注意") || !strings.Contains(got, "goro run --session 20260926-120000-abcdef") {
 		t.Errorf("既定の案内:\n%s", got)
@@ -673,11 +708,16 @@ func TestPrintRunSummary(t *testing.T) {
 	if !strings.Contains(got, "檻専用の HOME (ログイン状態が残る): /x/home") || !strings.Contains(got, "goro run --repo PATH") || strings.Contains(got, "セッション:") {
 		t.Errorf("--login の案内:\n%s", got)
 	}
-	// 檻を起動できなかったなら、ログイン状態が残るとは言わない。
-	w.Reset()
-	printRunSummary(&w, runSummary{stateDir: "/x", agentHome: "/x/home"})
-	if strings.Contains(w.String(), "檻専用の HOME") {
-		t.Errorf("檻を起動していないのに、檻専用の HOME を案内している:\n%s", w.String())
+	// 檻を起動できなかったなら、何も案内しない (必ず失敗する再開・中身の無い取り出しを、案内しない)。--login も、セッションも。
+	for _, sum := range []runSummary{
+		{stateDir: "/x", agentHome: "/x/home", logPath: "/x/login-run/egress.log"},
+		{id: "20260926-120000-abcdef", stateDir: "/x", logPath: "/x/log", denied: []deniedTarget{{"a.example:443", 1}}, dropped: 3},
+	} {
+		w.Reset()
+		printRunSummary(&w, sum)
+		if w.Len() != 0 {
+			t.Errorf("檻を起動できなかったのに、案内を出している (%+v):\n%s", sum, w.String())
+		}
 	}
 }
 

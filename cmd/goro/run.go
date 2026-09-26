@@ -39,6 +39,7 @@ claude を、檻 (ネットワークの無い bwrap) の中で、ホストの re
   goro run --session ID -- --resume   再開する (-- の後ろは claude への引数)
   goro export ID                      成果 (コミット) を bundle にして、取り込みのコマンドを表示する
 
+起動後の Ctrl-C は、claude の中断として効く (goro run 自身は終了しない)。止めるときは、claude の終了操作か、別の端末から goro run に SIGTERM。
 終わると、セッション ID・再開と取り出しのコマンド・拒否された宛先を表示する。
 `
 
@@ -209,6 +210,10 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if err != nil {
 		return fail("%v", err)
 	}
+	// egress の UDS の path が長すぎるときは、何も作る前に断る (clone を作った後では、孤児のセッションが残る)。
+	if err := checkSockPath(sockPathFor(stateDir, o)); err != nil {
+		return fail("%v", err)
+	}
 	claudeExe, err := resolveClaude(o.claude, os.Getenv("GORO_CLAUDE"), exec.LookPath)
 	if err != nil {
 		return fail("%v", err)
@@ -271,6 +276,17 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	return code
 }
 
+// sampleSessionID は、セッション ID と同じ長さの例 (session の ID の形。セッションを作る前に、UDS の path の長さを調べるため)。
+const sampleSessionID = "00000000-000000-000000"
+
+// sockPathFor は、o の goro run が使う egress の UDS の path。セッションの ID は、同じ長さの例で代える。
+func sockPathFor(stateDir string, o runOptions) string {
+	if o.login {
+		return filepath.Join(stateDir, "login-run", proxySockName)
+	}
+	return filepath.Join(stateDir, "sessions", sampleSessionID, "run", proxySockName)
+}
+
 // cageArgs は、claude への引数: --login なら auth login の後ろに、利用者の引数を付ける。
 func cageArgs(o runOptions) []string {
 	if o.login {
@@ -299,6 +315,13 @@ func runCage(ctx context.Context, o runOptions, sw *sigWatch, tgt runTarget, cfg
 	if ctx.Err() != nil { // 起動の前に、シグナルを受けていた
 		return 1
 	}
+	// 檻の中のプロセスは、端末の設定を変えられる。標準入力が端末なら、起動の前に保存し、どの経路で終わっても (正常・
+	// シグナルでの取り消し・エラー)、終了後の案内を出す前に戻す。
+	term, err := saveTermios(int(os.Stdin.Fd()))
+	if err != nil {
+		fmt.Fprintf(stderr, "goro run: 端末の設定を保存できない (終了後に戻せない): %v\n", err)
+	}
+	defer restoreTermios(term, stderr)
 	sw.enterCage()
 	c, err := bwrap.Start(ctx, spec)
 	if err != nil {
@@ -371,16 +394,18 @@ type runSummary struct {
 }
 
 // printRunSummary は、goro run の終了後の案内を w に出す: セッション ID・再開と取り出しのコマンド・拒否された宛先。
+// 檻を起動できなかったときは、何も出さない。
 func printRunSummary(w io.Writer, s runSummary) {
+	if !s.started {
+		return // 檻を起動できなかった: 原因は、すでに表示した。必ず失敗する再開や、中身の無い取り出しを案内しない
+	}
 	stateFlag := ""
 	if s.stateDirGiven {
 		stateFlag = " --state-dir " + shellQuote(s.stateDir)
 	}
 	fmt.Fprintln(w)
 	if s.id == "" {
-		if s.started {
-			fmt.Fprintf(w, "檻専用の HOME (ログイン状態が残る): %s\n", sanitize(s.agentHome))
-		}
+		fmt.Fprintf(w, "檻専用の HOME (ログイン状態が残る): %s\n", sanitize(s.agentHome))
 		fmt.Fprintf(w, "  次は: goro run%s --repo PATH\n", stateFlag)
 	} else {
 		fmt.Fprintf(w, "セッション: %s\n", s.id)
