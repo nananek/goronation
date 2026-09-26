@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/token"
 	"net/url"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -177,8 +178,14 @@ func urlChars(r rune) bool {
 		strings.ContainsRune("-._~:/?#@!$&'*+,;=%", r)
 }
 
+// charRefRE は、Markdown (CommonMark) が、リンク先で復号する文字参照の形。数値 (&#106;・&#x6a;) と、名前 (&colon;・&amp;)。
+// 名前は、& の後ろが英字で始まり、英数字が続いて ; で終わる形だけ (クエリの &y=2 のような、正当な & は含まない)。
+var charRefRE = regexp.MustCompile(`&(#|[A-Za-z][A-Za-z0-9]*;)`)
+
 // checkURL は、リンク先が、http(s) の絶対 URL か、相対 (path と # だけ) であることを確かめる。
 // javascript:・data:・file: などの scheme と、// で始まる (host を指す) 相対、userinfo (user:pass@) は許さない。
+// 文字参照 (&#106;avascript: や javascript&colon;) も許さない: url.Parse は、復号する前の文字列を見るので、scheme が空に
+// なるが、描画すると javascript: になりうる。
 func checkURL(s string) error {
 	if s == "" {
 		return fmt.Errorf("リンク先が空")
@@ -187,6 +194,9 @@ func checkURL(s string) error {
 		if !urlChars(r) {
 			return fmt.Errorf("リンク先 %q に、許可しない文字 %q がある", s, r)
 		}
+	}
+	if charRefRE.MatchString(s) {
+		return fmt.Errorf("リンク先 %q に、文字参照 (&#… や &名前;) がある (復号すると、別の scheme になりうる)", s)
 	}
 	u, err := url.Parse(s)
 	if err != nil {
