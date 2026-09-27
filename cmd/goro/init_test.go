@@ -450,21 +450,23 @@ func TestParseInitArgs(t *testing.T) {
 			want initConfig
 		}{
 			{"-- あり", append(append([]string{}, base...), "--", "claude", "-p"),
-				initConfig{listen, upstream, false, []string{"claude", "-p"}, false}},
+				initConfig{listen, upstream, false, []string{"claude", "-p"}, false, false}},
 			{"-- なし。CMD 以降は、flag に見えても子の引数", append(append([]string{}, base...), "claude", "--listen", "x"),
-				initConfig{listen, upstream, false, []string{"claude", "--listen", "x"}, false}},
+				initConfig{listen, upstream, false, []string{"claude", "--listen", "x"}, false, false}},
 			{"-- の後の - で始まるコマンド", append(append([]string{}, base...), "--", "--odd"),
-				initConfig{listen, upstream, false, []string{"--odd"}, false}},
+				initConfig{listen, upstream, false, []string{"--odd"}, false, false}},
 			{"--no-proxy-env", append(append([]string{}, base...), "--no-proxy-env", "--", "c"),
-				initConfig{listen, upstream, true, []string{"c"}, false}},
+				initConfig{listen, upstream, true, []string{"c"}, false, false}},
 			{"--no-forward-tty", append(append([]string{}, base...), "--no-forward-tty", "--", "c"),
-				initConfig{listen, upstream, false, []string{"c"}, true}},
+				initConfig{listen, upstream, false, []string{"c"}, true, false}},
+			{"--set-ctty", append(append([]string{}, base...), "--set-ctty", "--", "c"),
+				initConfig{listen, upstream, false, []string{"c"}, false, true}},
 			{"= で書く", []string{"--listen=127.0.0.1:8080", "--upstream=" + upstream, "c"},
-				initConfig{"127.0.0.1:8080", upstream, false, []string{"c"}, false}},
+				initConfig{"127.0.0.1:8080", upstream, false, []string{"c"}, false, false}},
 			{"IPv6 の loopback", []string{"--listen", "[::1]:0", "--upstream", upstream, "c"},
-				initConfig{"[::1]:0", upstream, false, []string{"c"}, false}},
+				initConfig{"[::1]:0", upstream, false, []string{"c"}, false, false}},
 			{"127.0.0.0/8 の loopback", []string{"--listen", "127.0.0.2:0", "--upstream", upstream, "c"},
-				initConfig{"127.0.0.2:0", upstream, false, []string{"c"}, false}},
+				initConfig{"127.0.0.2:0", upstream, false, []string{"c"}, false, false}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				var stderr bytes.Buffer

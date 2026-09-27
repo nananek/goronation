@@ -59,15 +59,6 @@ func setTermOf(t *testing.T, f *os.File, tm syscall.Termios) {
 	ctl(t, f, func(fd int) error { return ioctl(fd, syscall.TCSETS, unsafe.Pointer(&tm)) })
 }
 
-// rawOf は、tm を、raw・-echo・-isig にしたもの (stty raw -echo -isig 相当)。
-func rawOf(tm syscall.Termios) syscall.Termios {
-	tm.Lflag &^= syscall.ECHO | syscall.ICANON | syscall.ISIG | syscall.IEXTEN
-	tm.Iflag &^= syscall.ICRNL | syscall.IXON | syscall.INLCR | syscall.ISTRIP
-	tm.Oflag &^= syscall.OPOST
-	tm.Cc[syscall.VMIN], tm.Cc[syscall.VTIME] = 1, 0
-	return tm
-}
-
 // saveTermios・restore: 端末の設定を保存して、raw・-echo・-isig にした後、restore で、全部 (Cc を含む) 元に戻る。
 // 端末でない fd は、nil (戻すものが無い) で、nil の restore は何もしない。
 func TestTermiosSaveRestore(t *testing.T) {
@@ -118,5 +109,29 @@ func TestTermiosSaveRestore(t *testing.T) {
 	restoreTermios(&termState{fd: -1}, &w)
 	if !strings.Contains(w.String(), "端末の設定を戻せない") {
 		t.Errorf("戻せなかったときの警告が無い: %q", w.String())
+	}
+}
+
+// TestTermStateSetRaw は、setRaw が、保存した元の設定に rawOf を適用したものに端末を変え、restore で元に戻ることを確認する。
+func TestTermStateSetRaw(t *testing.T) {
+	_, slave := openPty(t)
+	before := termOf(t, slave)
+	var st *termState
+	ctl(t, slave, func(fd int) (err error) { st, err = saveTermios(fd); return })
+	if err := st.setRaw(); err != nil {
+		t.Fatalf("setRaw: %v", err)
+	}
+	if got, want := termOf(t, slave), rawOf(before); got != want {
+		t.Errorf("setRaw の後の termios = %+v, want %+v", got, want)
+	}
+	if err := st.restore(); err != nil {
+		t.Fatal(err)
+	}
+	if after := termOf(t, slave); after != before {
+		t.Errorf("restore の後の termios が、保存した時と違う:\n before %+v\n after  %+v", before, after)
+	}
+	// nil (端末でない fd) は、setRaw も何もしない。
+	if err := (*termState)(nil).setRaw(); err != nil {
+		t.Errorf("nil の setRaw = %v", err)
 	}
 }

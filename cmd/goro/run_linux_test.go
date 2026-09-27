@@ -317,6 +317,54 @@ func TestCageSpecGolden(t *testing.T) {
 	}
 }
 
+// TestCageSpecGoldenPTY は、cfg.PTY が true のときだけ、bwrap.Spec.NewSession が true になり、goro init の
+// argv に --set-ctty が (--no-forward-tty の後・-- の前に) 入ることを確認する。それ以外 (bind・環境変数・
+// エージェントへの引数) は、TestCageSpecGolden と同じであることも確認する (PTY が、それ以外に影響しない)。
+func TestCageSpecGoldenPTY(t *testing.T) {
+	c := testCage()
+	c.PTY = true
+	spec := cageSpec(c)
+	if !spec.NewSession {
+		t.Error("PTY なのに NewSession が false")
+	}
+	argv, err := spec.Argv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"/usr/bin/bwrap", "--unshare-all", "--die-with-parent", "--new-session",
+		"--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
+		"--proc", "/proc", "--dev", "/dev",
+		"--tmpfs", "/tmp",
+		"--ro-bind", "/usr", "/usr",
+		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
+		"--ro-bind", "/home/u/.local/share/claude/versions/2.0.0", "/opt/claude/claude",
+		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
+		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
+		"--bind", "/home/u/.local/state/goro/agents/claude/homes/0123456789abcdef", "/home/goro",
+		"--bind", "/home/u/.local/state/goro/agents/claude/auth", "/auth",
+		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
+		"--chdir", "/work",
+		"--clearenv",
+		"--setenv", "HOME", "/home/goro",
+		"--setenv", "PATH", "/usr/bin:/bin",
+		"--setenv", "TERM", "xterm-256color",
+		"--setenv", "LANG", "C.UTF-8",
+		"--setenv", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1",
+		"--setenv", "DISABLE_TELEMETRY", "1",
+		"--setenv", "DISABLE_ERROR_REPORTING", "1",
+		"--setenv", "DISABLE_AUTOUPDATER", "1",
+		"--setenv", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1",
+		"--setenv", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "/auth",
+		"--",
+		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--set-ctty", "--",
+		"/opt/claude/claude", "--resume", "x y",
+	}
+	if !slices.Equal(argv, want) {
+		t.Errorf("argv が golden と違う:\n got: %q\nwant: %q", argv, want)
+	}
+}
+
 // claude の檻の実効の Spec は、HOME をエージェントで 1 つ共有していた前の golden と、次の 3 つだけが違う: HOME の bind 元 (homes/<repo のキー>)・
 // 認証用ディレクトリの bind (/auth)・認証用ディレクトリを指す環境変数 (CLAUDE_SECURESTORAGE_CONFIG_DIR)。ほかの mount・環境変数・引数は、増えも減りもしない。
 func TestCageSpecDiffersFromSharedHomeOnlyInHomeAndAuth(t *testing.T) {

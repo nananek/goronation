@@ -63,3 +63,25 @@ func restoreTermios(s *termState, stderr io.Writer) {
 		fmt.Fprintf(stderr, "goro run: 端末の設定を戻せない (stty sane で戻す): %v\n", err)
 	}
 }
+
+// rawOf は、tm を raw モード (stty raw -echo -isig 相当) にしたもの: local echo・行編集 (canonical)・特殊文字
+// からのシグナル生成 (Ctrl-C など)・拡張処理を切り、入力の CR/NL 変換とソフトウェアのフロー制御を切り、出力の
+// 後処理も切る。バイト列を変えずにそのまま通すための設定 (pty へ中継する側の、ホストの実端末に使う。中継先の
+// pty の slave 側の termios は、エージェント自身が、いつもどおり自分で決める)。
+func rawOf(tm syscall.Termios) syscall.Termios {
+	tm.Lflag &^= syscall.ECHO | syscall.ICANON | syscall.ISIG | syscall.IEXTEN
+	tm.Iflag &^= syscall.ICRNL | syscall.IXON | syscall.INLCR | syscall.ISTRIP
+	tm.Oflag &^= syscall.OPOST
+	tm.Cc[syscall.VMIN], tm.Cc[syscall.VTIME] = 1, 0
+	return tm
+}
+
+// setRaw は、s (saveTermios が保存した元の設定) の端末を、rawOf の設定にする。s が nil (端末でない) なら何もしない
+// (呼び手は、s が nil なら raw モードを使う中継もしない)。
+func (s *termState) setRaw() error {
+	if s == nil {
+		return nil
+	}
+	raw := rawOf(s.t)
+	return ioctl(s.fd, syscall.TCSETS, unsafe.Pointer(&raw))
+}
