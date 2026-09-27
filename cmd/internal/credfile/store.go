@@ -159,7 +159,7 @@ func (s *Store) Save(name string, v credential.Secret) error {
 		return fmt.Errorf("%w: 書こうとした値が、値の形でない", ErrInvalid)
 	}
 	if _, err := os.Lstat(s.dir); errors.Is(err, fs.ErrNotExist) {
-		if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		if err := mkdirPrivate(s.dir); err != nil {
 			return fmt.Errorf("credfile: %s を作れない: %w", s.dir, err)
 		}
 	}
@@ -218,6 +218,31 @@ func (s *Store) Save(name string, v credential.Secret) error {
 		d.Close()
 	}
 	return nil
+}
+
+// mkdirPrivate は、dir と、無い親を、0700 で作る (umask に依らない: umask が owner の bit を消しても、0700 にする)。作ったものだけを fchmod し、
+// 既にあるものには触れない。fchmod は、O_NOFOLLOW で開いた fd に行う (作った直後に symlink に差し替えられても、辿らない)。
+func mkdirPrivate(dir string) error {
+	if _, err := os.Lstat(dir); err == nil {
+		return nil
+	}
+	if parent := filepath.Dir(dir); parent != dir {
+		if err := mkdirPrivate(parent); err != nil {
+			return err
+		}
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		if errors.Is(err, fs.ErrExist) { // 別のプロセスが、先に作った
+			return nil
+		}
+		return err
+	}
+	fd, err := syscall.Open(dir, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer syscall.Close(fd)
+	return syscall.Fchmod(fd, 0o700)
 }
 
 // openRoot は、資格情報のディレクトリを、fd で開いて検査する: symlink でなく、実行した利用者の所有で、0700 (group・other の bit なし)。

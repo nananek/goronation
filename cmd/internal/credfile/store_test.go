@@ -132,8 +132,10 @@ func TestSaveAndToken(t *testing.T) {
 // umask に依らず、0600 (と、ディレクトリは 0700 か、それより厳しい)。
 func TestSaveModeIgnoresUmask(t *testing.T) {
 	for _, umask := range []int{0, 0o022, 0o077, 0o277} { // 0o277 は、owner の書き込みも消す: 0600 を保証するのは、fchmod
+		base := t.TempDir() // umask を変える前に作る (変えた後だと、この dir 自体が 0500 になる)
 		old := syscall.Umask(umask)
-		st, _ := newStore(t)
+		state := filepath.Join(base, "state", "goro") // 無い親も、作る (0700)
+		st, _ := New(state)
 		err := st.Save("github", credential.New(tok))
 		syscall.Umask(old)
 		if err != nil {
@@ -142,8 +144,14 @@ func TestSaveModeIgnoresUmask(t *testing.T) {
 		if fi, err := os.Stat(st.Path("github")); err != nil || fi.Mode().Perm() != 0o600 {
 			t.Errorf("umask %04o: ファイルの権限 = %v, %v", umask, fi, err)
 		}
-		if fi, err := os.Stat(st.Dir()); err != nil || fi.Mode().Perm()&0o077 != 0 {
-			t.Errorf("umask %04o: ディレクトリの権限 = %v, %v", umask, fi, err)
+		for _, dir := range []string{st.Dir(), filepath.Dir(st.Dir())} { // credentials と、(無ければ作った) 状態ディレクトリ
+			if fi, err := os.Stat(dir); err != nil || fi.Mode().Perm() != 0o700 && dir == st.Dir() {
+				t.Errorf("umask %04o: %s の権限 = %v, %v, want 0700", umask, dir, fi, err)
+			}
+		}
+		// 読み直せる (非 root でも、作ったディレクトリの中を読み書きできる: umask 0277 の 0500 のままだと、書けない)。
+		if s, err := st.Token(context.Background(), "github"); err != nil || s.Reveal() != tok {
+			t.Errorf("umask %04o: 保存した値を読めない: %v", umask, err)
 		}
 	}
 }
