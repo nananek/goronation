@@ -27,7 +27,26 @@ const (
 	defaultHeaderTimeout  = 10 * time.Second
 	defaultDialTimeout    = 10 * time.Second
 	defaultIdleTimeout    = 5 * time.Minute
+	// defaultMaxBodyBytes は、egress/gateway.DefaultMaxPackBytes (512 MiB) と揃える。egress package は
+	// gateway に依存しないので、数値を直接書く (両者が食い違えば、大きい方に合わせて Config.MaxBodyBytes
+	// を明示的に渡す側の責任)。
+	defaultMaxBodyBytes = 512 << 20
 )
+
+// minBodyThroughput は、ServeBoth の git/PR 経路で、本文の読み取りに許す絶対の締め切りを Config.MaxBodyBytes
+// から逆算するときに使う、「これより遅くても、まだ許す」最低スループット (バイト/秒)。宣言された
+// Content-Length ではなく MaxBodyBytes を基準にするのは、宣言値は攻撃者が自由に書けるため信用しないから。
+const minBodyThroughput = 64 << 10
+
+// maxBodyReadDuration は、本文の読み取り全体に許す絶対の時間: MaxBodyBytes を minBodyThroughput で
+// 読み切るのに要する時間と、IdleTimeout (下限) の、大きい方。
+func maxBodyReadDuration(cfg Config) time.Duration {
+	d := time.Duration(cfg.MaxBodyBytes) * time.Second / minBodyThroughput
+	if d < cfg.IdleTimeout {
+		return cfg.IdleTimeout
+	}
+	return d
+}
 
 const (
 	// readBufSize は、ヘッダを読む bufio の大きさ。ヘッダの 1 行は、これを超えられない。
@@ -51,7 +70,8 @@ type Config struct {
 	Audit io.Writer
 	// Resolver は、名前の解決に使う。nil なら net.DefaultResolver。
 	Resolver Resolver
-	// MaxConns は、同時に扱う接続 (ヘッダを読んでいる間を含む) の上限。既定 128。
+	// MaxConns は、同時に扱う接続 (ヘッダを読んでいる間を含む) の上限。既定 128。ServeBoth で振り分けている
+	// ときは、CONNECT と git/PR (other) の両方を合わせた数がこの上限になる (枠を共有する)。
 	MaxConns int
 	// MaxHeaderBytes は、リクエストのヘッダ全体の上限。既定 8 KiB。
 	MaxHeaderBytes int
@@ -61,6 +81,11 @@ type Config struct {
 	DialTimeout time.Duration
 	// IdleTimeout は、両方向とも通信が無い時間の上限。既定 5 分。
 	IdleTimeout time.Duration
+	// MaxBodyBytes は、ServeBoth の git/PR 経路で、本文の読み取り全体に許す絶対の時間を逆算する基準
+	// (実効スループットが低いだけの接続を、無期限には許さないため)。宣言された Content-Length では
+	// なく、この値 (呼び手が想定する本文の上限。gateway.Config.MaxPackBytes と揃えるとよい) を使う。
+	// 既定 512 MiB。
+	MaxBodyBytes int64
 }
 
 // Server は、CONNECT プロキシ。New で作る。
@@ -110,7 +135,8 @@ func (s *Server) setup() error {
 	if c.Audit == nil {
 		return fmt.Errorf("%w: Audit が nil", ErrConfig)
 	}
-	if c.MaxConns < 0 || c.MaxHeaderBytes < 0 || c.HeaderTimeout < 0 || c.DialTimeout < 0 || c.IdleTimeout < 0 {
+	if c.MaxConns < 0 || c.MaxHeaderBytes < 0 || c.HeaderTimeout < 0 || c.DialTimeout < 0 || c.IdleTimeout < 0 ||
+		c.MaxBodyBytes < 0 {
 		return fmt.Errorf("%w: 上限に負の値がある", ErrConfig)
 	}
 	if c.MaxConns == 0 {
@@ -127,6 +153,9 @@ func (s *Server) setup() error {
 	}
 	if c.IdleTimeout == 0 {
 		c.IdleTimeout = defaultIdleTimeout
+	}
+	if c.MaxBodyBytes == 0 {
+		c.MaxBodyBytes = defaultMaxBodyBytes
 	}
 	s.resolver = c.Resolver
 	if s.resolver == nil {

@@ -1,0 +1,4 @@
+go test fuzz v1
+string("\b\b")
+string("/github-api/")
+[]byte("0")
