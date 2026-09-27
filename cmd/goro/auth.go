@@ -42,7 +42,7 @@ var credentialKinds = []credentialKind{
 		valid:   githubTokenRE.MatchString,
 		invalid: "形式が違う。github_pat_ で始まる Fine-grained トークンを貼り直してください (作り方: goro auth -h)。",
 		usage: "Fine-grained トークン (github_pat_…)。作る場所: https://github.com/settings/personal-access-tokens/new\n" +
-			"        権限: Contents と Pull requests を Read and write にする。Workflows は付けない。goro は形式だけを検査し、有効かは確かめない。",
+			"           権限: Contents と Pull requests を Read and write にする。Workflows は付けない。goro は形式だけを検査し、有効かは確かめない。",
 	},
 }
 
