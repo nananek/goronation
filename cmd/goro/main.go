@@ -14,6 +14,7 @@ const usage = `使い方: goro <サブコマンド> [引数...]
   sessions  セッションの一覧を表示する (goro sessions -h)
   auth      資格情報 (github のトークン) を、ホストのファイルに保存する (goro auth -h)
   pr        PR を作る (檻の中。goro run --push が要る) か、ready for review にする (ホスト) (goro pr -h)
+  mcp       MCP (Model Context Protocol) のサーバーとして動く (檻の中。goro run --push が、エージェントに自動で登録する)
   init      檻の中でリレーを起こし、子プロセスを起動する (goro init -h。goro run が使う)
 `
 
@@ -38,6 +39,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return runAuth(args[1:], os.Stdin, stdout, stderr)
 	case "pr":
 		return runPr(args[1:], stdout, stderr)
+	case "mcp":
+		return runMCP(args[1:], os.Stdin, stdout, stderr)
 	case "init":
 		return runInit(args[1:], stderr)
 	case "-h", "--help":

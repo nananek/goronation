@@ -434,7 +434,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	code := runCage(ctx, o, agent, sw, tgt, cageConfig{
 		Host: host, Agent: agent, AgentExe: agentExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
 		RunDir: tgt.runDir, AgentHome: home, AuthDir: dirs.auth, Work: tgt.work, Term: os.Getenv("TERM"), Args: cageArgs(o, agent),
-		PushRepo: o.push, PushRefPrefix: push.refPrefix(),
+		PushRepo: o.push, PushRefPrefix: push.refPrefix(), MCPServers: mcpServersFor(o.push),
 	}, push, &sum, stderr)
 	printRunSummary(stderr, sum)
 	return code

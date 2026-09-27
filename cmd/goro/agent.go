@@ -51,6 +51,9 @@ type agentProfile struct {
 	// denyNotes は、拒否されたときに、宛先の後ろに添える短い一言 (10 文字前後。原因の推測・経緯は書かない)。終了後の一覧には出し
 	// (隠さない)、--allow の例には使わない。許可しなくてよいもの (動作に影響しない) と、許可より先にすることがあるものを書く。
 	denyNotes map[string]string
+	// mcp は、goro run --push のとき、goro mcp (mcp.go) を、このエージェントに MCP サーバーとして登録する方法 (起動時の
+	// 引数・環境変数への変換)。nil なら登録しない。呼び手 (cage.go) は、エージェントの種類で分岐せず、これを呼ぶだけ。
+	mcp mcpInjector
 }
 
 // homeFile は、repo ごとの HOME を作るときに置くファイル 1 つ。
@@ -128,6 +131,7 @@ var claudeProfile = agentProfile{
 	loginArgs:  nil,
 	loginUsage: "対話起動する (初回の設定とログインは、claude 自身の画面で行う。最後まで通らないと、次の起動がやり直しになる)",
 	exitHint:   "/exit",
+	mcp:        claudeMCPInject,
 }
 
 // opencodeProfile は、opencode (OpenCode Zen を使う) の profile。実測 (opencode 1.18.32・檻の中) に基づく。
@@ -163,6 +167,7 @@ var opencodeProfile = agentProfile{
 		"models.opencode.ai:443": "許可不要",
 		"github.com:443":         "ホストに rg を入れる (pacman -S ripgrep)",
 	},
+	mcp: opencodeMCPInject,
 }
 
 // agentsDirName は、エージェントごとの状態を置く、状態ディレクトリの下のディレクトリの名前。
