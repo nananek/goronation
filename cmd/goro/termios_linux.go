@@ -43,6 +43,20 @@ func (s *termState) restore() error {
 	return ioctl(s.fd, syscall.TCSETS, unsafe.Pointer(&s.t))
 }
 
+// tcsetsf は、termios を設定する ioctl の要求番号 (TCSETSF = TCSETS + TCSAFLUSH の効果)。標準ライブラリの syscall には
+// 定数が無い (linux/amd64 の値。TCSETS (0x5402) の 2 つ後ろ)。
+const tcsetsf = 0x5404
+
+// restoreFlush は、保存した termios を、端末の入力キューの未読の入力 (貼り付けの続きなど) を捨てて戻す (TCSAFLUSH と同じ効果)。
+// パスワードの入力 (getpass(3)・sudo) と同じ扱い: ECHO を戻した直後に、キューに残っていた入力が、利用者に見えないまま
+// 次のコマンドとして実行される (pastejacking) のを防ぐ。s が nil なら何もしない。
+func (s *termState) restoreFlush() error {
+	if s == nil {
+		return nil
+	}
+	return ioctl(s.fd, tcsetsf, unsafe.Pointer(&s.t))
+}
+
 // restoreTermios は、s を戻し、失敗したら警告を出す。端末が切れた (hangup。EIO) ときは、戻す先が無いので黙る。
 func restoreTermios(s *termState, stderr io.Writer) {
 	if err := s.restore(); err != nil && !errors.Is(err, syscall.EIO) {

@@ -97,7 +97,7 @@ func runAuth(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return 1
 	}
 	usageErr := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "goro auth: "+format+"\n", a...)
+		fmt.Fprintf(stderr, "goro auth: "+format+"\n", a...) // format は、こちらが決めた固定の文だけ (呼び手が、利用者の引数を渡さない)
 		return exitUsage
 	}
 	name, rest := "", args // NAME は、オプションの前でも後ろでも書ける
@@ -105,7 +105,7 @@ func runAuth(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		name, rest = args[0], args[1:]
 	}
 	flags := flag.NewFlagSet("goro auth", flag.ContinueOnError)
-	flags.SetOutput(stderr)
+	flags.SetOutput(io.Discard) // flag 自身には、利用者の引数 (値の書き間違いを含みうる) を出させない。理由は、こちらで固定の文にする
 	flags.Usage = func() {}
 	stateDir := flags.String("state-dir", "", "")
 	if err := flags.Parse(rest); err != nil {
@@ -113,22 +113,21 @@ func runAuth(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 			fmt.Fprint(stderr, authUsage())
 			return 0
 		}
-		fmt.Fprintln(stderr, "使い方: goro auth -h")
-		return exitUsage
+		return usageErr("引数が不正。使い方: goro auth -h")
 	}
 	positional := flags.Args()
 	if name == "" && len(positional) > 0 {
 		name, positional = positional[0], positional[1:]
 	}
 	if len(positional) > 0 {
-		return usageErr("余計な引数 %q", positional[0])
+		return usageErr("余計な引数。使い方: goro auth -h")
 	}
 	if name == "" {
 		return usageErr("名前を 1 つ指定する。使える名前: %s", credentialNames())
 	}
 	kind, ok := credentialKindByName(name)
 	if !ok {
-		return usageErr("未知の名前 %q。使える名前: %s", name, credentialNames())
+		return usageErr("未知の名前。使える名前: %s", credentialNames())
 	}
 	dir, err := resolveStateDir(*stateDir)
 	if err != nil {
@@ -179,7 +178,9 @@ func readSecretLine(ctx context.Context, in *os.File, prompt string, out io.Writ
 			return nil, err
 		}
 		defer func() {
-			if err := ts.restore(); err != nil && !errors.Is(err, syscall.EIO) { // 端末が切れた (EIO) ときは、戻す先が無い
+			// TCSAFLUSH (restoreFlush) で戻す: 端末の入力キューに残った未読の入力 (貼り付けの 2 行目以降・入力途中の断片) を捨てる。
+			// TCSETS のままだと、ECHO を戻した後、そのキューが親のシェルに読まれて実行されうる (pastejacking。sudo・getpass(3) と同じ対策)。
+			if err := ts.restoreFlush(); err != nil && !errors.Is(err, syscall.EIO) { // 端末が切れた (EIO) ときは、戻す先が無い
 				fmt.Fprintf(out, "goro auth: 端末の設定を戻せない (stty sane で戻す): %v\n", err)
 			}
 		}()
