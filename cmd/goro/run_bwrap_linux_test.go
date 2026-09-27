@@ -443,7 +443,7 @@ func TestRunCageIsolation(t *testing.T) {
 	}
 	allowed := map[string]bool{}
 	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY",
-		"DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "PWD"} {
+		"DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "PWD"} {
 		allowed[n] = true
 	}
 	for _, n := range strings.Split(kv["env"], ",") {
@@ -477,8 +477,11 @@ func TestRunLogin(t *testing.T) {
 	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goro" {
 		t.Errorf("cwd・/work の中身・HOME = %q・%q・%q (空の作業ディレクトリのはず)", kv["cwd"], kv["work"], kv["home"])
 	}
-	if b, err := os.ReadFile(f.agentPath("claude", "home", "login-marker")); err != nil || string(b) != "logged-in\n" {
-		t.Errorf("ログイン状態が、檻専用の HOME (<state>/agents/claude/home) に残っていない: %q, %v", b, err)
+	if b, err := os.ReadFile(f.agentPath("claude", "auth", "login-marker")); err != nil || string(b) != "logged-in\n" {
+		t.Errorf("ログイン状態が、認証情報のディレクトリ (<state>/agents/claude/auth) に残っていない: %q, %v", b, err)
+	}
+	if _, err := os.Lstat(f.agentPath("claude", "login-home", "login-marker")); err == nil {
+		t.Error("ログイン状態が、ログイン用の HOME に残っている (認証情報は、認証用ディレクトリだけに残る)")
 	}
 	if _, err := os.Stat(f.agentPath("claude", "login-run", egressLogName)); err != nil {
 		t.Errorf("ログイン用の run dir に、監査ログが無い: %v", err)
@@ -499,8 +502,8 @@ func TestRunLogin(t *testing.T) {
 	// --state-dir
 	st := filepath.Join(f.dir, "st")
 	r = f.goro(t, "run", "--state-dir", st, "--login", "--", "auth").mustOK(t)
-	if _, err := os.Stat(filepath.Join(st, "agents", "claude", "home", "login-marker")); err != nil {
-		t.Errorf("--state-dir の下の HOME に、ログイン状態が無い: %v", err)
+	if _, err := os.Stat(filepath.Join(st, "agents", "claude", "auth", "login-marker")); err != nil {
+		t.Errorf("--state-dir の下の認証情報のディレクトリに、ログイン状態が無い: %v", err)
 	}
 	if !strings.Contains(r.stderr, "goro run --state-dir '"+st+"' --repo PATH") {
 		t.Errorf("案内に --state-dir が含まれない:\n%s", r.stderr)

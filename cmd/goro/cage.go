@@ -14,6 +14,7 @@ const (
 	jailGoro      = "/opt/goro/goro"
 	jailRun       = "/run/goro"
 	jailHome      = "/home/goro"
+	jailAuth      = "/auth"
 	jailWork      = "/work"
 	jailProxyAddr = "127.0.0.1:3128"
 )
@@ -30,8 +31,10 @@ type cageConfig struct {
 	CACerts string
 	// RunDir は、egress の UDS (proxySockName) を置くディレクトリ。ディレクトリごと、ro で見せる。
 	RunDir string
-	// AgentHome は、エージェント専用の HOME (ログイン状態が残る)。rw で見せる。
+	// AgentHome は、repo ごとの (--login では、ログイン用の) HOME。会話の履歴・メモリ・trust の承認が残る。rw で見せる。
 	AgentHome string
+	// AuthDir は、エージェントの認証情報の置き場 (ログイン状態)。全 repo の檻に共通で、jailAuth に rw で見せる。
+	AuthDir string
 	// Work は、/work に見せる作業ディレクトリ (セッションの clone か、ログイン用の空のディレクトリ)。rw で見せる。
 	Work string
 	// Term は、ホストの TERM。
@@ -43,7 +46,8 @@ type cageConfig struct {
 // cageSpec は、c の檻の Spec を作る。標準入出力は、呼び手が足す。
 //
 // 檻に入るのは、ここに書いたものだけ: /usr (ro) とその symlink・証明書 (ro)・エージェントと goro の実体 (ro)・egress の UDS の
-// ディレクトリ (ro)・エージェントの HOME と作業ディレクトリ (rw)。ホストの HOME・~/.ssh・~/.claude・環境変数は入らない。
+// ディレクトリ (ro)・repo ごとの HOME と認証用ディレクトリと作業ディレクトリ (rw)。ホストの HOME・~/.ssh・~/.claude・環境変数は入らない。
+// 別の repo の HOME は、入らない。
 // ネットワークは無く (bwrap が --unshare-all)、goro init が、loopback の TCP を UDS へ中継する。
 func cageSpec(c cageConfig) bwrap.Spec {
 	binds := []bwrap.Bind{c.bind("/usr", "/usr", false)}
@@ -55,6 +59,7 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		c.bind(c.GoroExe, jailGoro, false),
 		c.bind(c.RunDir, jailRun, false),
 		c.bind(c.AgentHome, jailHome, true),
+		c.bind(c.AuthDir, jailAuth, true),
 		c.bind(c.Work, jailWork, true),
 	)
 	// --no-forward-tty: 端末のシグナルは、エージェントが直接受ける。init が転送すると、二重に届く (Ctrl-C が 2 回になる)。
@@ -83,16 +88,18 @@ func (c cageConfig) bind(src, dst string, rw bool) bwrap.Bind {
 // termRE は、檻に渡す TERM の形。
 var termRE = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,64}$`)
 
-// cageEnv は、檻の環境変数 (これだけ。ホストの環境変数は渡らない): 共通の HOME・PATH・TERM・LANG に、エージェントの p.env を足す。
+// cageEnv は、檻の環境変数 (これだけ。ホストの環境変数は渡らない): 共通の HOME・PATH・TERM・LANG に、エージェントの p.env と、
+// 認証用ディレクトリの場所を教える p.creds.env を足す。
 // proxy の変数は、goro init が設定する。TERM は、形が正しいときだけ渡し、そうでなければ dumb にする。
 func cageEnv(p agentProfile, term string) []bwrap.EnvVar {
 	if !termRE.MatchString(term) {
 		term = "dumb"
 	}
-	return append([]bwrap.EnvVar{
+	env := append([]bwrap.EnvVar{
 		{Key: "HOME", Value: jailHome},
 		{Key: "PATH", Value: "/usr/bin:/bin"},
 		{Key: "TERM", Value: term},
 		{Key: "LANG", Value: "C.UTF-8"},
 	}, p.env...)
+	return append(env, p.creds.env...)
 }

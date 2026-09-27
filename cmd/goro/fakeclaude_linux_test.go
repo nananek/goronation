@@ -42,12 +42,17 @@ const (
 	screenStderr = "■ Timed out waiting for the background service to start\n\x1b[31m└  Failed\x1b[0m\n"
 )
 
-// testAgentProfile は、テスト用の第 3 のエージェントの profile: 宛先と環境変数の定数を持つだけの、profile 1 つ。
+// testAgentProfile は、テスト用の第 3 のエージェントの profile: 宛先・環境変数・認証情報の共有 (環境変数と symlink の両方)・種の定数を持つだけの、profile 1 つ。
 // 偽のエージェントの実行ファイル (テストバイナリ) は、檻の中の path の名前 (/opt/fakeagent/fakeagent) で、偽のエージェントとして動く。
 var testAgentProfile = agentProfile{
-	name:        "fakeagent",
-	exeExample:  "/opt/fakeagent/bin/fakeagent",
-	env:         []bwrap.EnvVar{{Key: "FAKEAGENT_MODE", Value: "test"}},
+	name:       "fakeagent",
+	exeExample: "/opt/fakeagent/bin/fakeagent",
+	env:        []bwrap.EnvVar{{Key: "FAKEAGENT_MODE", Value: "test"}},
+	creds: credentials{
+		env:     []bwrap.EnvVar{{Key: "FAKEAGENT_AUTH_DIR", Value: jailAuth}},
+		linkDir: ".local/share/fakeagent", files: []string{"auth.json", "mcp-auth.json"},
+	},
+	seed:        []homeFile{{path: ".config/fakeagent/seed.txt", content: "SEED-OF-FAKEAGENT\n"}},
 	hosts:       func() []string { return []string{"fake.example:443"} },
 	loginArgs:   []string{"login"},
 	loginUsage:  "login を起動する (テスト用の説明。この文が -h に出る)",
@@ -69,7 +74,16 @@ var testAgentProfile = agentProfile{
 //	                      (無ければ、檻の中の loopback に自分で立てたサーバー) に GET し、"loopback => <状態コード> direct|proxy" を出す
 //	commit FILE TEXT MSG  /work に FILE を書いて、git commit する
 //	gitlog FILE           /work のコミットの一覧と、FILE の中身を出す
-//	marker                HOME のログインの目印を読む
+//	marker                認証用ディレクトリ (/auth) のログインの目印を読む
+//	hwrite PATH TEXT...   HOME (/home/goro) の PATH に TEXT を書く (親のディレクトリも作る。PATH TEXT の組は、いくつでも)。"hwrite:PATH => ok" か "err: 理由"
+//	hread PATH...         HOME の PATH を読み、"hread:PATH => <引用した中身>" (無ければ "err: 理由") を出す
+//	hls                   HOME の下の、通常のファイルと symlink (symlink は "path->先") を、相対 path で並べて出す ("hls => a,b,c")
+//	awrite NAME TEXT...   認証用ディレクトリ (/auth) の NAME に TEXT を、その場で書く (組は、いくつでも)。"awrite:NAME => ok" か "err: 理由"
+//	arename NAME TEXT     認証用ディレクトリの NAME を、一時ファイルに書いて rename で置き換える (claude の認証情報の書き方。inode が変わる)
+//	aread NAME...         認証用ディレクトリの NAME を読み、"aread:NAME => <引用した中身>" (無ければ "err: 理由") を出す
+//	als                   認証用ディレクトリの下のファイルの名前を並べて出す ("als => a,b")
+//	env NAME...           環境変数 NAME の値を、"env:NAME => 値" で出す
+//	await NAME OLD        ready を出し、認証用ディレクトリの NAME の中身が、空でも OLD でもなくなるのを待ち、"changed=<引用した中身>" を出す (実行中の檻への伝わり)
 //	sigcount              ready を出し、最初のシグナルから 1 秒間の SIGINT・SIGQUIT の数を出す
 //	hold                  ready を出し、殺されるまで待つ
 //	exit N                終了コード N で終わる
@@ -82,7 +96,7 @@ func fakeClaude(args []string) int {
 	}
 	switch args[0] {
 	case "auth", "login":
-		if err := os.WriteFile("/home/goro/login-marker", []byte("logged-in\n"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(jailAuth, "login-marker"), []byte("logged-in\n"), 0o600); err != nil { // ログイン状態 = 認証情報は、認証用ディレクトリに残る
 			fmt.Println("marker-write-error=" + err.Error())
 		}
 		if args[0] == "auth" && len(args) > 2 && args[1] == "login" && !strings.HasPrefix(args[2], "-") { // auth login <場面> ...: 続きの場面も動かす
@@ -129,9 +143,74 @@ func fakeClaude(args []string) int {
 		}
 		return 0
 	case "marker":
-		b, err := os.ReadFile("/home/goro/login-marker")
+		b, err := os.ReadFile(filepath.Join(jailAuth, "login-marker"))
 		fmt.Printf("marker=%q err=%v\n", string(b), err)
 		return 0
+	case "hwrite", "awrite", "arename":
+		if len(args) < 3 || (len(args)-1)%2 != 0 {
+			fmt.Println(args[0] + ": 引数が足りない")
+			return 2
+		}
+		base := jailHome
+		if args[0] != "hwrite" {
+			base = jailAuth
+		}
+		for i := 1; i < len(args); i += 2 {
+			dst := filepath.Join(base, args[i])
+			err := os.MkdirAll(filepath.Dir(dst), 0o700)
+			switch {
+			case err != nil:
+			case args[0] == "arename":
+				tmp := dst + ".tmp"
+				if err = os.WriteFile(tmp, []byte(args[i+1]), 0o600); err == nil {
+					err = os.Rename(tmp, dst)
+				}
+			default:
+				err = os.WriteFile(dst, []byte(args[i+1]), 0o600)
+			}
+			fmt.Printf("%s:%s => %s\n", args[0], args[i], okOrErr(err))
+		}
+		return 0
+	case "hread", "aread":
+		base := jailHome
+		if args[0] == "aread" {
+			base = jailAuth
+		}
+		for _, name := range args[1:] {
+			b, err := os.ReadFile(filepath.Join(base, name))
+			if err != nil {
+				fmt.Printf("%s:%s => err: %v\n", args[0], name, err)
+			} else {
+				fmt.Printf("%s:%s => %q\n", args[0], name, string(b))
+			}
+		}
+		return 0
+	case "hls":
+		fmt.Printf("hls => %s\n", strings.Join(listTree(jailHome), ","))
+		return 0
+	case "als":
+		fmt.Printf("als => %s\n", strings.Join(listTree(jailAuth), ","))
+		return 0
+	case "env":
+		for _, name := range args[1:] {
+			fmt.Printf("env:%s => %s\n", name, os.Getenv(name))
+		}
+		return 0
+	case "await":
+		if len(args) != 3 {
+			fmt.Println("await: 引数が足りない")
+			return 2
+		}
+		fmt.Println("ready")
+		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			// 空は、その場で書く相手 (O_TRUNC してから書く) の途中の状態で、まだ書かれていない値として、読み飛ばす。
+			if b, err := os.ReadFile(filepath.Join(jailAuth, args[1])); err == nil && len(b) > 0 && string(b) != args[2] {
+				fmt.Printf("changed=%q\n", string(b))
+				return 0
+			}
+		}
+		fmt.Println("timeout")
+		return 1
 	case "sigcount":
 		return fakeSigCount()
 	case "hold":
@@ -164,6 +243,35 @@ func fakeClaude(args []string) int {
 	}
 	fmt.Printf("unknown-scenario=%q\n", args[0])
 	return 2
+}
+
+// okOrErr は、err が無ければ "ok"、あれば "err: 理由"。
+func okOrErr(err error) string {
+	if err != nil {
+		return "err: " + err.Error()
+	}
+	return "ok"
+}
+
+// listTree は、root の下の、通常のファイルと symlink (symlink は "path->先") を、相対 path で、並べて返す。ディレクトリは出さない (中のファイルだけ)。
+func listTree(root string) []string {
+	var out []string
+	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil || p == root {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, p)
+		switch {
+		case d.Type()&os.ModeSymlink != 0:
+			target, _ := os.Readlink(p)
+			out = append(out, rel+"->"+target)
+		case d.Type().IsRegular():
+			out = append(out, rel)
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out
 }
 
 // fakeLoopback は、proxy の環境変数を守るクライアントとして、addr に GET する。addr が無ければ、檻の中の loopback にサーバーを立てて、それに GET する。

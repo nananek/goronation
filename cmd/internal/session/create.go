@@ -39,6 +39,10 @@ func (s *Store) Create(ctx context.Context, o CreateOptions) (sess *Session, err
 	if err != nil {
 		return nil, err
 	}
+	realRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		return nil, fmt.Errorf("session: %w", err)
+	}
 	name, email, err := identity(o.Name, o.Email)
 	if err != nil {
 		return nil, err
@@ -73,6 +77,12 @@ func (s *Store) Create(ctx context.Context, o CreateOptions) (sess *Session, err
 		}
 	}
 	if err := writeRepoLabel(sess, repo); err != nil {
+		return nil, err
+	}
+	// repo のキーは、symlink を解決した実 path から作る (同じ repo を、別の名前 (symlink) で指しても、同じ HOME になる)。エージェントの記録と
+	// 同じく、clone を作る前に書く: 書けなければ、ここで失敗し、ディレクトリごと消える。--session は、この記録を使う (repo が移動・改名されても、
+	// 同じセッションは、同じ HOME)。
+	if err := writeHomeKey(sess, RepoKey(realRepo)); err != nil {
 		return nil, err
 	}
 	// エージェントの記録は、clone を作る前 (檻を起動する前) に書く: 書けなければ、ここで失敗し、ディレクトリごと消える。

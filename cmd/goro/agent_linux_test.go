@@ -248,13 +248,15 @@ func testOpenCodeCage() cageConfig {
 	c := testCage()
 	c.Agent = opencodeProfile
 	c.AgentExe = "/home/u/.opencode/bin/opencode"
-	c.AgentHome = "/home/u/.local/state/goro/agents/opencode/home"
+	c.AgentHome = "/home/u/.local/state/goro/agents/opencode/homes/0123456789abcdef"
+	c.AuthDir = "/home/u/.local/state/goro/agents/opencode/auth"
 	c.Args = []string{"--continue"}
 	return c
 }
 
 // opencode の檻の argv を、丸ごと固定する。claude の golden (TestCageSpecGolden) との違いは、エージェントの実行ファイルの
-// 行 (/opt/opencode/opencode)・専用の HOME (agents/opencode/home)・環境変数 (OPENCODE_DISABLE_*)・起動するコマンドだけ。
+// 行 (/opt/opencode/opencode)・HOME と認証用ディレクトリの bind 元 (agents/opencode/{homes/<repo のキー>,auth})・環境変数 (OPENCODE_DISABLE_*。
+// 認証用ディレクトリを指す環境変数は無い: opencode は、HOME の symlink で共有する)・起動するコマンドだけ。
 func TestCageSpecGoldenOpenCode(t *testing.T) {
 	argv, err := cageSpec(testOpenCodeCage()).Argv()
 	if err != nil {
@@ -270,7 +272,8 @@ func TestCageSpecGoldenOpenCode(t *testing.T) {
 		"--ro-bind", "/home/u/.opencode/bin/opencode", "/opt/opencode/opencode",
 		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
 		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/agents/opencode/home", "/home/goro",
+		"--bind", "/home/u/.local/state/goro/agents/opencode/homes/0123456789abcdef", "/home/goro",
+		"--bind", "/home/u/.local/state/goro/agents/opencode/auth", "/auth",
 		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
 		"--chdir", "/work",
 		"--clearenv",
@@ -301,7 +304,7 @@ func TestCageSpecGoldenOpenCode(t *testing.T) {
 	}
 }
 
-// opencode の檻の bind: rw は、専用の HOME と /work だけ。ホストの opencode の認証情報・設定・履歴の path は、bwrap が拒否する。
+// opencode の檻の bind: rw は、repo ごとの HOME・認証用ディレクトリ・/work だけ。ホストの opencode の認証情報・設定・履歴の path は、bwrap が拒否する。
 func TestCageSpecBindsOpenCode(t *testing.T) {
 	type bind struct{ rw, inHome bool }
 	got := map[string]bind{}
@@ -311,7 +314,7 @@ func TestCageSpecBindsOpenCode(t *testing.T) {
 	want := map[string]bind{
 		"/usr": {false, false}, "/etc/ssl/certs": {false, false},
 		"/opt/opencode/opencode": {false, true}, "/opt/goro/goro": {false, true}, "/run/goro": {false, true},
-		"/home/goro": {true, true}, "/work": {true, true},
+		"/home/goro": {true, true}, "/auth": {true, true}, "/work": {true, true},
 	}
 	if len(got) != len(want) {
 		t.Errorf("bind の数 = %d, want %d: %+v", len(got), len(want), got)
@@ -414,9 +417,9 @@ func TestPrintRunSummaryAgent(t *testing.T) {
 			[]string{"goro export --agent", "/sessions"}}, // 会話の続きの説明は、-h だけ
 		{"opencode と --state-dir", runSummary{id: id, agent: opencodeProfile, stateDir: "/s t", stateDirGiven: true},
 			[]string{"goro run --agent opencode --state-dir '/s t' --session " + id + "\n", "goro export --state-dir '/s t' " + id + "\n"}, nil},
-		{"opencode の --login", runSummary{agent: opencodeProfile, agentHome: "/h"},
+		{"opencode の --login", runSummary{agent: opencodeProfile, authDir: "/h"},
 			[]string{"次は: goro run --agent opencode --repo PATH\n", "ログイン状態: /h\n"}, []string{"セッション:", "/sessions"}},
-		{"claude の --login", runSummary{agentHome: "/h"},
+		{"claude の --login", runSummary{authDir: "/h"},
 			[]string{"次は: goro run --repo PATH\n"}, []string{"--agent"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -568,26 +571,24 @@ func TestPickAgent(t *testing.T) {
 	}
 }
 
-// エージェントごとの状態は、すべて <state>/agents/<name>/{home,login-work,login-run} (どのエージェントも同じ形。claude も、
-// 例外にしない)。UDS の path も、その login-run の下。
+// エージェントごとの状態は、すべて <state>/agents/<name>/{auth,homes,login-home,login-work,login-run} (どのエージェントも同じ形。claude も、
+// 例外にしない): auth は認証情報 (全 repo で共有)、homes/<repo のキー> は repo ごとの HOME。UDS の path は、login-run の下。
 func TestAgentDirs(t *testing.T) {
-	for _, tc := range []struct {
-		p                agentProfile
-		home, work, runD string
-	}{
-		{claudeProfile, "/s/agents/claude/home", "/s/agents/claude/login-work", "/s/agents/claude/login-run"},
-		{opencodeProfile, "/s/agents/opencode/home", "/s/agents/opencode/login-work", "/s/agents/opencode/login-run"},
-	} {
-		d := tc.p.dirs("/s")
-		if d.home != tc.home || d.loginWork != tc.work || d.loginRun != tc.runD {
-			t.Errorf("%s の dirs = %+v, want %s・%s・%s", tc.p.name, d, tc.home, tc.work, tc.runD)
+	for _, p := range []agentProfile{claudeProfile, opencodeProfile} {
+		base := "/s/agents/" + p.name
+		want := agentDirs{auth: base + "/auth", homes: base + "/homes", loginHome: base + "/login-home", loginWork: base + "/login-work", loginRun: base + "/login-run"}
+		if d := p.dirs("/s"); d != want {
+			t.Errorf("%s の dirs = %+v, want %+v", p.name, d, want)
+		}
+		if got := p.dirs("/s").homeFor("0123456789abcdef"); got != base+"/homes/0123456789abcdef" {
+			t.Errorf("%s の homeFor = %q", p.name, got)
 		}
 	}
 	// どのエージェントの dir も、互いに別で、sessions と衝突しない (エージェント名は、path の 1 要素)。
 	seen := map[string]string{}
 	for _, p := range agents {
 		d := p.dirs("/s")
-		for _, dir := range []string{d.home, d.loginWork, d.loginRun} {
+		for _, dir := range []string{d.auth, d.homes, d.loginHome, d.loginWork, d.loginRun} {
 			if prev, dup := seen[dir]; dup {
 				t.Errorf("%s の %s が、%s と同じ", p.name, dir, prev)
 			}
@@ -639,9 +640,10 @@ func TestAgentTable(t *testing.T) {
 				}
 			}
 			d := p.dirs("/s")
-			if !strings.HasPrefix(d.home, "/s/agents/"+p.name+"/") {
+			if !strings.HasPrefix(d.auth, "/s/agents/"+p.name+"/") || !strings.HasPrefix(d.homes, "/s/agents/"+p.name+"/") {
 				t.Errorf("dirs = %+v", d)
 			}
+			checkCreds(t, p)
 			if i == 0 && defaultAgent().name != p.name {
 				t.Errorf("表の先頭 %q が、既定のエージェント %q でない", p.name, defaultAgent().name)
 			}
@@ -789,5 +791,50 @@ func TestUserMessagesStayShort(t *testing.T) {
 		denied: []deniedTarget{{"registry.npmjs.org:443", 1}, {"github.com:443", 2}, {"evil.example:443", 1}}})
 	if n := strings.Count(w.String(), "\n"); n > 10 {
 		t.Errorf("終了後の表示が長い (%d 行):\n%s", n, w.String())
+	}
+}
+
+// checkCreds は、profile の、認証情報の共有 (creds) と、種 (seed) のデータの妥当性を確かめる。エージェントを足したときに、書き間違いを見つける。
+func checkCreds(t *testing.T, p agentProfile) {
+	t.Helper()
+	// 認証用ディレクトリを指す環境変数は、共通の環境変数を上書きせず、値は jailAuth の中 (檻の中の path)。bwrap も受け付ける。
+	for _, e := range p.creds.env {
+		if slices.Contains([]string{"HOME", "PATH", "TERM", "LANG", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}, e.Key) {
+			t.Errorf("%s の creds.env %s は、共通の環境変数 (エージェントが上書きできない)", p.name, e.Key)
+		}
+		if e.Value != jailAuth && !strings.HasPrefix(e.Value, jailAuth+"/") {
+			t.Errorf("%s の creds.env %s の値 %q が、認証用ディレクトリ (%s) の中を指さない", p.name, e.Key, e.Value, jailAuth)
+		}
+		if slices.ContainsFunc(p.env, func(o bwrap.EnvVar) bool { return o.Key == e.Key }) {
+			t.Errorf("%s の creds.env %s が、env と重なる", p.name, e.Key)
+		}
+	}
+	if _, err := (bwrap.Spec{Host: bwrap.Host{Home: "/home/u"}, Env: append(slices.Clone(p.env), p.creds.env...), Cmd: []string{"/bin/true"}}).Argv(); err != nil {
+		t.Errorf("%s の env・creds.env を bwrap が拒否する: %v", p.name, err)
+	}
+	// symlink: linkDir は HOME の中の相対 path、files は名前 1 つ (重ならない)。linkDir と files は、両方あるか、両方無い。
+	if (p.creds.linkDir == "") != (len(p.creds.files) == 0) {
+		t.Errorf("%s: creds の linkDir (%q) と files (%v) は、両方書くか、両方書かない", p.name, p.creds.linkDir, p.creds.files)
+	}
+	if p.creds.linkDir != "" && !filepath.IsLocal(p.creds.linkDir) {
+		t.Errorf("%s の creds.linkDir %q が、HOME の外を指す", p.name, p.creds.linkDir)
+	}
+	names := map[string]bool{}
+	for _, f := range p.creds.files {
+		if f == "" || f != filepath.Base(f) || f == "." || f == ".." || names[f] {
+			t.Errorf("%s の creds.files %q が、名前 1 つでない・重なっている", p.name, f)
+		}
+		names[f] = true
+	}
+	// 種: HOME の中の相対 path で、重ならない。認証情報の symlink と重ならない。
+	seenSeed := map[string]bool{}
+	for _, f := range p.seed {
+		if !filepath.IsLocal(f.path) || f.content == "" || seenSeed[f.path] {
+			t.Errorf("%s の seed %q が、HOME の外を指す・中身が空・重なっている", p.name, f.path)
+		}
+		seenSeed[f.path] = true
+		if p.creds.linkDir != "" && names[filepath.Base(f.path)] && filepath.Dir(f.path) == filepath.Clean(p.creds.linkDir) {
+			t.Errorf("%s の seed %q が、認証情報の symlink と重なる", p.name, f.path)
+		}
 	}
 }
