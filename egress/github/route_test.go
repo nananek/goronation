@@ -73,6 +73,8 @@ func TestParsePullRouteRejects(t *testing.T) {
 		{"POST", base + "-o/r/pulls"},
 		{"POST", base + strings.Repeat("a", 40) + "/r/pulls"},
 		{"POST", base + "o/" + strings.Repeat("a", 101) + "/pulls"},
+		{"POST", "o/r/pulls"},
+		{"POST", "repos/o/r/pulls"},
 		{"POST", "/api/repos/o/r/pulls"},
 		{"POST", "/GITHUB-API/repos/o/r/pulls"},
 		{"POST", "/github-apix/repos/o/r/pulls"},
