@@ -106,15 +106,13 @@ func New(cfg Config) (*Handler, error) {
 	}, nil
 }
 
-// checkPolicy は、p が、git.NewPolicy(p.Repo, p.Session) と同じ値か確かめる (構造体リテラルで作った、検査を経ていない
+// checkPolicy は、p の Repo・Session が、git.NewPolicy の検査を通るか確かめる (構造体リテラルで作った、検査を経ていない
 // Policy を断る。攻撃者視点レビュー L2: CheckRef はリテラルの Policy も信用してしまうため、この Handler の入口で締める)。
+// git.Policy は Repo と Session だけを持つので、NewPolicy(p.Repo, p.Session) が通れば、返る値は必ず p と同じになる
+// (値を比べ直す意味は無い。通るかどうかだけを見る)。
 func checkPolicy(p git.Policy) error {
-	valid, err := git.NewPolicy(p.Repo, p.Session)
-	if err != nil {
+	if _, err := git.NewPolicy(p.Repo, p.Session); err != nil {
 		return fmt.Errorf("git.NewPolicy を通らない: %w", err)
-	}
-	if valid != p {
-		return fmt.Errorf("git.NewPolicy の結果と一致しない (構造体リテラルで作った疑いがある)")
 	}
 	return nil
 }

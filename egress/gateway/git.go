@@ -101,7 +101,7 @@ func (h *Handler) relayGit(w http.ResponseWriter, r *http.Request, route git.Rou
 		return
 	}
 	defer resp.Body.Close()
-	if resp.ContentLength > 0 && resp.ContentLength > h.maxPack {
+	if tooLargeResponse(resp.ContentLength, h.maxPack) {
 		h.rejectGit(w, route.Repo, op, http.StatusBadGateway, "response-too-large")
 		return
 	}
@@ -118,3 +118,8 @@ func (h *Handler) relayGit(w http.ResponseWriter, r *http.Request, route git.Rou
 	}
 	h.logAudit(rec)
 }
+
+// tooLargeResponse は、上流が Content-Length を返しているとき (cl > 0)、それが上限 (cap) を超えているか。
+// 上流が Content-Length を返さない (chunked。cl <= 0) ときは、事前には分からないので false (io.LimitReader が、実際の
+// 転送量を上限で切る)。
+func tooLargeResponse(cl, cap int64) bool { return cl > 0 && cl > cap }

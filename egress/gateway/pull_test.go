@@ -163,6 +163,44 @@ func TestServePullRejectsOutOfPolicy(t *testing.T) {
 	}
 }
 
+// TestServePullBadRouteIsNotRepoNotAllowed は、経路そのものが壊れている (method が違う) ときの状態コードが、
+// repo-not-allowed (403) にすり替わらず、経路の拒否 (400) のままであることを確かめる。
+func TestServePullBadRouteIsNotRepoNotAllowed(t *testing.T) {
+	allowLoopback(t)
+	api := newFakeAPI()
+	srv := api.Server(t)
+	defer srv.Close()
+	src := &staticSource{name: CredentialName, token: testToken, ok: true}
+	h := pullHandler(t, srv.URL, src)
+
+	w := doRequest(t, h, "GET", pullTarget, nil, nil) // POST でなく GET: ParsePullRoute が断る (repo は分からない)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d (経路の誤りは 400 のはず。403 なら、経路のエラーを読まずに、本文の repo 検査まで進んでいる)", w.Code)
+	}
+	if len(api.Hits()) != 0 {
+		t.Fatal("経路が壊れているのに、上流に届いた")
+	}
+}
+
+// TestServePullUpstreamStatusChecked は、上流が非 2xx を返したとき、本文がたまたま (number・html_url を持つ)
+// 正しい形でも、201 にせず、502 のままであることを確かめる (状態コードでの判定を、飛ばしていないか)。
+func TestServePullUpstreamStatusChecked(t *testing.T) {
+	allowLoopback(t)
+	api := newFakeAPI()
+	api.pullStatus = 500
+	api.pullBody = `{"number":5,"html_url":"https://github.com/o/r/pull/5","draft":true}`
+	srv := api.Server(t)
+	defer srv.Close()
+	src := &staticSource{name: CredentialName, token: testToken, ok: true}
+	h := pullHandler(t, srv.URL, src)
+
+	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x","base":"main"}`)
+	w := doRequest(t, h, "POST", pullTarget, body, nil)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s (500 なのに、本文の形が正しいからと 201 にしていないか)", w.Code, w.Body)
+	}
+}
+
 func TestServePullOtherRepoRejected(t *testing.T) {
 	allowLoopback(t)
 	api := newFakeAPI()

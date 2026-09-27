@@ -14,18 +14,19 @@ import (
 
 // fakeGit は、偽の git 上流。受けた要求を記録し、canned の応答を返す。
 type fakeGit struct {
-	mu       sync.Mutex
-	hits     []fakeGitHit
-	advOK    []byte // info/refs の応答本文
-	rpOK     []byte // receive-pack の応答本文 (report-status のふり)
-	upOK     []byte // upload-pack の応答本文
-	status   int    // 0 なら 200
-	redirect bool
+	mu           sync.Mutex
+	hits         []fakeGitHit
+	advOK        []byte // info/refs の応答本文
+	rpOK         []byte // receive-pack の応答本文 (report-status のふり)
+	upOK         []byte // upload-pack の応答本文
+	status       int    // 0 なら 200
+	redirect     string // 空でなければ、この URL へ 302 で redirect する
+	chunkedBytes int    // 0 より大きければ、advOK の代わりに、この長さを Content-Length 無しで (chunked で) 書く
 }
 
 type fakeGitHit struct {
-	Method, Path, Query, ContentType, Auth string
-	Body                                   []byte
+	Method, Path, Query, ContentType, Auth, GitProtocol string
+	Body                                                []byte
 }
 
 func newFakeGit() *fakeGit {
@@ -41,14 +42,24 @@ func (f *fakeGit) Server(t testing.TB) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
-		f.hits = append(f.hits, fakeGitHit{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, ContentType: r.Header.Get("Content-Type"), Auth: r.Header.Get("Authorization"), Body: body})
+		f.hits = append(f.hits, fakeGitHit{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, ContentType: r.Header.Get("Content-Type"), Auth: r.Header.Get("Authorization"), GitProtocol: r.Header.Get("Git-Protocol"), Body: body})
 		f.mu.Unlock()
-		if f.redirect {
-			http.Redirect(w, r, "https://evil.invalid/x", http.StatusFound)
+		if f.redirect != "" {
+			http.Redirect(w, r, f.redirect, http.StatusFound)
 			return
 		}
 		if f.status != 0 {
 			w.WriteHeader(f.status)
+			return
+		}
+		if f.chunkedBytes > 0 {
+			fl, _ := w.(http.Flusher)
+			for i := 0; i < f.chunkedBytes; i += 64 {
+				w.Write(bytes.Repeat([]byte{'x'}, 64))
+				if fl != nil {
+					fl.Flush() // Content-Length を確定させず、chunked にする
+				}
+			}
 			return
 		}
 		switch {
@@ -264,8 +275,12 @@ func TestServeGitCredentialMissing(t *testing.T) {
 
 func TestServeGitNoRedirect(t *testing.T) {
 	allowLoopback(t)
+	target := newFakeGit() // リダイレクトの先 (追ってしまうと、ここが応答する)
+	targetSrv := target.Server(t)
+	defer targetSrv.Close()
+
 	up := newFakeGit()
-	up.redirect = true
+	up.redirect = targetSrv.URL + "/x"
 	srv := up.Server(t)
 	defer srv.Close()
 	src := &staticSource{name: CredentialName, token: testToken, ok: true}
@@ -274,6 +289,9 @@ func TestServeGitNoRedirect(t *testing.T) {
 	w := doRequest(t, h, "GET", prefix+"info/refs?service=git-upload-pack", nil, nil)
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("リダイレクトを追った・別の状態: status=%d body=%s", w.Code, w.Body)
+	}
+	if len(target.Hits()) != 0 {
+		t.Fatalf("リダイレクトの先に、実際に届いた (追ってしまった): %d 件", len(target.Hits()))
 	}
 }
 
@@ -291,6 +309,70 @@ func TestServeGitDialCheckIsWired(t *testing.T) {
 	}
 	if len(up.Hits()) != 0 {
 		t.Fatal("禁止した IP なのに、上流に届いた")
+	}
+}
+
+// TestServeGitPackTooLargeDuringCommands は、コマンド部そのものを読んでいる間 (pkt-line のパース中) に、大きさの上限を
+// 超えたときも、413 になることを確かめる (relayGit の client.Do の間に超える TestServeGitPackTooLarge とは別の経路)。
+func TestServeGitPackTooLargeDuringCommands(t *testing.T) {
+	allowLoopback(t)
+	up := newFakeGit()
+	srv := up.Server(t)
+	defer srv.Close()
+	src := &staticSource{name: CredentialName, token: testToken, ok: true}
+	cfg := testConfig(t, git.Repo{Owner: "o", Name: "r"}, testSession)
+	cfg.GitBaseURL, cfg.Credentials, cfg.MaxPackBytes = srv.URL, src, 10 // "create" の 1 行目より、ずっと小さい
+	h := newHandler(t, cfg)
+
+	w := doRequest(t, h, "POST", prefix+"git-receive-pack", fixture(t, "create"), nil)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body)
+	}
+	if len(up.Hits()) != 0 {
+		t.Fatal("コマンド部すら読み切れない要求が、上流に届いた")
+	}
+}
+
+// TestServeGitResponseSizeCapped は、上流が Content-Length を宣言せず (chunked)、上限を超える量を送っても、
+// 檻に渡す量が、上限を超えないことを確かめる。
+func TestServeGitResponseSizeCapped(t *testing.T) {
+	allowLoopback(t)
+	up := newFakeGit()
+	up.chunkedBytes = 2000
+	srv := up.Server(t)
+	defer srv.Close()
+	src := &staticSource{name: CredentialName, token: testToken, ok: true}
+	cfg := testConfig(t, git.Repo{Owner: "o", Name: "r"}, testSession)
+	cfg.GitBaseURL, cfg.Credentials, cfg.MaxPackBytes = srv.URL, src, 100
+	h := newHandler(t, cfg)
+
+	w := doRequest(t, h, "GET", prefix+"info/refs?service=git-upload-pack", nil, nil)
+	if w.Code != 200 {
+		t.Fatalf("status=%d", w.Code)
+	}
+	if w.Body.Len() > 100 {
+		t.Fatalf("応答が、上限 (100) を超えて、檻に渡った: %d バイト", w.Body.Len())
+	}
+}
+
+// TestServeGitGitProtocolHeader は、Git-Protocol ヘッダが、決めた 2 つの値だけ、上流に転送されることを確かめる。
+func TestServeGitGitProtocolHeader(t *testing.T) {
+	allowLoopback(t)
+	up := newFakeGit()
+	srv := up.Server(t)
+	defer srv.Close()
+	src := &staticSource{name: CredentialName, token: testToken, ok: true}
+	h := gitHandler(t, srv.URL, src)
+
+	for _, tc := range []struct{ sent, want string }{
+		{"version=2", "version=2"}, {"version=1", "version=1"}, {"version=99", ""}, {"version=2; extra", ""}, {"", ""},
+	} {
+		doRequest(t, h, "GET", prefix+"info/refs?service=git-upload-pack", nil, map[string]string{"Git-Protocol": tc.sent})
+		hits := up.Hits()
+		last := hits[len(hits)-1]
+		if last.GitProtocol != tc.want {
+			t.Errorf("Git-Protocol %q を送ったら、上流には %q が届くはず (実際 %q)", tc.sent, tc.want, last.GitProtocol)
+		}
 	}
 }
 

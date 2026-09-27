@@ -117,10 +117,13 @@ func TestServeBothRejectsOther(t *testing.T) {
 	})
 	go ServeBoth(l, connect, other, "/git/", "/github-api/")
 
+	// "/git/../etc" のような、接頭辞の後の中身までは、ここでは見ない (文字列の前方一致だけ。".." などの意味は、
+	// 渡した先の git.ParseRoute の仕事。PR ① の route_test.go で確かめている)。
 	for _, line := range []string{
-		"GET /other/path HTTP/1.1",
-		"POST /git/../etc HTTP/1.1",
-		"PUT /git/github.com/o/r.git/git-receive-pack HTTP/1.1",
+		"GET /other/path HTTP/1.1\r\nHost: x",
+		"GET /gitx HTTP/1.1\r\nHost: x", // 接頭辞 "/git/" に前方一致しない (紛らわしい名前)
+		"PUT /git/github.com/o/r.git/git-receive-pack HTTP/1.1\r\nHost: x\r\nContent-Length: 0",
+		"DELETE /github-api/repos/o/r/pulls HTTP/1.1\r\nHost: x",
 		"GARBAGE",
 		"",
 	} {
@@ -128,6 +131,21 @@ func TestServeBothRejectsOther(t *testing.T) {
 		if !strings.HasPrefix(status, "HTTP/1.1 400") {
 			t.Errorf("%q: status = %q", line, status)
 		}
+	}
+}
+
+func TestHasAnyPrefix(t *testing.T) {
+	if hasAnyPrefix("/git/x", nil) {
+		t.Error("prefixes が空なら、何にも一致しないはず")
+	}
+	if hasAnyPrefix("/git/x", []string{}) {
+		t.Error("prefixes が空 (nil でない) でも、何にも一致しないはず")
+	}
+	if !hasAnyPrefix("/git/x", []string{"/other/", "/git/"}) {
+		t.Error("一致するはず")
+	}
+	if hasAnyPrefix("/gitx", []string{"/git/"}) {
+		t.Error("接頭辞でない一致 (/gitx が /git/ を含む) を、一致とした")
 	}
 }
 

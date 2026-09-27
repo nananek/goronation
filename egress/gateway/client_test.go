@@ -2,8 +2,28 @@ package gateway
 
 import (
 	"net/netip"
+	"strings"
 	"testing"
 )
+
+func TestTooLargeResponse(t *testing.T) {
+	cases := []struct {
+		cl, cap int64
+		want    bool
+	}{
+		{0, 100, false}, // chunked (大きさ不明) は、事前には断らない
+		{-1, 100, false},
+		{50, 100, false},
+		{100, 100, false}, // ちょうどは通す
+		{101, 100, true},
+		{1 << 40, 100, true},
+	}
+	for _, c := range cases {
+		if got := tooLargeResponse(c.cl, c.cap); got != c.want {
+			t.Errorf("tooLargeResponse(%d, %d) = %v, 期待 %v", c.cl, c.cap, got, c.want)
+		}
+	}
+}
 
 func TestDialControl(t *testing.T) {
 	orig := forbiddenAddr
@@ -17,8 +37,11 @@ func TestDialControl(t *testing.T) {
 		t.Fatal("forbiddenAddr が true なのに、通した")
 	}
 	forbiddenAddr = orig
-	if err := dialControl("tcp", "not-an-addr", nil); err == nil {
-		t.Fatal("解釈できない address を通した")
+	// 解釈できない address は、forbiddenAddr を呼ぶ前に、専用の理由で断る (forbiddenAddr の判定に、たまたま救われない
+	// ことを、別の error の文言で確かめる)。
+	err := dialControl("tcp", "not-an-addr", nil)
+	if err == nil || !strings.Contains(err.Error(), "解釈できない") {
+		t.Fatalf("解釈できない address のエラーが、専用の文言でない: %v", err)
 	}
 	// 実際の既定 (egress.ForbiddenAddr) が、loopback を禁止することの確認 (allowLoopback を呼ばない、素の状態)。
 	if err := dialControl("tcp", "127.0.0.1:443", nil); err == nil {
