@@ -1,4 +1,4 @@
-// Package gateway は、egress の git smart-HTTP と PR 作成のエンドポイント。檻の git・goro pr create の要求を、
+// Package gateway は、egress の git smart-HTTP と PR 作成のエンドポイントで、檻の git・goro pr create の要求を、
 // egress/git・egress/github の検査に通してから、ホストの資格情報を付けて GitHub へ中継する http.Handler を提供する。
 //
 // 経路・repo・本文の検査 (git.Policy.AuthorizedRoute・github.ParsePull) を必ず通した Route・Pull だけを中継する。
