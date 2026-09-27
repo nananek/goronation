@@ -208,6 +208,8 @@ func TestAuthUsageErrors(t *testing.T) {
 	for name, args := range map[string][]string{
 		"名前なし": {}, "オプションだけ": {"--state-dir", state}, "未知の名前": {"gitlab"}, "余計な引数": {"github", "extra"}, "名前が形でない": {"../x"},
 		"不明なオプション": {"github", "--token", authTok}, "値をオプションで渡す": {"--token=" + authTok},
+		"NAME の後ろに値 (貼り間違い)": {"github", authTok}, "NAME の位置に値 (貼り間違い)": {authTok},
+		"オプション名の位置に値": {"github", "-" + authTok}, "--state-dir の後ろの余りに値": {"github", "--state-dir", state, authTok},
 	} {
 		var out, errb bytes.Buffer
 		code := runAuth(args, pipeStdin(t, authTok+"\n"), &out, &errb)
@@ -383,6 +385,21 @@ func TestAuthNeverPrintsTheToken(t *testing.T) {
 			return auth(t, f, authTok+"\n", "github")
 		},
 		"形が違う": func() (int, string, string) { return auth(t, t.TempDir(), authTok[:20]+"\n", "github") },
+		"NAME の後ろに値 (貼り間違い)": func() (int, string, string) {
+			var o, e bytes.Buffer
+			c := runAuth([]string{"github", authTok}, pipeStdin(t, ""), &o, &e)
+			return c, o.String(), e.String()
+		},
+		"NAME の位置に値 (貼り間違い)": func() (int, string, string) {
+			var o, e bytes.Buffer
+			c := runAuth([]string{authTok}, pipeStdin(t, ""), &o, &e)
+			return c, o.String(), e.String()
+		},
+		"オプション名の位置に値": func() (int, string, string) {
+			var o, e bytes.Buffer
+			c := runAuth([]string{"github", "-" + authTok}, pipeStdin(t, ""), &o, &e)
+			return c, o.String(), e.String()
+		},
 	} {
 		code, stdout, stderr := run()
 		if leaksAuth(stdout+stderr) != "" {
