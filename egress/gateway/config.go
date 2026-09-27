@@ -21,9 +21,11 @@ const (
 	DefaultPRQuota      = 5
 	defaultGitBaseURL   = "https://github.com"
 	defaultAPIBaseURL   = "https://api.github.com"
-	// maxResponseBytes は、PR 作成・repo 情報・receive-pack の応答として読む大きさの上限 (どれも小さい JSON か report-status)。
+	// maxResponseBytes は、PR 作成・repo 情報の応答を読む大きさの上限。どちらも、小さい JSON のはず (number・html_url・
+	// default_branch だけ)。github.MaxResponseBytes (4 MiB。ParseResult・DefaultBranch 自身の上限) より、意図して小さく
+	// する: 同じ値だと、読み切ってから向こうの検査に断らせるのと変わらず、読む量そのものを絞る意味が無くなるため。
 	// fetch・push の本文 (pack) 自体の上限は、Config.MaxPackBytes (別)。
-	maxResponseBytes = 4 << 20
+	maxResponseBytes = 256 << 10
 )
 
 // Config は、Handler の設定。1 つの Handler は、1 つの Push (repo とセッション) だけを扱う (goro run 1 回に対応)。

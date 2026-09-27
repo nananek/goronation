@@ -278,6 +278,26 @@ func TestServePullBadUpstreamResponse(t *testing.T) {
 	}
 }
 
+// TestServePullResponseSizeCapped は、上流の応答を読む量が、gateway 自身の上限 (maxResponseBytes。github.MaxResponseBytes
+// より意図して小さい) で切られることを確かめる。上限を超えた分を読んでいたら、余分な "junk" フィールドの分も読み切れて、
+// (github.ParseResult 自身は 4 MiB まで許すので) 正しい PR の応答として通ってしまう。
+func TestServePullResponseSizeCapped(t *testing.T) {
+	allowLoopback(t)
+	api := newFakeAPI()
+	junk := strings.Repeat("a", maxResponseBytes) // maxResponseBytes は超えるが、github.MaxResponseBytes (4 MiB) は超えない
+	api.pullBody = `{"number":5,"html_url":"https://github.com/o/r/pull/5","draft":true,"junk":"` + junk + `"}`
+	srv := api.Server(t)
+	defer srv.Close()
+	src := &staticSource{name: CredentialName, token: testToken, ok: true}
+	h := pullHandler(t, srv.URL, src)
+
+	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x","base":"main"}`)
+	w := doRequest(t, h, "POST", pullTarget, body, nil)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s (上限を超えて読み切り、余分な本文が正しい PR の応答として通っていないか)", w.Code, w.Body)
+	}
+}
+
 func TestServePullCredentialMissing(t *testing.T) {
 	allowLoopback(t)
 	api := newFakeAPI()

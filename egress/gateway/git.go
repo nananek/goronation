@@ -42,7 +42,7 @@ func (h *Handler) serveReceivePack(w http.ResponseWriter, r *http.Request, route
 	if err != nil {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
-			h.rejectGit(w, route.Repo, "receive-pack", http.StatusRequestEntityTooLarge, "pack-too-large")
+			h.rejectGit(w, route.Repo, "receive-pack", gitStatus(git.CodeTooLarge), "pack-too-large")
 			return
 		}
 		h.rejectGit(w, route.Repo, "receive-pack", gitStatus(git.Reason(err)), orInternal(git.Reason(err)))
@@ -95,7 +95,7 @@ func (h *Handler) relayGit(w http.ResponseWriter, r *http.Request, route git.Rou
 		status, reason := http.StatusBadGateway, "upstream"
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) { // pack (body の続き) を送っている間に、上限を超えた
-			status, reason = http.StatusRequestEntityTooLarge, "pack-too-large"
+			status, reason = gitStatus(git.CodeTooLarge), "pack-too-large"
 		}
 		h.rejectGit(w, route.Repo, op, status, reason)
 		return

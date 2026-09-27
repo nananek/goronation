@@ -376,6 +376,29 @@ func TestServeGitGitProtocolHeader(t *testing.T) {
 	}
 }
 
+// TestServeGitCommandSectionTooLarge は、http.MaxBytesReader の上限 (h.maxPack) に届く前に、egress/git 自身の
+// コマンド部の上限 (git.Limits{} の既定 16 KiB) を超えたときも、413 になることを確かめる (gitStatus(git.CodeTooLarge)
+// の経路。TestServeGitPackTooLarge・…DuringCommands は、どちらも *http.MaxBytesError の経路で、この経路を通らない)。
+func TestServeGitCommandSectionTooLarge(t *testing.T) {
+	allowLoopback(t)
+	up := newFakeGit()
+	srv := up.Server(t)
+	defer srv.Close()
+	src := &staticSource{name: CredentialName, token: testToken, ok: true}
+	h := gitHandler(t, srv.URL, src) // MaxPackBytes は既定 (512 MiB) のまま: http 側の上限では、まだ切れない
+
+	// 1 個の pkt-line で、宣言する長さだけを大きくする (中身は "old new ref" の形でなくてよい: 中身を見る前に、
+	// 大きさの予算で断られる)。
+	huge := "4e20" + strings.Repeat("x", 0x4e20-4) // 0x4e20 = 20000 バイト (16 KiB の予算を、これ 1 本で超える)
+	w := doRequest(t, h, "POST", prefix+"git-receive-pack", []byte(huge), nil)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body)
+	}
+	if len(up.Hits()) != 0 {
+		t.Fatal("コマンド部の予算を超えた要求が、上流に届いた")
+	}
+}
+
 func TestServeGitUpstreamErrorStatus(t *testing.T) {
 	allowLoopback(t)
 	up := newFakeGit()

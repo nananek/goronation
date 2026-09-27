@@ -21,7 +21,7 @@ func (h *Handler) servePull(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, github.MaxRequestBytes))
 	if err != nil {
-		h.rejectPull(w, repo, http.StatusRequestEntityTooLarge, "too-large")
+		h.rejectPull(w, repo, pullStatus(github.CodeTooLarge), "too-large")
 		return
 	}
 	pull, err := h.pull.ParsePull(repo, body)
@@ -41,7 +41,7 @@ func (h *Handler) servePull(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.quota.Take(); err != nil {
-		h.rejectPull(w, repo, http.StatusTooManyRequests, orInternal(github.Reason(err)))
+		h.rejectPull(w, repo, pullStatus(github.Reason(err)), orInternal(github.Reason(err)))
 		return
 	}
 	out, err := pull.JSON()
