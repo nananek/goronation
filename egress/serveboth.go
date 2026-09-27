@@ -48,8 +48,14 @@ func ServeBoth(l net.Listener, connect *Server, other http.Handler, prefixes ...
 //   - ConnState: dispatch が connect.sem から取った 1 枠を、この接続が本当に終わった (StateClosed・
 //     StateHijacked) ときに返す。serveOneConn の httpSrv.Serve は goroutine を起こすとすぐ戻るため、
 //     その戻りを「終わった」合図にはできない。
+//   - keep-alive を無効にする (SetKeepAlivesEnabled(false))。本文の絶対締め切りは要求ごとに決まるため、
+//     1 本の接続で複数の要求を繋げれば、その締め切りを何度でもすり抜けられる (「絶対」が接続単位でなく
+//     要求単位である限り、堂々巡りになる)。1 接続 = 1 要求にすれば、次の要求には必ず新しい接続が要り、
+//     新しい接続は必ず新しい connect.sem の枠と accept 処理を要するため、既存の防御 (MaxConns・
+//     ヘッダの締め切り・本文の絶対締め切り) がそのまま効く。git smart-HTTP・PR 作成のどちらも、
+//     1 接続 1 要求で機能上の問題は無い (git クライアントは非 persistent 接続でも正しく動く)。
 func newOtherHTTPServer(connect *Server, other http.Handler) *http.Server {
-	return &http.Server{
+	srv := &http.Server{
 		Handler:           stallGuardBody(other, connect.cfg),
 		ReadHeaderTimeout: connect.cfg.HeaderTimeout,
 		IdleTimeout:       connect.cfg.IdleTimeout,
@@ -59,6 +65,8 @@ func newOtherHTTPServer(connect *Server, other http.Handler) *http.Server {
 			}
 		},
 	}
+	srv.SetKeepAlivesEnabled(false)
+	return srv
 }
 
 // stallGuardBody は、h に渡す前に、要求の本文 (r.Body) を、締め切りを持つ io.ReadCloser (stallBody) に

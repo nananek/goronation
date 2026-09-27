@@ -19,13 +19,13 @@
 //   - size: pack は Config.MaxPackBytes (既定 512 MiB) を http.MaxBytesReader で強制。PR の要求・応答にも上限。
 //   - token: Authorization は、中継の直前に Credentials.Token で取り、値は応答・error・監査に出さない。
 //   - quota: PR の作成は、要求ごとに Quota.Take を通す。
+//   - no-keep-alive: git/PR 経路は 1 接続 1 要求 (keep-alive を切る)。次の要求は必ず新しい接続・
+//     connect.sem の枠を要するため、絶対締め切り・MaxConns を、要求の繋ぎ直しで回避できない。
 //
 // # 限界
 //
 //   - Authorization の形式 (git は Basic の x-access-token・API は Bearer) を、GitHub の実機で確かめていない。
-//   - 読む側の締め切り (ヘッダ・本文・keep-alive の空き・同時接続数) は、egress.ServeBoth がこの層で持つ。
-//     本文は Config.MaxBodyBytes から逆算した絶対の締め切りが主 (進捗ベースの延長だけでは、少しずつでも
-//     進めば止まらない trickle を防げないため。MaxBodyBytes は、呼び手が MaxPackBytes と揃えること・
-//     自動では同期しない)。書く側の締め切り・upload-pack (fetch) の本文検査は、まだ無い。
+//   - 読む側の締め切り (ヘッダ・本文の絶対締め切り・同時接続数) は、この層が持つ (MaxBodyBytes は、
+//     呼び手が MaxPackBytes と揃えること・自動では同期しない)。書く側・upload-pack (fetch) の本文検査は、まだ無い。
 //   - 1 つの listener での CONNECT との共存は egress.ServeBoth が行うが、goro run への配線は、この package の外 (PR ③)。
 package gateway

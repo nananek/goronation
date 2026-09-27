@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -418,6 +419,114 @@ func TestServeBothHTTPBodyTrickleEventuallyCutOff(t *testing.T) {
 	}
 	if !cutOff {
 		t.Fatalf("実効スループットがほぼゼロの接続が、絶対の締め切り (%s) の 4 倍待っても切られなかった (トリクルによる stall guard の回避)", wantAbsolute)
+	}
+}
+
+// TestServeBothOtherKeepAliveDisabled は、git/PR 経路が keep-alive を無効にしていて、1 回の要求・応答の
+// 後、接続が (次の要求を待たずに) 閉じられることを、直接確かめる。
+func TestServeBothOtherKeepAliveDisabled(t *testing.T) {
+	connect := New(Config{Audit: io.Discard})
+	l := newTestListener(t)
+	other := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	go ServeBoth(l, connect, other, "/git/")
+
+	c, err := net.DialTimeout("tcp", l.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.Write([]byte("GET /git/x HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if !resp.Close {
+		t.Fatal("応答に Connection: close が付いていない (keep-alive が無効になっていない)")
+	}
+	// 同じ接続に、2 本目の要求を送ってみる。keep-alive が無効なら、サーバは読まずに閉じているはず。
+	c.SetReadDeadline(time.Now().Add(time.Second))
+	_, err = c.Write([]byte("GET /git/y HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n"))
+	if err == nil {
+		buf := make([]byte, 16)
+		n, rerr := c.Read(buf)
+		if rerr == nil && n > 0 {
+			t.Fatalf("1 本目の応答の後、同じ接続で 2 本目の要求に応答があった (keep-alive が無効になっていない): %q", buf[:n])
+		}
+	}
+}
+
+// TestServeBothHTTPChainedTinyRequestsEvadeAbsoluteDeadline は、攻撃者視点レビュー (attack-review-abd50ab)
+// の再現テスト (B4)。maxBodyReadDuration の絶対締め切りは要求単位であり、TCP 接続単位ではない。
+// keep-alive が有効なままなら、小さい Content-Length のまま、絶対締め切りの直前に本文を完成させては
+// 即座に次の要求を送る、を繰り返すだけで、1 本の接続を、単発の絶対締め切りの何倍にも (実測 4.8 倍・
+// 理論上無制限に) 実効スループットほぼゼロで握り続けられる。keep-alive を無効にしたことで (この
+// package の TestServeBothOtherKeepAliveDisabled が示す通り)、次の要求には必ず新しい接続が要るため、
+// この繋ぎ直しの余地自体が無くなっているはず。
+func TestServeBothHTTPChainedTinyRequestsEvadeAbsoluteDeadline(t *testing.T) {
+	const idleTimeout = 20 * time.Millisecond
+	const maxBodyBytes = 32 << 10 // 32 KiB → 絶対締め切り ≈ 32768/65536 秒 = 500ms
+	wantAbsolute := time.Duration(maxBodyBytes) * time.Second / minBodyThroughput
+	if wantAbsolute <= idleTimeout {
+		t.Fatalf("テストの前提が崩れている: 絶対の締め切り (%s) が IdleTimeout (%s) の floor 以下になっている", wantAbsolute, idleTimeout)
+	}
+
+	connect := New(Config{Audit: io.Discard, HeaderTimeout: idleTimeout, IdleTimeout: idleTimeout, MaxBodyBytes: maxBodyBytes})
+	l := newTestListener(t)
+	other := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	})
+	go ServeBoth(l, connect, other, "/git/")
+
+	c, err := net.DialTimeout("tcp", l.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	const cycles = 15
+	const bodyLen = 30         // 小さい declared Content-Length (絶対締め切りの大きさとは無関係)
+	perByte := idleTimeout / 4 // progress-floor (IdleTimeout) より、はっきり短い間隔
+	start := time.Now()
+	successfulCycles := 0
+	for cyc := 0; cyc < cycles; cyc++ {
+		req := "POST /git/x HTTP/1.1\r\nHost: x\r\nContent-Length: " + strconv.Itoa(bodyLen) + "\r\n\r\n"
+		if _, err := c.Write([]byte(req)); err != nil {
+			break
+		}
+		failed := false
+		for i := 0; i < bodyLen; i++ {
+			if _, err := c.Write([]byte{'x'}); err != nil {
+				failed = true
+				break
+			}
+			time.Sleep(perByte)
+		}
+		if failed {
+			break
+		}
+		c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		buf := make([]byte, 4096)
+		n, err := c.Read(buf)
+		if err != nil || n == 0 {
+			break
+		}
+		successfulCycles++
+	}
+	elapsed := time.Since(start)
+	t.Logf("%d/%d サイクル成功。接続の合計生存時間 = %s (単発の絶対締め切り %s の %.1f 倍)",
+		successfulCycles, cycles, elapsed, wantAbsolute, float64(elapsed)/float64(wantAbsolute))
+
+	if successfulCycles >= cycles && elapsed > 2*wantAbsolute {
+		t.Fatalf("実効スループットがほぼゼロの、小さい本文の要求を %d 回繋ぎ直しただけで、1 本の接続が"+
+			"絶対締め切り (%s) の 2 倍以上 (実測 %s) にわたって生き続けた: 絶対締め切りは要求単位で、"+
+			"接続全体の占有時間を制限しない (トリクル攻撃を、より低頻度な「要求の繋ぎ直し」に変えられるだけ)",
+			cycles, wantAbsolute, elapsed)
 	}
 }
 
