@@ -98,6 +98,22 @@ func TestParseRepo(t *testing.T) {
 	}
 }
 
+func TestCloneURL(t *testing.T) {
+	for s, want := range map[string]string{
+		"o/r":            "https://github.com/o/r.git",
+		"My-Org/.github": "https://github.com/My-Org/.github.git",
+		"a/b.c_d-e":      "https://github.com/a/b.c_d-e.git",
+	} {
+		repo, err := ParseRepo(s)
+		if err != nil {
+			t.Fatalf("%q: ParseRepo: %v", s, err)
+		}
+		if got := repo.CloneURL(); got != want {
+			t.Errorf("CloneURL(%q) = %q, want %q", s, got, want)
+		}
+	}
+}
+
 func TestCheck(t *testing.T) {
 	p := newPolicy(t)
 	c := func(old, new, ref string) Command { return Command{old, new, ref} }

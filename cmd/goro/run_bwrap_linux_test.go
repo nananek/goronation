@@ -609,6 +609,34 @@ func TestRunExitCode(t *testing.T) {
 	}
 }
 
+// TestRunPushSetsOrigin は、--push owner/repo で起動した、新しいセッションの clone に、origin (GitHub の URL)
+// が設定されることを確認する (session.Create は、clone した直後に origin を外すので、goro run --push 側で
+// 設定し直さないと、素の git fetch/pull/push origin ... が「'origin' does not exist」で失敗する、というバグの
+// 回帰テスト)。--push を付けないときは、これまでどおり origin が無いままであることも確認する。
+func TestRunPushSetsOrigin(t *testing.T) {
+	f := newRunFixture(t)
+
+	run := f.goro(t, "run", "--push", "o/r", "--repo", f.repo, "--", "exit", "0").mustOK(t)
+	id := sessionID(t, run)
+	cfg, err := os.ReadFile(filepath.Join(f.stateDir(), "sessions", id, "clone", ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cfg), `[remote "origin"]`) || !strings.Contains(string(cfg), "url = https://github.com/o/r.git") {
+		t.Fatalf("--push の clone に origin が設定されていない:\n%s", cfg)
+	}
+
+	run2 := f.goro(t, "run", "--repo", f.repo, "--", "exit", "0").mustOK(t)
+	id2 := sessionID(t, run2)
+	cfg2, err := os.ReadFile(filepath.Join(f.stateDir(), "sessions", id2, "clone", ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cfg2), "[remote") {
+		t.Errorf("--push を付けていないのに remote がある:\n%s", cfg2)
+	}
+}
+
 // legacyTIOCSTIOff は、TIOCSTI が無効 (legacy_tiocsti = 0) か。端末に直結する檻は、そうでないと、起動しない (sandbox/bwrap の仕様)。
 func legacyTIOCSTIOff() (bool, string) {
 	b, err := os.ReadFile("/proc/sys/dev/tty/legacy_tiocsti")
