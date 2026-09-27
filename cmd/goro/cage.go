@@ -54,6 +54,9 @@ type cageConfig struct {
 	// PushRefPrefix は、PushRepo が指定されたときの、許可された ref の接頭辞 (git.Policy.Prefix の値。
 	// "refs/heads/goro/<セッション>/")。
 	PushRefPrefix string
+	// MCPServers は、Agent に登録する MCP サーバー (mcp.go の mcpServersFor が作る。--push が無効なら空)。
+	// Agent.mcp が nil のエージェントには、何も注入しない。
+	MCPServers []mcpServerDef
 }
 
 // cageSpec は、c の檻の Spec を作る。標準入出力は、呼び手が足す。
@@ -77,6 +80,15 @@ func cageSpec(c cageConfig) bwrap.Spec {
 	)
 	// --no-forward-tty: 端末のシグナルは、エージェントが直接受ける。init が転送すると、二重に届く (Ctrl-C が 2 回になる)。
 	cmd := []string{jailGoro, "init", "--listen", jailProxyAddr, "--upstream", jailRun + "/" + proxySockName, "--no-forward-tty", "--", c.Agent.jailExe()}
+	// MCP サーバー (goro mcp) の登録: エージェントごとの変換 (Agent.mcp) が、起動時の引数・環境変数のどちらに
+	// するかを決める (claude は引数、opencode は環境変数。cageSpec は、その違いを知らない)。
+	var mcpArgs []string
+	var mcpEnv []bwrap.EnvVar
+	if len(c.MCPServers) > 0 && c.Agent.mcp != nil {
+		mcpArgs, mcpEnv = c.Agent.mcp(c.MCPServers)
+	}
+	cmd = append(cmd, mcpArgs...)
+	env := append(cageEnv(c.Agent, c.Term, c.PushRepo, c.PushRefPrefix), mcpEnv...)
 	return bwrap.Spec{
 		Host: c.Host,
 		Symlinks: []bwrap.Symlink{
@@ -85,7 +97,7 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		},
 		Tmpfs: []string{"/tmp"},
 		Binds: binds,
-		Env:   cageEnv(c.Agent, c.Term, c.PushRepo, c.PushRefPrefix),
+		Env:   env,
 		Chdir: jailWork,
 		Cmd:   append(cmd, c.Args...),
 		// NewSession は付けない: 端末のシグナル (Ctrl-C・リサイズ) は、フォアグラウンドの process group ごと、檻の中のエージェントにも届く。

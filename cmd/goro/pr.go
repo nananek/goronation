@@ -81,7 +81,8 @@ const prCreateTimeout = 30 * time.Second
 // JSON、失敗時は http.StatusText の短い文字列 (gateway は、それ以上の詳細を檻に返さない)。
 const maxPrCreateRespBytes = 64 << 10
 
-// runPrCreate は goro pr create の本体 (檻の中で動く)。
+// runPrCreate は goro pr create の本体 (檻の中で動く)。組み立て・送信・応答の読み取りは createPR に
+// 任せ (goro mcp の create_pr tool と共有する)、ここでは引数の解釈と、結果の表示だけを行う。
 func runPrCreate(args []string, stdout, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
 		fmt.Fprintf(stderr, "goro pr create: "+format+"\n", a...)
@@ -107,34 +108,56 @@ func runPrCreate(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "goro pr create: --title が要る")
 		return exitUsage
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), prCreateTimeout)
+	defer cancel()
+	result, err := createPR(ctx, *title, *body, *base)
+	if err != nil {
+		return fail("%s", err.Error())
+	}
+	fmt.Fprintf(stdout, "PR #%d を作った (draft): %s\n", result.Number, sanitize(result.HTMLURL))
+	return 0
+}
+
+// prCreateResult は、createPR が返す、PR 作成の結果 (成功時)。
+type prCreateResult struct {
+	Number  int
+	HTMLURL string
+}
+
+// createPR は、title (必須)・body・base (どちらも省略可) から PR 作成の要求を組み立て、egress の
+// loopback (jailAPIBase) に送る。head は、今いる repo の現在のブランチ (currentBranch)、repo は
+// GORO_PUSH_REPO から取る。goro pr create (CLI) と goro mcp の create_pr tool が、この 1 つを共有する。
+// 返す error の文言は、すでに (sanitize などで) 端末・MCP の応答に出してよい形にしてある。
+func createPR(ctx context.Context, title, body, base string) (prCreateResult, error) {
+	if strings.TrimSpace(title) == "" {
+		return prCreateResult{}, errors.New("title が空")
+	}
 	repo := os.Getenv("GORO_PUSH_REPO")
 	if repo == "" {
-		return fail("GORO_PUSH_REPO が無い (goro run --push owner/repo で起動していない)")
+		return prCreateResult{}, errors.New("GORO_PUSH_REPO が無い (goro run --push owner/repo で起動していない)")
 	}
 	if _, err := git.ParseRepo(repo); err != nil {
-		return fail("GORO_PUSH_REPO %s が owner/repo の形ではない", sanitize(repo))
+		return prCreateResult{}, fmt.Errorf("GORO_PUSH_REPO %s が owner/repo の形ではない", sanitize(repo))
 	}
 	head, err := currentBranch(".")
 	if err != nil {
-		return fail("今のブランチを読めない: %s", sanitize(err.Error()))
+		return prCreateResult{}, fmt.Errorf("今のブランチを読めない: %s", sanitize(err.Error()))
 	}
-	payload := map[string]string{"title": *title, "head": head}
-	if *body != "" {
-		payload["body"] = *body
+	payload := map[string]string{"title": title, "head": head}
+	if body != "" {
+		payload["body"] = body
 	}
-	if *base != "" {
-		payload["base"] = *base
+	if base != "" {
+		payload["base"] = base
 	}
 	reqBody, err := json.Marshal(payload)
 	if err != nil {
-		return fail("要求を組み立てられない: %v", err)
+		return prCreateResult{}, fmt.Errorf("要求を組み立てられない: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), prCreateTimeout)
-	defer cancel()
 	url := jailAPIBase + "repos/" + repo + "/pulls"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
-		return fail("要求を作れない: %v", err)
+		return prCreateResult{}, fmt.Errorf("要求を作れない: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	// http.DefaultClient (http.ProxyFromEnvironment 由来) をそのまま使う: goro init が設定する NO_PROXY に
@@ -142,28 +165,27 @@ func runPrCreate(args []string, stdout, stderr io.Writer) int {
 	// 仕組み)、この loopback 宛の要求は、二重に自分自身を proxy として経由せず、直接届く。
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fail("egress に繋げない: %v", err)
+		return prCreateResult{}, fmt.Errorf("egress に繋げない: %v", err)
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxPrCreateRespBytes+1))
 	if err != nil {
-		return fail("応答を読めない: %v", err)
+		return prCreateResult{}, fmt.Errorf("応答を読めない: %v", err)
 	}
 	if len(respBody) > maxPrCreateRespBytes {
-		return fail("応答が大きすぎる")
+		return prCreateResult{}, errors.New("応答が大きすぎる")
 	}
 	if resp.StatusCode != http.StatusCreated {
-		return fail("PR を作れなかった (状態 %d): %s", resp.StatusCode, sanitize(strings.TrimSpace(string(respBody))))
+		return prCreateResult{}, fmt.Errorf("PR を作れなかった (状態 %d): %s", resp.StatusCode, sanitize(strings.TrimSpace(string(respBody))))
 	}
 	var result struct {
 		Number  int    `json:"number"`
 		HTMLURL string `json:"html_url"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return fail("応答を JSON として読めない")
+		return prCreateResult{}, errors.New("応答を JSON として読めない")
 	}
-	fmt.Fprintf(stdout, "PR #%d を作った (draft): %s\n", result.Number, sanitize(result.HTMLURL))
-	return 0
+	return prCreateResult{Number: result.Number, HTMLURL: result.HTMLURL}, nil
 }
 
 // maxGitHeadBytes は、.git/HEAD を読む量の上限 (本物は 50 バイト前後。檻が書く敵対な中身を大量に読まない)。
