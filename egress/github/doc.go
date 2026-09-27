@@ -17,13 +17,13 @@
 //   - rebuild: 上流へは、検査した値から作り直した JSON を送る。項目の並びは固定で、受けた本文は送らない。
 //   - draft: 上流に送る draft は、常に true。檻が draft: false を送っても、上書きする。
 //   - head: Push の名前空間 (refs/heads/goro/<セッション>/ の下) のブランチだけ。fork の元への PR は、owner:branch (owner は Push の owner) の形だけ。
-//   - text: title は 256 バイト・body は 64 KiB・要求は 512 KiB まで。制御文字 (body の改行とタブを除く)・行区切り・BOM・双方向の制御文字は断る。
+//   - text: title は 256 バイト・body は 64 KiB・要求は 512 KiB まで。制御文字 (body の改行とタブを除く)・行区切り・書式制御文字 (Cf の全て: 双方向の制御・ゼロ幅・BOM・タグ文字)・見えない文字 (Default_Ignorable) は断る。異体字セレクタは、基底の文字に付くときだけ通す。
 //   - result: 檻に返すのは number と html_url だけ。html_url は、検査した number と repo から作り直す。
 //   - quota: PR の作成の試行は、Quota の回数まで。上流が断った試行も数える。
 //
 // # 限界
 //
-//   - title・body の中身 (リンク・メンション・Markdown) は見ない。見た目の紛らわしい文字 (同形異字) も、検査しない。
+//   - title・body の中身 (リンク・メンション・Markdown) は見ない。見た目の紛らわしい文字 (同形異字) も、検査しない。Cf を全て断るので、絵文字の ZWJ での連結は書けない。文字の表は Go の unicode (Unicode 15.0.0) の版に依り、それより新しい見えない文字は通る。
 //   - 上流が draft: false と答えた (draft が効かなかった) ときは、Result.Draft で知らせるだけで、作られた PR は取り消さない。
 //   - base は、branch 名として正しいことだけを見る (どの branch でもよい)。PR は提案で、base を書き換えない。
 package github

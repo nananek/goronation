@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/nananek/goronation/egress/git"
@@ -181,18 +180,17 @@ func decodeString(field string, raw json.RawMessage) (string, error) {
 	return s, nil
 }
 
-// checkText は、題・本文の文字列を検査する: 大きさ (バイト)・制御文字 (multiline なら、改行とタブは可)・
-// 行区切り (U+2028・U+2029)・BOM・双方向の制御文字 (見た目と中身を食い違わせるもの)。
+// checkText は、題・本文の文字列を検査する: 大きさ (バイト) と、forbiddenRune の文字 (制御文字・書式制御・見えない文字など) が無いこと。
 func checkText(field, s string, max int, multiline bool) error {
 	if len(s) > max {
 		return reject(CodeBadField, "%s が %d バイトを超える", field, max)
 	}
+	var prev rune
 	for _, r := range s {
-		switch {
-		case multiline && (r == '\n' || r == '\r' || r == '\t'):
-		case unicode.Is(unicode.Cc, r), r == 0x2028, r == 0x2029, r == 0xfeff, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
-			return reject(CodeBadField, "%s に、使えない文字 (制御文字・行区切り・双方向の制御) がある", field)
+		if forbiddenRune(prev, r, multiline) {
+			return reject(CodeBadField, "%s に、使えない文字 U+%04X (制御文字・書式制御・見えない文字など) がある", field, r)
 		}
+		prev = r
 	}
 	return nil
 }

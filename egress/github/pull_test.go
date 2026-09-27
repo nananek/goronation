@@ -394,6 +394,11 @@ func FuzzParsePull(f *testing.F) {
 		"", "{}", "[]", `{"title":"t","head":"` + h + `","base":"main"}`, `{"title":"t","head":"` + h + `","draft":false}`,
 		`{"title":"t","title":"u","head":"` + h + `"}`, `{"Title":"t","head":"` + h + `"}`, `{"title":"t","head":"o:` + h + `","base":"main","body":"a\nb"}`,
 		`{"title":"t\u202e","head":"` + h + `"}`, `{"title":"a","t\u0069tle":"b","head":"` + h + `"}`, `{"x":[[[[[[]]]]]]}`,
+		// 見えない文字 (UTF-8 で書く): ZWJ・LRM・ALM・タグ文字 E0041・異体字セレクタ・Hangul filler
+		"{\"title\":\"a\xe2\x80\x8db\",\"head\":\"" + h + "\"}", "{\"title\":\"a\xe2\x80\x8eb\",\"head\":\"" + h + "\"}",
+		"{\"title\":\"a\xd8\x9cb\",\"head\":\"" + h + "\"}", "{\"title\":\"a\xf3\xa0\x81\x81\",\"head\":\"" + h + "\"}",
+		"{\"title\":\"a\xef\xb8\x8f\",\"head\":\"" + h + "\"}", "{\"title\":\"\xef\xb8\x8f\",\"head\":\"" + h + "\"}",
+		"{\"title\":\"a\xe1\x85\x9fb\",\"head\":\"" + h + "\"}",
 	} {
 		f.Add(s)
 	}
@@ -432,9 +437,22 @@ func FuzzParsePull(f *testing.F) {
 		if len(pull.Title) > MaxTitleBytes || len(pull.Body) > MaxBodyBytes || strings.TrimSpace(pull.Title) == "" {
 			t.Fatalf("大きさ・空白の規則の外")
 		}
-		for _, r := range pull.Title + pull.Body {
-			if r == 0x2028 || r == 0x2029 || r == 0xfeff || r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069 || unicode.Is(unicode.Cc, r) && !(r == '\n' || r == '\r' || r == '\t') {
-				t.Fatalf("使えない文字を通した: %U", r)
+		// 文字の規則は、実装 (forbiddenRune) の集合ではなく、Unicode の性質 (一般カテゴリ・Bidi_Control・Join_Control・
+		// Default_Ignorable) から、別に書いた判定で確かめる。
+		for i, text := range []string{pull.Title, pull.Body} {
+			var prev rune
+			for _, r := range text {
+				newline := i == 1 && (r == '\n' || r == '\r' || r == '\t') // body だけ、改行とタブを許す
+				bad := !newline && unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp, unicode.Bidi_Control, unicode.Join_Control)
+				bad = bad || r == 0x2800 || unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r)
+				if unicode.Is(unicode.Variation_Selector, r) {
+					allowedRange := r >= 0xfe00 && r <= 0xfe0f || r >= 0xe0100 && r <= 0xe01ef
+					bad = bad || !allowedRange || prev == 0 || unicode.Is(unicode.Variation_Selector, prev) || unicode.IsSpace(prev)
+				}
+				if bad {
+					t.Fatalf("使えない文字を通した: %U (%s の %U の後)", r, []string{"title", "body"}[i], prev)
+				}
+				prev = r
 			}
 		}
 		if strings.ContainsAny(pull.Title, "\n\r\t") {

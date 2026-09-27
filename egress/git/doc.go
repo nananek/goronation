@@ -22,7 +22,7 @@
 // # 限界
 //
 //   - force push は、検出できない (プロトコルに旗が無く、fast-forward の判定は pack と上流の ref が要る)。害は、セッション専用の名前空間で限る。
-//   - pack の中身は見ない。大きさの上限と、時間の上限は、呼び手の責任 (この package は、コマンド部の後を読まない)。
+//   - pack の中身は見ない。大きさの上限と、時間の上限は、呼び手の責任 (コマンド部の後を読まない。例外は探りで、続きが無いことを確かめる 1 バイトを読む。それも締め切りの対象)。
 //   - upload-pack の本文 (fetch) は、検査しない。読めるのは、許可した repo の全体。
 //   - SHA-256 の repo は扱わない (TestParseCommandsCaptured の sha256)。
 //   - 上流は github.com だけ (PathPrefix)。GitHub Enterprise・SSH・dumb HTTP は扱わない。
