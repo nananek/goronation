@@ -12,6 +12,7 @@ const usage = `使い方: goro <サブコマンド> [引数...]
   run       エージェント (claude・opencode) を、檻の中の private clone の上で動かす (goro run -h)
   export    セッションの成果を bundle にして取り出す (goro export -h)
   sessions  セッションの一覧を表示する (goro sessions -h)
+  auth      資格情報 (github のトークン) を、ホストのファイルに保存する (goro auth -h)
   init      檻の中でリレーを起こし、子プロセスを起動する (goro init -h。goro run が使う)
 `
 
@@ -32,6 +33,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return runExport(args[1:], stdout, stderr)
 	case "sessions":
 		return runSessions(args[1:], stdout, stderr)
+	case "auth":
+		return runAuth(args[1:], os.Stdin, stdout, stderr)
 	case "init":
 		return runInit(args[1:], stderr)
 	case "-h", "--help":
