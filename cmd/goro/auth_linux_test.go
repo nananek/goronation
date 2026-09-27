@@ -58,7 +58,7 @@ func TestGitHubTokenForm(t *testing.T) {
 	}
 	pre := "github_pat_"
 	for name, v := range map[string]string{
-		"本物の形 (93 文字)":      "github_pat_11AAAAAAA0" + strings.Repeat("aB3_", 20) + "xyz",
+		"本物の形 (93 文字)":      "github_pat_11AAAAAAA0" + strings.Repeat("aB3_", 18), // 21 + 72 = 93 文字
 		"下限 (40 文字)":        pre + strings.Repeat("a", 29),
 		"上限 (255 文字)":       pre + strings.Repeat("Z", 244),
 		"英数字と _ だけ":         pre + "0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz",
