@@ -46,11 +46,11 @@ func dispatch(c net.Conn, connect *Server, httpSrv *http.Server, prefixes []stri
 	}
 	// 読んだ行を、接続の先頭に戻す (br に残った分は、そのまま後ろに続く)。
 	pc := &prefixedConn{Conn: c, r: io.MultiReader(bytes.NewReader(line), br)}
-	method, target, ok := requestLineParts(line)
+	method, target := requestLineParts(line)
 	switch {
 	case method == "CONNECT":
 		connect.accepted(pc)
-	case ok && (method == "GET" || method == "POST") && hasAnyPrefix(target, prefixes):
+	case (method == "GET" || method == "POST") && hasAnyPrefix(target, prefixes):
 		serveOneConn(pc, httpSrv)
 	default:
 		writeStatus(pc, 400)
@@ -58,14 +58,16 @@ func dispatch(c net.Conn, connect *Server, httpSrv *http.Server, prefixes []stri
 	}
 }
 
-// requestLineParts は、"METHOD target HTTP/1.x\r\n" から、method と target を取り出す。version の検査は、渡した先
-// (connect・http.Server) が、それぞれの流儀で行う。
-func requestLineParts(line []byte) (method, target string, ok bool) {
+// requestLineParts は、"METHOD target HTTP/1.x\r\n" から、method と target を取り出す。3 つに分かれない (target・
+// version が無い) 行は、target を空で返す (空の target は、prefixes のどれにも前方一致しないので、hasAnyPrefix が
+// 断る。「3 つに分かれたか」を、別に見る必要が無い)。version の検査は、渡した先 (connect・http.Server) が、それぞれの
+// 流儀で行う。
+func requestLineParts(line []byte) (method, target string) {
 	parts := strings.SplitN(strings.TrimRight(string(line), "\r\n"), " ", 3)
-	if len(parts) != 3 {
-		return parts[0], "", false
+	if len(parts) == 3 {
+		target = parts[1]
 	}
-	return parts[0], parts[1], true
+	return parts[0], target
 }
 
 // hasAnyPrefix は、s が、prefixes のどれかで始まるか。
