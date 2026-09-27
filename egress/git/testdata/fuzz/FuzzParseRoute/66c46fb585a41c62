@@ -1,0 +1,3 @@
+go test fuzz v1
+string("\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a")
+string("/git/github.com/0/0.git/")

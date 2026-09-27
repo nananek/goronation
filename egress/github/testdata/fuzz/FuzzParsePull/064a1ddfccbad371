@@ -1,0 +1,2 @@
+go test fuzz v1
+string("{\"title\":\"00\",\"head\":\"000000000000000000000000000\",\"draft\":false}")
