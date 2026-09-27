@@ -359,6 +359,68 @@ func TestServeBothHTTPSlowButProgressingBodyAllowed(t *testing.T) {
 	}
 }
 
+// TestServeBothHTTPBodyTrickleEventuallyCutOff は、攻撃者視点レビュー (attack-review-40d9745) の再現テスト
+// (B3)。stallGuardBody は「読むたびに締め切りを延ばす」進捗ベースの検知だけでは、締め切りより短い間隔で
+// 1 バイトずつ送り続けるトリクル (実効スループットがほぼ 0) を原理的に防げない。maxBodyReadDuration が
+// 決める絶対の締め切り (Config.MaxBodyBytes から逆算。一度決めたら延長しない) が、これを主として防ぐ。
+//
+// この絶対の締め切りは、実運用の既定 (512 MiB・64 KiB/s ≒ 2.3 時間) では、このテストのタイムスケールに
+// 収まらないため、Config.MaxBodyBytes を小さく指定して、絶対の締め切りを短くする (minBodyThroughput は
+// package 内部の定数なので、期待する締め切りをそこから逆算し、マジックナンバーにしない)。
+func TestServeBothHTTPBodyTrickleEventuallyCutOff(t *testing.T) {
+	const idleTimeout = 20 * time.Millisecond
+	const maxBodyBytes = 8 << 10 // 8 KiB
+	wantAbsolute := time.Duration(maxBodyBytes) * time.Second / minBodyThroughput
+	if wantAbsolute <= idleTimeout {
+		t.Fatalf("テストの前提が崩れている: 絶対の締め切り (%s) が IdleTimeout (%s) の floor 以下になっている", wantAbsolute, idleTimeout)
+	}
+	connect := New(Config{Audit: io.Discard, HeaderTimeout: idleTimeout, IdleTimeout: idleTimeout, MaxBodyBytes: maxBodyBytes})
+	l := newTestListener(t)
+	other := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body) // Content-Length まで読もうとし続ける (実際には届かない)
+		w.WriteHeader(200)
+	})
+	go ServeBoth(l, connect, other, "/git/")
+
+	c, err := net.DialTimeout("tcp", l.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	req := "POST /git/x HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000\r\n\r\n"
+	if _, err := c.Write([]byte(req)); err != nil {
+		t.Fatal(err)
+	}
+
+	// 絶対の締め切りの 4 倍にわたって、IdleTimeout より短い間隔で 1 バイトずつ送り続ける (進捗ベースの
+	// stall 検知には、常に「たった今読めた」状態を保たせる)。絶対の締め切りに達したら切られるはず。
+	interval := idleTimeout / 2
+	deadline := time.Now().Add(4 * wantAbsolute)
+	cutOff := false
+	for time.Now().Before(deadline) {
+		if _, err := c.Write([]byte{'x'}); err != nil {
+			cutOff = true // 書き込みが失敗した = サーバに切られた
+			break
+		}
+		time.Sleep(interval)
+	}
+	if !cutOff {
+		// 書き込み側では切られたと分からなかった場合、読み側 (応答 or EOF) でも確認する。
+		c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		buf := make([]byte, 16)
+		n, err := c.Read(buf)
+		switch {
+		case err == io.EOF:
+			cutOff = true
+		case err == nil && n > 0 && strings.HasPrefix(string(buf[:n]), "HTTP/1.1 4"):
+			cutOff = true
+		}
+	}
+	if !cutOff {
+		t.Fatalf("実効スループットがほぼゼロの接続が、絶対の締め切り (%s) の 4 倍待っても切られなかった (トリクルによる stall guard の回避)", wantAbsolute)
+	}
+}
+
 // TestServeBothOtherSharesMaxConns は、git/PR 経路の同時接続数が、connect.sem (CONNECT と共有の MaxConns)
 // で頭打ちになり、枠を超えた分は 503 で断られることを確かめる。
 func TestServeBothOtherSharesMaxConns(t *testing.T) {

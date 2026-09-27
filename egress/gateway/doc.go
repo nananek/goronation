@@ -23,9 +23,9 @@
 // # 限界
 //
 //   - Authorization の形式 (git は Basic の x-access-token・API は Bearer) を、GitHub の実機で確かめていない。
-//   - 読む側の締め切り (ヘッダ・本文の進捗・keep-alive の空き・同時接続数) は、CONNECT と同じ connect.cfg を
-//     egress.ServeBoth がこの層で直接適用する (呼び手には後から設定する手段が無いため)。書く側は、まだ無い
-//     (遅い reader が、応答の書き込み中の接続を持ちっぱなしにできる余地が残る)。
-//   - upload-pack (fetch) の本文は検査しない。
+//   - 読む側の締め切り (ヘッダ・本文・keep-alive の空き・同時接続数) は、egress.ServeBoth がこの層で持つ。
+//     本文は Config.MaxBodyBytes から逆算した絶対の締め切りが主 (進捗ベースの延長だけでは、少しずつでも
+//     進めば止まらない trickle を防げないため。MaxBodyBytes は、呼び手が MaxPackBytes と揃えること・
+//     自動では同期しない)。書く側の締め切り・upload-pack (fetch) の本文検査は、まだ無い。
 //   - 1 つの listener での CONNECT との共存は egress.ServeBoth が行うが、goro run への配線は、この package の外 (PR ③)。
 package gateway
