@@ -231,7 +231,7 @@ func TestCheckName(t *testing.T) {
 			t.Errorf("CheckName(%q) = %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "GitHub", "1abc", "-abc", "a_b", "a.b", "a/b", "../x", "..", ".", "a b", "a\n", "a\x00", strings.Repeat("a", 33), "日本語", "a%2fb", "a:b", "~", "a\\b"} {
+	for _, bad := range []string{"", "GitHub", "1abc", "-abc", "a_b", "a.b", "a/b", "../x", "..", ".", "a b", "a\n", "a\x00", strings.Repeat("a", 33), "日本語", "a%2fb", "a:b", "~", "a\\b", "Github", "A", "Z9", "gitHub", "githuB"} {
 		err := CheckName(bad)
 		if !errors.Is(err, ErrInvalidName) {
 			t.Errorf("CheckName(%q) = %v, want ErrInvalidName", bad, err)

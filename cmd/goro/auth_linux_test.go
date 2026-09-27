@@ -330,6 +330,9 @@ func TestReadSecretLineCancelRestoresTerminal(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("取り消しの error = %v, want context.Canceled", err)
 		}
+		if got := out.String(); got != "p: \n" { // ECHO を切っていたので、行を改める
+			t.Errorf("取り消しの表示 = %q, want %q", got, "p: \n")
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("取り消しても、戻らない")
 	}
