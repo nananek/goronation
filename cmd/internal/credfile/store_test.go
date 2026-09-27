@@ -131,7 +131,7 @@ func TestSaveAndToken(t *testing.T) {
 
 // umask に依らず、0600 (と、ディレクトリは 0700 か、それより厳しい)。
 func TestSaveModeIgnoresUmask(t *testing.T) {
-	for _, umask := range []int{0, 0o022, 0o077} {
+	for _, umask := range []int{0, 0o022, 0o077, 0o277} { // 0o277 は、owner の書き込みも消す: 0600 を保証するのは、fchmod
 		old := syscall.Umask(umask)
 		st, _ := newStore(t)
 		err := st.Save("github", credential.New(tok))
