@@ -442,10 +442,12 @@ func TestRunCageIsolation(t *testing.T) {
 		t.Errorf("HOME・cwd・HTTPS_PROXY・NO_PROXY = %q・%q・%q・%q", kv["home"], kv["cwd"], kv["https_proxy"], kv["no_proxy"])
 	}
 	allowed := map[string]bool{}
-	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY",
+	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "TZ", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY",
 		"DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "PWD"} {
 		allowed[n] = true
 	}
+	// TZ は、必須リストに入れない: ホストの timezone が hostTZ (tz.go) で決められない環境では、檻に渡らない
+	// (エラーにしない設計。他の許可リストの変数と違い、常に出るとは限らない)。
 	for _, n := range strings.Split(kv["env"], ",") {
 		if !allowed[n] {
 			t.Errorf("檻の環境変数に、許可リスト外の %s がある (%s)", n, kv["env"])

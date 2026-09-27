@@ -452,7 +452,7 @@ func TestCageEnv(t *testing.T) {
 		"xterm-256color": "xterm-256color", "screen.linux": "screen.linux", "": "dumb", "bad term": "dumb",
 		"x\ny": "dumb", "$(id)": "dumb", strings.Repeat("a", 65): "dumb", "tmux-256color": "tmux-256color",
 	} {
-		env := cageEnv(claudeProfile, term, "", "")
+		env := cageEnv(claudeProfile, term, "", "", "")
 		if names(env) != wantNames {
 			t.Fatalf("環境変数の名前 = %s, want %s", names(env), wantNames)
 		}
@@ -471,7 +471,7 @@ func TestCageEnv(t *testing.T) {
 // TestCageEnvPush は、push・refPrefix が空でないとき、GORO_PUSH_REPO・GORO_PUSH_REF_PREFIX と、
 // git の insteadOf (GIT_CONFIG_*) が、正しい値で足されることを確かめる。
 func TestCageEnvPush(t *testing.T) {
-	env := cageEnv(claudeProfile, "xterm", "o/r", "refs/heads/goro/sess-1/")
+	env := cageEnv(claudeProfile, "xterm", "", "o/r", "refs/heads/goro/sess-1/")
 	got := map[string]string{}
 	for _, e := range env {
 		got[e.Key] = e.Value
@@ -490,6 +490,35 @@ func TestCageEnvPush(t *testing.T) {
 	}
 	if jailGitBase != "http://127.0.0.1:3128/git/github.com/" {
 		t.Fatalf("jailGitBase = %q (egress/git.PathPrefix と食い違っていないか確認)", jailGitBase)
+	}
+}
+
+// TestCageEnvTZ は、tz が空なら TZ を檻に渡さず (これまでどおり UTC)、空でなければ (--push の有無に関わらず)
+// そのまま TZ として渡ることを確かめる。
+func TestCageEnvTZ(t *testing.T) {
+	hasTZ := func(env []bwrap.EnvVar) (string, bool) {
+		for _, e := range env {
+			if e.Key == "TZ" {
+				return e.Value, true
+			}
+		}
+		return "", false
+	}
+	if _, ok := hasTZ(cageEnv(claudeProfile, "xterm", "", "", "")); ok {
+		t.Error("tz が空なのに、TZ を檻に渡している")
+	}
+	if v, ok := hasTZ(cageEnv(claudeProfile, "xterm", "Asia/Tokyo", "", "")); !ok || v != "Asia/Tokyo" {
+		t.Errorf("TZ = %q, ok = %v, want \"Asia/Tokyo\", true", v, ok)
+	}
+	// --push の有無に関わらず、TZ は同じように渡る。
+	if v, ok := hasTZ(cageEnv(claudeProfile, "xterm", "Asia/Tokyo", "o/r", "refs/heads/goro/sess-1/")); !ok || v != "Asia/Tokyo" {
+		t.Errorf("--push ありでの TZ = %q, ok = %v, want \"Asia/Tokyo\", true", v, ok)
+	}
+	// 許可リストは、bwrap の資格情報らしい名前の検査に通る (TZ は該当しない)。
+	c := testCage()
+	c.TZ = "Asia/Tokyo"
+	if _, err := cageSpec(c).Argv(); err != nil {
+		t.Error(err)
 	}
 }
 

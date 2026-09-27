@@ -44,6 +44,8 @@ type cageConfig struct {
 	Work string
 	// Term は、ホストの TERM。
 	Term string
+	// TZ は、檻に渡すタイムゾーン (tz.go の hostTZ が作る。空なら渡さない: これまでどおり UTC)。
+	TZ string
 	// Args は、エージェントへの引数。
 	Args []string
 	// PushRepo は、--push owner/repo が指定されたときの repo ("owner/repo"。空なら無効)。指定されていれば、
@@ -88,7 +90,7 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		mcpArgs, mcpEnv = c.Agent.mcp(c.MCPServers)
 	}
 	cmd = append(cmd, mcpArgs...)
-	env := append(cageEnv(c.Agent, c.Term, c.PushRepo, c.PushRefPrefix), mcpEnv...)
+	env := append(cageEnv(c.Agent, c.Term, c.TZ, c.PushRepo, c.PushRefPrefix), mcpEnv...)
 	return bwrap.Spec{
 		Host: c.Host,
 		Symlinks: []bwrap.Symlink{
@@ -114,9 +116,10 @@ func (c cageConfig) bind(src, dst string, rw bool) bwrap.Bind {
 var termRE = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,64}$`)
 
 // cageEnv は、檻の環境変数 (これだけ。ホストの環境変数は渡らない): 共通の HOME・PATH・TERM・LANG に、エージェントの p.env と、
-// 認証用ディレクトリの場所を教える p.creds.env を足す。push・refPrefix が空でなければ、--push の配線 (下の pushEnv) も足す。
-// proxy の変数は、goro init が設定する。TERM は、形が正しいときだけ渡し、そうでなければ dumb にする。
-func cageEnv(p agentProfile, term, push, refPrefix string) []bwrap.EnvVar {
+// 認証用ディレクトリの場所を教える p.creds.env を足す。tz が空でなければ TZ も足す (--push の有無に関わらず、常に)。
+// push・refPrefix が空でなければ、--push の配線 (下の pushEnv) も足す。proxy の変数は、goro init が設定する。
+// TERM は、形が正しいときだけ渡し、そうでなければ dumb にする。
+func cageEnv(p agentProfile, term, tz, push, refPrefix string) []bwrap.EnvVar {
 	if !termRE.MatchString(term) {
 		term = "dumb"
 	}
@@ -127,6 +130,9 @@ func cageEnv(p agentProfile, term, push, refPrefix string) []bwrap.EnvVar {
 		{Key: "LANG", Value: "C.UTF-8"},
 	}, p.env...)
 	env = append(env, p.creds.env...)
+	if tz != "" {
+		env = append(env, bwrap.EnvVar{Key: "TZ", Value: tz})
+	}
 	if push != "" {
 		env = append(env, pushEnv(push, refPrefix)...)
 	}
