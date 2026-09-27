@@ -22,14 +22,10 @@ const maxSniffLine = 4 << 10
 // http.Server) へ、それ以外は 400 で閉じる。戻るのは、l が閉じたとき (Close は、呼び手が l に対して行う)。
 //
 // other 側の httpSrv は ServeBoth が内部で作るため、呼び手には後から ReadHeaderTimeout 等を設定する手段が無い。
-// connect.cfg.HeaderTimeout・IdleTimeout を、ここでそのまま httpSrv にも適用する (dispatch が最初の行を読んだ後に
-// SetReadDeadline(time.Time{}) で解除する締め切りは、net/http がヘッダを読み始める時点で改めて架け直す)。
+// connect.cfg (HeaderTimeout・IdleTimeout・MaxConns) を、ここでそのまま other 経路にも適用する
+// (newOtherHTTPServer を見よ)。
 func ServeBoth(l net.Listener, connect *Server, other http.Handler, prefixes ...string) error {
-	httpSrv := &http.Server{
-		Handler:           other,
-		ReadHeaderTimeout: connect.cfg.HeaderTimeout,
-		IdleTimeout:       connect.cfg.IdleTimeout,
-	}
+	httpSrv := newOtherHTTPServer(connect, other)
 	for {
 		c, err := l.Accept()
 		if err != nil {
@@ -37,6 +33,61 @@ func ServeBoth(l net.Listener, connect *Server, other http.Handler, prefixes ...
 		}
 		go dispatch(c, connect, httpSrv, prefixes)
 	}
+}
+
+// newOtherHTTPServer は、other 用の *http.Server を、connect.cfg に合わせて作る。ServeBoth 本体と、
+// dispatch を直に呼ぶテスト (FuzzDispatch) の両方が、この 1 か所を使う (semaphore の acquire (dispatch 側)
+// と release (ここの ConnState) の対を、生成のたびに書き写さない)。
+//
+//   - ReadHeaderTimeout・IdleTimeout: dispatch が最初の行を読んだ後に SetReadDeadline(time.Time{}) で
+//     解除する締め切りを、net/http がヘッダを読み始める時点で改めて架け直す。
+//   - Handler は stallGuardBody で包み、本文 (r.Body) の読み取りにも締め切りを持たせる (本文フェーズの
+//     Slowloris 対策。固定の ReadTimeout は付けない: 大きい push の転送を、進捗が続く限り妨げないため)。
+//   - ConnState: dispatch が connect.sem から取った 1 枠を、この接続が本当に終わった (StateClosed・
+//     StateHijacked) ときに返す。serveOneConn の httpSrv.Serve は goroutine を起こすとすぐ戻るため、
+//     その戻りを「終わった」合図にはできない。
+func newOtherHTTPServer(connect *Server, other http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           stallGuardBody(other, connect.cfg.IdleTimeout),
+		ReadHeaderTimeout: connect.cfg.HeaderTimeout,
+		IdleTimeout:       connect.cfg.IdleTimeout,
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			if state == http.StateClosed || state == http.StateHijacked {
+				<-connect.sem
+			}
+		},
+	}
+}
+
+// stallGuardBody は、h に渡す前に、要求の本文 (r.Body) を、読むたびに接続の読み取り締め切りを timeout だけ
+// 先に延ばす io.ReadCloser に差し替える。呼ばれるのはハンドラの中 (つまり net/http 自身の
+// ReadHeaderTimeout が、ヘッダを読み終えて役目を終えた後) だけなので、ヘッダの読み取りには影響しない。
+// 本文は「読めるたびに延びる」stall 検知になり、大きい push でも、進捗が timeout より短い間隔で続く限り
+// 通る一方、進捗が止まれば timeout で切れる。timeout が 0 以下 (Config が壊れている異常系) なら、
+// 締め切りを 0 (= 即座に期限切れ) にしてしまわないよう、何もしない。
+func stallGuardBody(h http.Handler, timeout time.Duration) http.Handler {
+	if timeout <= 0 {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Body != http.NoBody {
+			r.Body = &stallBody{ReadCloser: r.Body, rc: http.NewResponseController(w), timeout: timeout}
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// stallBody は、Read のたびに (net/http の ResponseController 経由で) 接続の読み取り締め切りを架け直す
+// io.ReadCloser。
+type stallBody struct {
+	io.ReadCloser
+	rc      *http.ResponseController
+	timeout time.Duration
+}
+
+func (b *stallBody) Read(p []byte) (int, error) {
+	b.rc.SetReadDeadline(time.Now().Add(b.timeout))
+	return b.ReadCloser.Read(p)
 }
 
 // dispatch は、1 本の接続の、最初の行を読んで振り分ける。
@@ -59,6 +110,15 @@ func dispatch(c net.Conn, connect *Server, httpSrv *http.Server, prefixes []stri
 	case method == "CONNECT":
 		connect.accepted(pc)
 	case (method == "GET" || method == "POST") && hasAnyPrefix(target, prefixes):
+		// CONNECT (accepted 内) と同じ connect.sem を、同時接続数の上限として共有する。枠が無ければ 503 で
+		// 断る。取った枠は、newOtherHTTPServer の ConnState (StateClosed) が、この接続が実際に終わった
+		// ときに返す (ここで解放しない: serveOneConn はすぐ戻るため)。
+		select {
+		case connect.sem <- struct{}{}:
+		default:
+			connect.refuse(pc, connect.nextID.Add(1), deny(503, reasonBusy, ""))
+			return
+		}
 		serveOneConn(pc, httpSrv)
 	default:
 		writeStatus(pc, 400)

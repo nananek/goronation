@@ -51,7 +51,8 @@ type Config struct {
 	Audit io.Writer
 	// Resolver は、名前の解決に使う。nil なら net.DefaultResolver。
 	Resolver Resolver
-	// MaxConns は、同時に扱う接続 (ヘッダを読んでいる間を含む) の上限。既定 128。
+	// MaxConns は、同時に扱う接続 (ヘッダを読んでいる間を含む) の上限。既定 128。ServeBoth で振り分けている
+	// ときは、CONNECT と git/PR (other) の両方を合わせた数がこの上限になる (枠を共有する)。
 	MaxConns int
 	// MaxHeaderBytes は、リクエストのヘッダ全体の上限。既定 8 KiB。
 	MaxHeaderBytes int

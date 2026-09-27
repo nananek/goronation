@@ -2,6 +2,7 @@ package egress
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -249,6 +250,167 @@ func TestServeBothIdleTimeoutEnforced(t *testing.T) {
 	}
 }
 
+// TestServeBothHTTPBodyStallEnforced は、攻撃者視点レビュー (attack-review-d9fe8c5) の再現テスト (B2)。
+//
+// ヘッダは完全かつ即座に送るが、宣言した Content-Length の本文を 1 バイトも送らないクライアントは、
+// ReadHeaderTimeout (ヘッダはもう読み終えている)・IdleTimeout (ハンドラが実行中で、次の要求を待つ区間に
+// 入らない) のどちらの対象にもならない。stallGuardBody が無ければ、r.Body.Read はブロックしたまま戻らず、
+// ハンドラの goroutine が無期限に残る (本文フェーズの Slowloris)。
+//
+// ハンドラは、実物の gateway.serveReceivePack などと同じく、本文の読み取りエラーをそのまま返す (無視して
+// 200 を書いたりしない)。このテストが確かめたいのは「goroutine が timeout 程度で解放されるか」であって、
+// 接続がどう終わるか (EOF か、エラー応答の後の close か) までは問わない (TestServeBothHTTPHeaderTimeoutEnforced
+// と同じ判定の形)。
+func TestServeBothHTTPBodyStallEnforced(t *testing.T) {
+	const timeout = 100 * time.Millisecond
+	connect := New(Config{Audit: io.Discard, HeaderTimeout: timeout, IdleTimeout: timeout})
+	l := newTestListener(t)
+	bodyReadStarted := make(chan struct{}, 1)
+	other := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyReadStarted <- struct{}{}
+		buf := make([]byte, 100000)
+		if _, err := r.Body.Read(buf); err != nil {
+			http.Error(w, "body stalled", http.StatusRequestTimeout)
+			return
+		}
+		w.WriteHeader(200)
+	})
+	go ServeBoth(l, connect, other, "/git/")
+
+	c, err := net.DialTimeout("tcp", l.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	// ヘッダは完全に・即座に送る (Content-Length: 100000 を宣言するが、本文は 1 バイトも送らない)。
+	req := "POST /git/x HTTP/1.1\r\nHost: x\r\nContent-Length: 100000\r\n\r\n"
+	if _, err := c.Write([]byte(req)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-bodyReadStarted:
+	case <-time.After(time.Second):
+		t.Fatal("ハンドラが呼ばれなかった (想定外)")
+	}
+	// 締め切りの 20 倍待つ。stallGuardBody が効いていれば、この間に (EOF か、エラー応答か) 決着が付くはず。
+	c.SetReadDeadline(time.Now().Add(20 * timeout))
+	buf := make([]byte, 512)
+	n, err := c.Read(buf)
+	switch {
+	case err == nil:
+		if n == 0 {
+			t.Fatal("0 バイトの応答")
+		}
+		// エラー応答 (408 など) が返ってくれば OK: ハンドラの goroutine は、本文を待ち続けていない。
+		return
+	case err == io.EOF:
+		return // サーバが接続を閉じた: 期待どおり
+	case os.IsTimeout(err):
+		t.Fatalf("本文を全く送らない POST (ヘッダは完全に送った) が、締め切り (%s) の 20 倍待っても決着しなかった (本文フェーズの Slowloris)", timeout)
+	default:
+		t.Fatalf("予期しない error: %v", err)
+	}
+}
+
+// TestServeBothHTTPSlowButProgressingBodyAllowed は、stallGuardBody が、進捗さえ続いていれば、締め切りより
+// ずっと長くかかる本文の転送を妨げないことを確かめる (大きい push を、固定の ReadTimeout で打ち切らない、
+// という設計の裏付け)。1 バイトずつ、締め切りより短い間隔で送り続けたクライアントの本文が、最後まで
+// ハンドラに届くこと。
+func TestServeBothHTTPSlowButProgressingBodyAllowed(t *testing.T) {
+	const timeout = 80 * time.Millisecond
+	connect := New(Config{Audit: io.Discard, HeaderTimeout: timeout, IdleTimeout: timeout})
+	l := newTestListener(t)
+	const want = "hello"
+	got := make(chan string, 1)
+	other := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("本文の読み取りに失敗: %v", err)
+			return
+		}
+		got <- string(b)
+		w.WriteHeader(200)
+	})
+	go ServeBoth(l, connect, other, "/git/")
+
+	c, err := net.DialTimeout("tcp", l.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	req := fmt.Sprintf("POST /git/x HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n", len(want))
+	if _, err := c.Write([]byte(req)); err != nil {
+		t.Fatal(err)
+	}
+	// 締め切り (80ms) より短い間隔 (20ms) で、1 バイトずつ送る。全体では締め切りの数倍かかる。
+	for _, b := range []byte(want) {
+		time.Sleep(timeout / 4)
+		if _, err := c.Write([]byte{b}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case s := <-got:
+		if s != want {
+			t.Fatalf("本文 = %q, want %q", s, want)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("進捗が続いているのに、ハンドラに本文が届かなかった (stall 判定が厳しすぎる)")
+	}
+}
+
+// TestServeBothOtherSharesMaxConns は、git/PR 経路の同時接続数が、connect.sem (CONNECT と共有の MaxConns)
+// で頭打ちになり、枠を超えた分は 503 で断られることを確かめる。
+func TestServeBothOtherSharesMaxConns(t *testing.T) {
+	connect := New(Config{Audit: io.Discard, MaxConns: 1})
+	l := newTestListener(t)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	other := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- struct{}{}
+		<-release // 1 本目を、明示的に離すまで居座らせる
+		w.WriteHeader(200)
+	})
+	go ServeBoth(l, connect, other, "/git/")
+
+	// 1 本目: ハンドラの中に入ったまま止める (枠を 1 つ使い切る)。Connection: close を付け、離した後は
+	// net/http 自身がすぐに閉じるようにする (keep-alive の IdleTimeout 待ちにしない)。
+	c1, err := net.DialTimeout("tcp", l.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c1.Close()
+	if _, err := c1.Write([]byte("GET /git/x HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("1 本目のハンドラが呼ばれなかった")
+	}
+
+	// 2 本目: 枠が無いので、ハンドラを呼ばずに 503 で断られるはず。
+	status := dialLine(t, l.Addr().String(), "GET /git/y HTTP/1.1\r\nHost: x\r\nContent-Length: 0")
+	if !strings.HasPrefix(status, "HTTP/1.1 503") {
+		t.Fatalf("2 本目の status = %q, want 503", status)
+	}
+
+	// 1 本目を離す。枠が返る (ConnState の StateClosed) のは、応答を書き終えて接続が閉じた後、非同期に
+	// 起きるので、3 本目は少し再試行しながら待つ。
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		status = dialLine(t, l.Addr().String(), "GET /git/z HTTP/1.1\r\nHost: x\r\nContent-Length: 0")
+		if strings.HasPrefix(status, "HTTP/1.1 200") {
+			break
+		}
+		if !strings.HasPrefix(status, "HTTP/1.1 503") || time.Now().After(deadline) {
+			t.Fatalf("3 本目 (枠が返った後) の status = %q, want 200 (503 のまま粘るなら、枠が返っていない)", status)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // TestServeBothConcurrent は、CONNECT と git/HTTP の要求を、同じ listener に混ぜて多数投げても、取り違えないことを確かめる。
 func TestServeBothConcurrent(t *testing.T) {
 	connect := New(Config{Allow: []string{"allowed.invalid:443"}, Audit: io.Discard})
@@ -288,11 +450,14 @@ func FuzzDispatch(f *testing.F) {
 	}
 	connect := New(Config{Audit: io.Discard})
 	other := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	// newOtherHTTPServer を使う (素の &http.Server{Handler: other} だと ConnState が無く、dispatch が
+	// git/PR 経路で取る connect.sem の枠が解放されないまま、既定 128 回で枯渇して以後すべて busy になる)。
+	httpSrv := newOtherHTTPServer(connect, other)
 	f.Fuzz(func(t *testing.T, line string) {
 		server, client := net.Pipe()
 		done := make(chan struct{})
 		go func() {
-			dispatch(server, connect, &http.Server{Handler: other}, []string{"/git/", "/github-api/"})
+			dispatch(server, connect, httpSrv, []string{"/git/", "/github-api/"})
 			close(done)
 		}()
 		client.SetDeadline(time.Now().Add(2 * time.Second))
