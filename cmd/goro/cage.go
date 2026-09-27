@@ -59,6 +59,12 @@ type cageConfig struct {
 	// MCPServers は、Agent に登録する MCP サーバー (mcp.go の mcpServersFor が作る。--push が無効なら空)。
 	// Agent.mcp が nil のエージェントには、何も注入しない。
 	MCPServers []mcpServerDef
+	// PTY は、Stdin・Stdout・Stderr が、goro run 専用の pty の slave であることを示す (呼び手 (runCage) が、
+	// ホストの実端末に直結できるときだけ true にする)。true なら、bwrap を --new-session (NewSession) で起動し
+	// (TIOCSTI の確認を要らなくする)、goro init に --set-ctty を渡す: goro init が、エージェントを起動すると
+	// き、エージェント自身が新しいセッションの leader になり、渡された pty を自分の制御端末にする。false
+	// (既定) なら、これまでどおり、ホストの端末に直結する。
+	PTY bool
 }
 
 // cageSpec は、c の檻の Spec を作る。標準入出力は、呼び手が足す。
@@ -80,8 +86,13 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		c.bind(c.AuthDir, jailAuth, true),
 		c.bind(c.Work, jailWork, true),
 	)
-	// --no-forward-tty: 端末のシグナルは、エージェントが直接受ける。init が転送すると、二重に届く (Ctrl-C が 2 回になる)。
-	cmd := []string{jailGoro, "init", "--listen", jailProxyAddr, "--upstream", jailRun + "/" + proxySockName, "--no-forward-tty", "--", c.Agent.jailExe()}
+	// --no-forward-tty: 端末のシグナルは、エージェントが直接受ける (PTY のときは、専用の pty の、PTY でないときは
+	// ホストの実端末の、フォアグラウンドの process group として)。init が転送すると、二重に届く (Ctrl-C が 2 回になる)。
+	cmd := []string{jailGoro, "init", "--listen", jailProxyAddr, "--upstream", jailRun + "/" + proxySockName, "--no-forward-tty"}
+	if c.PTY {
+		cmd = append(cmd, "--set-ctty")
+	}
+	cmd = append(cmd, "--", c.Agent.jailExe())
 	// MCP サーバー (goro mcp) の登録: エージェントごとの変換 (Agent.mcp) が、起動時の引数・環境変数のどちらに
 	// するかを決める (claude は引数、opencode は環境変数。cageSpec は、その違いを知らない)。
 	var mcpArgs []string
@@ -102,7 +113,11 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		Env:   env,
 		Chdir: jailWork,
 		Cmd:   append(cmd, c.Args...),
-		// NewSession は付けない: 端末のシグナル (Ctrl-C・リサイズ) は、フォアグラウンドの process group ごと、檻の中のエージェントにも届く。
+		// NewSession は、c.PTY のときだけ付ける: 専用の pty の slave を、goro init が (--set-ctty で) 自分の
+		// 制御端末にできるよう、まず制御端末の無い新しいセッションにする。c.PTY でないとき (ホストの実端末に
+		// 直結するとき) は付けない: 端末のシグナル (Ctrl-C・リサイズ) が、フォアグラウンドの process group
+		// ごと、檻の中のエージェントにも届く、これまでの形のまま。
+		NewSession: c.PTY,
 	}
 }
 

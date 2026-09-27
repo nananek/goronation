@@ -491,6 +491,11 @@ func cageArgs(o runOptions, p agentProfile) []string {
 }
 
 // runCage は、egress を起こして、檻を起動し、終わるのを待つ。終了コードを返す。
+//
+// 標準入出力の 3 つ全てが実端末なら (isTTYFile)、goro run 自身が pty を用意し (cfg.PTY)、檻には、その slave を
+// 渡す (ホストの実端末には直結しない)。goro run は、ホストの実端末を raw モードにして、pty の master との間を
+// そのまま中継する (中身は解釈・模倣しない)。3 つのどれかが端末でなければ (redirect・pipe。テストの多くもここ)、
+// これまでどおり、ホストの標準入出力をそのまま渡す。
 func runCage(ctx context.Context, o runOptions, agent agentProfile, sw *sigWatch, tgt runTarget, cfg cageConfig, push *pushConfig, sum *runSummary, stderr io.Writer) int {
 	proxy, err := startProxy(tgt.runDir, allowList(agent, o.allow), push)
 	if err != nil {
@@ -505,18 +510,39 @@ func runCage(ctx context.Context, o runOptions, agent agentProfile, sw *sigWatch
 		}
 	}()
 
+	cfg.PTY = isTTYFile(os.Stdin) && isTTYFile(os.Stdout) && isTTYFile(os.Stderr)
 	spec := cageSpec(cfg)
-	spec.Stdin, spec.Stdout, spec.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if ctx.Err() != nil { // 起動の前に、シグナルを受けていた
-		return 1
-	}
-	// 檻の中のプロセスは、端末の設定を変えられる。標準入力が端末なら、起動の前に保存し、どの経路で終わっても (正常・
-	// シグナルでの取り消し・エラー)、終了後の案内を出す前に戻す。
-	term, err := saveTermios(int(os.Stdin.Fd()))
-	if err != nil {
+
+	// 檻の中のプロセスは、端末の設定を変えられる (cfg.PTY のときは、goro run 自身が raw モードにする)。標準入力が
+	// 端末なら、起動の前に保存し、どの経路で終わっても (正常・シグナルでの取り消し・エラー)、終了後の案内を出す
+	// 前に戻す。os.Stdin.Fd() は使わない: 一度呼ぶと、その *os.File は恒久的に blocking 扱いになり、pty 中継の
+	// SetReadDeadline (中継を止めるときに使う) が効かなくなる (SyscallConn 経由なら、fd は non-blocking のまま)。
+	var term *termState
+	if err := ctlFile(os.Stdin, func(fd int) (err error) { term, err = saveTermios(fd); return }); err != nil {
 		fmt.Fprintf(stderr, "goro run: 端末の設定を保存できない (終了後に戻せない): %v\n", err)
 	}
 	defer restoreTermios(term, stderr)
+
+	if cfg.PTY {
+		master, slave, err := openHostPty()
+		if err != nil {
+			fmt.Fprintf(stderr, "goro run: pty を用意できない: %v\n", err)
+			return 1
+		}
+		defer slave.Close() // 檻が fork/exec で引き継いだ後は、ホスト側の複製は要らない
+		spec.Stdin, spec.Stdout, spec.Stderr = slave, slave, slave
+		if err := term.setRaw(); err != nil {
+			fmt.Fprintf(stderr, "goro run: 実端末を raw モードにできない: %v\n", err)
+		}
+		relay := startPtyRelay(os.Stdin, os.Stdout, master)
+		defer relay.stop()
+	} else {
+		spec.Stdin, spec.Stdout, spec.Stderr = os.Stdin, os.Stdout, os.Stderr
+	}
+
+	if ctx.Err() != nil { // 起動の前に、シグナルを受けていた
+		return 1
+	}
 	sw.enterCage()
 	c, err := bwrap.Start(ctx, spec)
 	if err != nil {

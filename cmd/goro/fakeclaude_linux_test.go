@@ -89,6 +89,8 @@ var testAgentProfile = agentProfile{
 //	exit N                終了コード N で終わる
 //	rawtty [hold]         標準入力の端末を raw・-echo・-isig にして、raw-set を出す。hold なら、殺されるまで待つ。そうでなければ、
 //	                      端末から 1 バイト届くまで待って終わる (raw の間に、テストが端末の設定を確かめられるように)
+//	winsize               ready を出し、標準入力 (端末) の大きさを winsize=幅x高さ で出す。SIGWINCH を 1 回受けたら、
+//	                      もう一度出して終わる (pty 中継の、開始時の大きさの反映と、resize の伝わりの確認用)
 func fakeClaude(args []string) int {
 	// --push owner/repo のとき、claude には --mcp-config <JSON> が、場面の引数より前に入る (goro run 側。
 	// cmd/goro/mcp.go の claudeMCPInject)。実物の claude は、これを自分の flag として消費する。偽のエージェントも
@@ -238,6 +240,27 @@ func fakeClaude(args []string) int {
 			select {}
 		}
 		os.Stdin.Read(make([]byte, 1))
+		return 0
+	case "winsize":
+		print := func() {
+			var ws winsize
+			if err := ioctl(0, syscall.TIOCGWINSZ, unsafe.Pointer(&ws)); err != nil {
+				fmt.Println("winsize-error=" + err.Error())
+				return
+			}
+			fmt.Printf("winsize=%dx%d\n", ws.Col, ws.Row)
+		}
+		fmt.Println("ready")
+		print() // 起動時 (goro run が、開始時に、実端末の大きさを pty へ反映したもの) の大きさ
+		ch := make(chan os.Signal, 4)
+		signal.Notify(ch, syscall.SIGWINCH)
+		select {
+		case <-ch:
+			print() // SIGWINCH で気づいた、新しい大きさ
+		case <-time.After(30 * time.Second):
+			fmt.Println("timeout")
+			return 1
+		}
 		return 0
 	case "exit":
 		if len(args) == 2 {

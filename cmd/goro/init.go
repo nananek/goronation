@@ -25,7 +25,7 @@ const (
 	exitNotFound = 127 // 子が見つからない
 )
 
-const initUsage = `使い方: goro init --listen 127.0.0.1:PORT --upstream PATH [--no-proxy-env] [--no-forward-tty] [--] CMD [ARGS...]
+const initUsage = `使い方: goro init --listen 127.0.0.1:PORT --upstream PATH [--no-proxy-env] [--no-forward-tty] [--set-ctty] [--] CMD [ARGS...]
 
 檻の中で最初に動く小さなリレー (goro run が起動する)。檻の loopback の TCP を、ホストの egress の Unix ドメインソケットへ
 中継しながら、子 (CMD) を起動する。子には、標準入出力と環境変数を引き継ぎ、HTTPS_PROXY・HTTP_PROXY (小文字も) を、待ち受け先を
@@ -38,6 +38,8 @@ init は、檻を作らず、自分が檻の中にいることも確かめない
   --upstream PATH   中継先の Unix ドメインソケットの絶対 path
   --no-proxy-env    子に HTTPS_PROXY などを設定しない
   --no-forward-tty  端末のシグナル (SIGINT・SIGQUIT・SIGWINCH) を、子に転送しない (子が端末を共有し、直接受けるとき。二重に届かない)
+  --set-ctty        子を、新しいセッションの leader にし、標準入力 (pty の slave) を、その制御端末にする
+                    (goro run が、専用の pty を中継するときに渡す)
 `
 
 // proxyEnvKeys は、init が子に設定する、proxy を指す環境変数。
@@ -66,6 +68,7 @@ type initConfig struct {
 	noProxyEnv bool
 	argv       []string // 子のコマンドと引数
 	noFwdTTY   bool     // 端末のシグナル (ttySignals) を、子に転送しない
+	setCtty    bool     // 子を、標準入力 (pty の slave) を制御端末にする、新しいセッションの leader にする
 }
 
 // parseInitArgs は goro init の引数を解釈する。不正なら、理由と使い方を stderr に出して error を返す。
@@ -79,6 +82,7 @@ func parseInitArgs(args []string, stderr io.Writer) (initConfig, error) {
 	flags.StringVar(&cfg.upstream, "upstream", "", "")
 	flags.BoolVar(&cfg.noProxyEnv, "no-proxy-env", false, "")
 	flags.BoolVar(&cfg.noFwdTTY, "no-forward-tty", false, "")
+	flags.BoolVar(&cfg.setCtty, "set-ctty", false, "")
 	if err := flags.Parse(args); err != nil {
 		return cfg, err // flag が、理由と使い方を出している
 	}
@@ -126,6 +130,12 @@ func runInit(args []string, stderr io.Writer) int {
 	cmd := exec.Command(cfg.argv[0], cfg.argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Env = childEnv(os.Environ(), l.Addr().String(), !cfg.noProxyEnv)
+	if cfg.setCtty {
+		// 子 (エージェント) を、新しいセッションの leader にし、標準入力 (渡された pty の slave) を、その制御端末
+		// にする (fork の直後、exec の前に、子自身が行う。init 自身のセッションの状態には左右されない: bwrap が
+		// 内部でさらに fork することがあっても、この子は、そのたびに setsid からやり直すので影響されない)。
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	}
 
 	// 子を起動する前に登録する。起動の途中で届いたシグナルも、取りこぼさない。
 	sigs := make(chan os.Signal, 16)

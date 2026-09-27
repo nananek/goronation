@@ -717,6 +717,84 @@ func TestRunRestoresTerminal(t *testing.T) {
 	}
 }
 
+// TestRunPtyPropagatesWinsize は、goro run が実端末に直結するとき (すべて実端末)、専用の pty を用意し、
+// (1) 起動時に、実端末の大きさをその pty に反映すること、(2) 実端末の resize (SIGWINCH) のたびに、大きさを
+// 追随させること、の両方を、実際に檻の中のエージェント (偽の claude、winsize 場面) が読む大きさで確認する。
+//
+// TestRunRestoresTerminal と違い、legacyTIOCSTIOff の確認をしない: この経路は、専用の pty (goro run 自身が
+// 用意し、NewSession で起動する) を使うので、ホストの legacy_tiocsti の設定に左右されない、という設計どおりの
+// ことを、ここで実際に確かめる (legacy_tiocsti が有効な環境でも、このテストが通ることが、その裏付けになる)。
+func TestRunPtyPropagatesWinsize(t *testing.T) {
+	f := newRunFixture(t)
+	master, slave := openPty(t)
+	var out syncBuffer
+	go io.Copy(&out, master)
+
+	if err := setWinsize(master, winsize{Row: 40, Col: 100}); err != nil {
+		t.Fatalf("開始前の大きさを設定できない: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, f.exe, "run", "--repo", f.repo, "--", "winsize")
+	cmd.Args[0] = "goro"
+	cmd.Env = f.env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	waitLine := func(want string) {
+		t.Helper()
+		deadline := time.Now().Add(runTimeout)
+		for !strings.Contains(out.String(), want) {
+			select {
+			case err := <-done:
+				t.Fatalf("%q が出る前に、goro が終わった: %v\n%s", want, err, out.String())
+			default:
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%q が出ない:\n%s", want, out.String())
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	waitLine("ready")
+	waitLine("winsize=100x40") // 開始時: 実端末 (40x100) の大きさが、専用の pty に反映されている
+
+	if err := setWinsize(master, winsize{Row: 50, Col: 120}); err != nil {
+		t.Fatalf("resize 後の大きさを設定できない: %v", err)
+	}
+	deadline := time.Now().Add(runTimeout)
+	for strings.Count(out.String(), "winsize=") < 2 {
+		select {
+		case err := <-done:
+			t.Fatalf("resize 後の winsize が出る前に、goro が終わった: %v\n%s", err, out.String())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("resize 後の winsize が出ない:\n%s", out.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(out.String(), "winsize=120x50") {
+		t.Errorf("resize (実端末: 120x50) が、専用の pty に反映されていない:\n%s", out.String())
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("goro の終わり方: %v\n%s", err, out.String())
+		}
+	case <-time.After(runTimeout):
+		t.Fatalf("goro が終わらない:\n%s", out.String())
+	}
+}
+
 // 標準入力が端末でないときは、何も保存も戻しもしない (警告も出さない)。
 func TestRunNoTerminalNoWarning(t *testing.T) {
 	f := newRunFixture(t)
