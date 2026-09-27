@@ -1,0 +1,2 @@
+go test fuzz v1
+string("{\"title\":\"txx\",\"head\":\"goro/20260927-041500-a1b2c3/x\",\"draft\":false}")
