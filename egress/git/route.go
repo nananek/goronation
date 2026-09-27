@@ -80,7 +80,7 @@ func ParseRoute(method, target string) (Route, error) {
 	// 文字の検査は、別に置かない: owner と name は限られた文字だけで、残りは、固定の文字列との完全一致で比べる。
 	parts := strings.Split(path[len(PathPrefix):], "/")
 	// <owner>/<name>.git/ の後は、git-upload-pack・git-receive-pack・info/refs のどれか
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		return Route{}, reject(CodeBadRoute, "path %s の形が正しくない", q(path))
 	}
 	name, ok := strings.CutSuffix(parts[1], ".git")

@@ -60,6 +60,8 @@ func TestParseRouteRejects(t *testing.T) {
 		{"GET", pre + "o/r.git/info/refs?service=git-upload-pack&service=git-receive-pack"},
 		{"GET", pre + "o/r.git/info/refs?service=git-upload-pack%00"},
 		{"POST", pre + "o/r.git/git-receive-pack?"},
+		{"POST", pre + "o/r.git/git-upload-pack?"},
+		{"POST", pre + "o/r.git/git-upload-pack?service=git-upload-pack"},
 		{"POST", pre + "o/r.git/git-receive-pack?service=git-receive-pack"},
 		// path の形
 		{"GET", "/o/r.git/info/refs?service=git-upload-pack"},

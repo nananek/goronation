@@ -140,6 +140,18 @@ func TestParsePullAccepts(t *testing.T) {
 	}
 }
 
+// TestParsePullSizeBoundary は、要求の大きさの上限が、ちょうどの大きさを通し、1 バイト超えを断ることを確かめる。
+func TestParsePullSizeBoundary(t *testing.T) {
+	pp := policyFor(t, repoOR)
+	b := pullBody(t, "title", "t", "head", headOf("x"), "base", "main")
+	if _, err := pp.ParsePull(repoOR, []byte(b+strings.Repeat(" ", MaxRequestBytes-len(b)))); err != nil {
+		t.Fatalf("ちょうどの大きさは通る: %v", err)
+	}
+	if _, err := pp.ParsePull(repoOR, []byte(b+strings.Repeat(" ", MaxRequestBytes-len(b)+1))); Reason(err) != CodeTooLarge {
+		t.Fatalf("1 バイト超えは断る: %v", err)
+	}
+}
+
 func TestParsePullRejects(t *testing.T) {
 	same := policyFor(t, repoOR)
 	fork := policyFor(t, repoFork, repoUp)
@@ -228,7 +240,8 @@ func TestParsePullRejects(t *testing.T) {
 		{"draft-object", same, repoOR, ok("draft", map[string]bool{}), CodeBadField},
 		// title・body の中身
 		{"title-empty", same, repoOR, ok("title", ""), CodeBadField},
-		{"title-blank", same, repoOR, ok("title", " \t "), CodeBadField},
+		{"title-blank", same, repoOR, ok("title", "   "), CodeBadField},
+		{"title-space-tab", same, repoOR, ok("title", " \t "), CodeBadField},
 		{"title-257", same, repoOR, ok("title", strings.Repeat("a", MaxTitleBytes+1)), CodeBadField},
 		{"title-multibyte-over", same, repoOR, ok("title", strings.Repeat("あ", 86)), CodeBadField}, // 258 バイト
 		{"title-lf", same, repoOR, ok("title", "a\nb"), CodeBadField},
