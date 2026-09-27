@@ -19,6 +19,10 @@ func ParseRepo(s string) (Repo, error) {
 // String は、"owner/name" を返す。
 func (r Repo) String() string { return r.Owner + "/" + r.Name }
 
+// CloneURL は、r の GitHub 上の clone URL (https://github.com/<owner>/<name>.git)。Owner・Name は、
+// ParseRepo が確かめた形 ([A-Za-z0-9-]・[A-Za-z0-9._-] で、"/" を含まない) なので、そのまま組み立ててよい。
+func (r Repo) CloneURL() string { return "https://github.com/" + r.Owner + "/" + r.Name + ".git" }
+
 // Equal は、r と o が同じ repo か (owner・name とも、ASCII の大文字小文字を区別しない)。
 func (r Repo) Equal(o Repo) bool {
 	return strings.EqualFold(r.Owner, o.Owner) && strings.EqualFold(r.Name, o.Name)

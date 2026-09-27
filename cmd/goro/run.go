@@ -423,6 +423,17 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	// 揃えるため。auditLog は startProxy の中でしか作らない)。
 	var push *pushConfig
 	if o.push != "" {
+		repo, err := git.ParseRepo(o.push) // parseRunArgs が確かめ済みだが、ここでも確かめる (呼び手を信用しない)
+		if err != nil {
+			return fail("--push: %v", err)
+		}
+		// origin を、GitHub の URL に揃え直す (--push が有効な起動のたび、再開を含めて毎回。insteadOf の
+		// 配線は cageEnv (pushEnv) が別途行う: ここでは、素の git fetch/pull/push origin ... が届く先の
+		// remote を用意するだけで、新しい通信経路は増えない)。Create が直後に origin を外しているので
+		// (session/create.go)、新規セッションでも、この呼び出しが無いと origin が無いまま動かない。
+		if err := store.SetPushOrigin(ctx, tgt.work, repo.CloneURL()); err != nil {
+			return fail("origin を設定できない: %v", err)
+		}
 		p, err := newPushConfig(stateDir, o.push, tgt.id)
 		if err != nil {
 			return fail("--push の配線を作れない: %v", err)

@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
 // 名義の既定。
@@ -100,6 +102,24 @@ func (s *Store) Create(ctx context.Context, o CreateOptions) (sess *Session, err
 		return nil, err
 	}
 	return sess, nil
+}
+
+// SetPushOrigin は、clone (セッションの Clone、私用の private clone のディレクトリ) に、"origin" という
+// 名前の remote を url に設定する (無ければ足す。すでにあれば向き先を変える。何度呼んでも同じ結果になる)。
+//
+// Create は、clone した直後に origin を外す (このファイルの上の方)。goro run --push は、それとは別に、
+// --push が有効な起動のたび (再開を含む) に、この関数で origin を url に揃え直す: エージェントが、素の
+// git fetch/pull/push origin ... を打つだけで届くようにするため (呼び手が別途設定する url.<...>.insteadOf
+// で、実際の通信は、その経路の先の egress に付け替わる。url 自体を書き換えるだけで、新しい通信経路が
+// 増えるわけではない)。url は、呼び手が確かめた形 (https://github.com/<owner>/<name>.git) を渡すこと。
+func (s *Store) SetPushOrigin(ctx context.Context, clone, url string) error {
+	binds := []bwrap.Bind{s.bind(clone, "/work", true)}
+	if err := s.runGit(ctx, binds, "-C", "/work", "remote", "add", "origin", url); err != nil {
+		if err := s.runGit(ctx, binds, "-C", "/work", "remote", "set-url", "origin", url); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkRepo は、Repo がローカルのディレクトリの path であることを確かめ、絶対・クリーンな path にして返す。

@@ -236,6 +236,47 @@ func TestCreateFromRepoUnderHome(t *testing.T) {
 	}
 }
 
+// TestSetPushOrigin は、SetPushOrigin が、origin の無い (Create 直後の) clone に origin を足すことと、
+// 何度呼んでも (すでに origin があっても、違う URL に向いていても) 同じ url に揃うことを確認する。
+func TestSetPushOrigin(t *testing.T) {
+	needBwrap(t)
+	src := newSrcRepo(t)
+	st, _, _ := testStore(t)
+	sess, err := st.Create(ctxT(t), CreateOptions{Repo: src.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := readFile(t, filepath.Join(sess.Clone, ".git", "config"))
+	if strings.Contains(cfg, "[remote") {
+		t.Fatalf("Create 直後なのに、すでに remote がある:\n%s", cfg)
+	}
+
+	const url1 = "https://github.com/o/r.git"
+	if err := st.SetPushOrigin(ctxT(t), sess.Clone, url1); err != nil {
+		t.Fatalf("1 回目の SetPushOrigin: %v", err)
+	}
+	cfg = readFile(t, filepath.Join(sess.Clone, ".git", "config"))
+	if !strings.Contains(cfg, `[remote "origin"]`) || !strings.Contains(cfg, "url = "+url1) {
+		t.Fatalf("origin が url1 に設定されていない:\n%s", cfg)
+	}
+
+	// 2 回目 (違う URL): 足すのではなく、向き先を変える (idempotent)。
+	const url2 = "https://github.com/other/repo.git"
+	if err := st.SetPushOrigin(ctxT(t), sess.Clone, url2); err != nil {
+		t.Fatalf("2 回目の SetPushOrigin: %v", err)
+	}
+	cfg = readFile(t, filepath.Join(sess.Clone, ".git", "config"))
+	if strings.Contains(cfg, url1) {
+		t.Errorf("古い URL (%s) が残っている:\n%s", url1, cfg)
+	}
+	if !strings.Contains(cfg, "url = "+url2) {
+		t.Errorf("origin が url2 に更新されていない:\n%s", cfg)
+	}
+	if n := strings.Count(cfg, `[remote "origin"]`); n != 1 {
+		t.Errorf(`[remote "origin"] が %d 個 (2 個目の remote を作ってしまった):%s`, n, cfg)
+	}
+}
+
 // TestCreateFailureLeavesNothing は、Create が失敗したとき、セッションのディレクトリを残さないことを確認する。
 func TestCreateFailureLeavesNothing(t *testing.T) {
 	needBwrap(t)

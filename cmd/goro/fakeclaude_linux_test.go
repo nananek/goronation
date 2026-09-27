@@ -90,6 +90,12 @@ var testAgentProfile = agentProfile{
 //	rawtty [hold]         標準入力の端末を raw・-echo・-isig にして、raw-set を出す。hold なら、殺されるまで待つ。そうでなければ、
 //	                      端末から 1 バイト届くまで待って終わる (raw の間に、テストが端末の設定を確かめられるように)
 func fakeClaude(args []string) int {
+	// --push owner/repo のとき、claude には --mcp-config <JSON> が、場面の引数より前に入る (goro run 側。
+	// cmd/goro/mcp.go の claudeMCPInject)。実物の claude は、これを自分の flag として消費する。偽のエージェントも
+	// 同じに振る舞う (でないと、--push と組み合わせる場面のテストが "--mcp-config" 自体を場面の名前と誤認する)。
+	if len(args) >= 2 && args[0] == "--mcp-config" {
+		args = args[2:]
+	}
 	if len(args) == 0 {
 		fmt.Println("scenario=none")
 		return 0
