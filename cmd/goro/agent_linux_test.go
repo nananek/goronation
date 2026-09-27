@@ -635,7 +635,7 @@ func TestAgentTable(t *testing.T) {
 				t.Errorf("env を bwrap が拒否する: %v", err)
 			}
 			for _, e := range p.env { // 共通の環境変数を、上書きしない
-				if slices.Contains([]string{"HOME", "PATH", "TERM", "LANG", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}, e.Key) {
+				if slices.Contains([]string{"HOME", "PATH", "TERM", "LANG", "TZ", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}, e.Key) {
 					t.Errorf("env %s は、共通の環境変数 (エージェントが上書きできない)", e.Key)
 				}
 			}
@@ -799,7 +799,7 @@ func checkCreds(t *testing.T, p agentProfile) {
 	t.Helper()
 	// 認証用ディレクトリを指す環境変数は、共通の環境変数を上書きせず、値は jailAuth の中 (檻の中の path)。bwrap も受け付ける。
 	for _, e := range p.creds.env {
-		if slices.Contains([]string{"HOME", "PATH", "TERM", "LANG", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}, e.Key) {
+		if slices.Contains([]string{"HOME", "PATH", "TERM", "LANG", "TZ", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}, e.Key) {
 			t.Errorf("%s の creds.env %s は、共通の環境変数 (エージェントが上書きできない)", p.name, e.Key)
 		}
 		if e.Value != jailAuth && !strings.HasPrefix(e.Value, jailAuth+"/") {

@@ -80,7 +80,7 @@ func TestRunOpenCodeCage(t *testing.T) {
 		t.Errorf("HOME・cwd・HTTPS_PROXY・args = %q・%q・%q・%q", kv["home"], kv["cwd"], kv["https_proxy"], kv["args"])
 	}
 	allowed := map[string]bool{}
-	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_MODELS_FETCH",
+	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "TZ", "OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_MODELS_FETCH",
 		"OPENCODE_DISABLE_SHARE", "OPENCODE_DISABLE_LSP_DOWNLOAD", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "PWD"} {
 		allowed[n] = true
 	}
@@ -90,8 +90,10 @@ func TestRunOpenCodeCage(t *testing.T) {
 			t.Errorf("檻の環境変数に、許可リスト外の %s がある (%s)", n, kv["env"])
 		}
 	}
+	// PWD・TZ は、必須にしない: PWD はシェル依存、TZ はホストの timezone が hostTZ (tz.go) で決められない
+	// 環境では出ない (エラーにしない設計)。他は、常に出るはず。
 	for n := range allowed {
-		if n != "PWD" && !strings.Contains(","+kv["env"]+",", ","+n+",") {
+		if n != "PWD" && n != "TZ" && !strings.Contains(","+kv["env"]+",", ","+n+",") {
 			t.Errorf("檻の環境変数に %s が無い (%s)", n, kv["env"])
 		}
 	}
