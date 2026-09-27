@@ -16,7 +16,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/nananek/goronation/cmd/internal/credfile"
 	"github.com/nananek/goronation/cmd/internal/session"
+	"github.com/nananek/goronation/egress/git"
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
@@ -38,6 +40,9 @@ func runUsage() string {
   --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)。セッションは <DIR>/sessions/、エージェントごとの認証情報 (auth/)・repo ごとの HOME (homes/)・ログイン用のディレクトリは <DIR>/agents/<エージェント名>/
   --bin PATH        動かすエージェントの実行ファイル (既定は、環境変数 GORO_<エージェント名の大文字> か、PATH の実行ファイル。下の「エージェント」)
   --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は、エージェントごと。下の「エージェント」)
+  --push OWNER/REPO 檻の git push・fetch と goro pr create (檻の中のコマンド) を、この 1 つの repo だけに許す
+                    (トークンは檻に渡さない)。--login とは併用できない。ref は refs/heads/goro/<セッション ID>/
+                    の下だけ (GORO_PUSH_REF_PREFIX で檻に伝える)。ready for review にするのは、ホストの goro pr ready
   -- ARGS...        エージェントに渡す引数 (--login のときは、そのエージェントのログインの引数の後ろに付く)
 
 エージェント:
@@ -85,6 +90,7 @@ type runOptions struct {
 	agent         string // 動かすエージェント (agents の表の name)。空は、--session なら記録のエージェント、それ以外は既定
 	bin           string // 動かすエージェントの実行ファイル。空なら GORO_<NAME> か PATH
 	allow         []string
+	push          string   // "owner/repo"。空なら無効 (--login とは併用できない)
 	agentArgs     []string // エージェントへの引数 (-- の後ろ)
 }
 
@@ -117,6 +123,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	flags.StringVar(&o.stateDir, "state-dir", "", "")
 	flags.StringVar(&o.agent, "agent", "", "") // 空 = 省略
 	flags.StringVar(&o.bin, "bin", "", "")
+	flags.StringVar(&o.push, "push", "", "")
 	for _, name := range removedFlags {
 		flags.Func(name, "", func(string) error {
 			return fmt.Errorf("廃止した。--bin PATH を使う (環境変数 %s は、そのまま使える)", exeEnvName(name))
@@ -154,6 +161,14 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	}
 	if (o.name != "" || o.email != "") && o.repo == "" {
 		return fail("--name と --email は、--repo のときだけ使える")
+	}
+	if o.push != "" {
+		if o.login {
+			return fail("--push は --login と一緒には使えない (push にはセッションが要る)")
+		}
+		if _, err := git.ParseRepo(o.push); err != nil {
+			return fail("--push は owner/repo の形: %q", o.push)
+		}
 	}
 	switch {
 	case agentSet:
@@ -402,13 +417,47 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if o.login {
 		fmt.Fprintln(stderr, "goro run: "+agent.loginGuide())
 	}
+
+	// --push: git push・PR 作成の配線 (git.Policy・資格情報) を、檻を起こす前に用意する (作れなければ、檻を
+	// 起動しない)。gateway.Handler 自体は startProxy が作る (監査を、egress の監査ログと同じ書き込み先に
+	// 揃えるため。auditLog は startProxy の中でしか作らない)。
+	var push *pushConfig
+	if o.push != "" {
+		p, err := newPushConfig(stateDir, o.push, tgt.id)
+		if err != nil {
+			return fail("--push の配線を作れない: %v", err)
+		}
+		push = p
+	}
+
 	sum := runSummary{id: tgt.id, stateDir: stateDir, stateDirGiven: o.stateDir != "", authDir: dirs.auth, agent: agent}
 	code := runCage(ctx, o, agent, sw, tgt, cageConfig{
 		Host: host, Agent: agent, AgentExe: agentExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
 		RunDir: tgt.runDir, AgentHome: home, AuthDir: dirs.auth, Work: tgt.work, Term: os.Getenv("TERM"), Args: cageArgs(o, agent),
-	}, &sum, stderr)
+		PushRepo: o.push, PushRefPrefix: push.refPrefix(),
+	}, push, &sum, stderr)
 	printRunSummary(stderr, sum)
 	return code
+}
+
+// newPushConfig は、--push owner/repo (sessionID の名前空間限定) の pushConfig (startProxy が
+// gateway.Handler を作るのに要るものだけ) を作る。stateDir は、goro auth github が保存したトークンの場所
+// (credfile.Store)。sessionID が git.NewPolicy の検査 (ref の要素として正しい 1〜64 文字) を通らなければ error
+// (--login は、この呼び出し自体をしない。呼び手が保証する)。
+func newPushConfig(stateDir, push, sessionID string) (*pushConfig, error) {
+	repo, err := git.ParseRepo(push) // parseRunArgs が確かめ済みだが、ここでも確かめる (呼び手を信用しない)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := git.NewPolicy(repo, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("セッション ID: %w", err)
+	}
+	creds, err := credfile.New(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	return &pushConfig{Policy: policy, Credentials: creds}, nil
 }
 
 // sampleSessionID は、セッション ID と同じ長さの例 (session の ID の形。セッションを作る前に、UDS の path の長さを調べるため)。
@@ -431,8 +480,8 @@ func cageArgs(o runOptions, p agentProfile) []string {
 }
 
 // runCage は、egress を起こして、檻を起動し、終わるのを待つ。終了コードを返す。
-func runCage(ctx context.Context, o runOptions, agent agentProfile, sw *sigWatch, tgt runTarget, cfg cageConfig, sum *runSummary, stderr io.Writer) int {
-	proxy, err := startProxy(tgt.runDir, allowList(agent, o.allow))
+func runCage(ctx context.Context, o runOptions, agent agentProfile, sw *sigWatch, tgt runTarget, cfg cageConfig, push *pushConfig, sum *runSummary, stderr io.Writer) int {
+	proxy, err := startProxy(tgt.runDir, allowList(agent, o.allow), push)
 	if err != nil {
 		fmt.Fprintf(stderr, "goro run: egress を起動できない: %v\n", err)
 		return 1

@@ -64,6 +64,10 @@ func TestParseRunArgs(t *testing.T) {
 		{"--allow の userinfo", []string{"--login", "--allow", "u@host.example:443"}, runOptions{}, "host:port"},
 		{"--allow の port が 0", []string{"--login", "--allow", "host.example:0"}, runOptions{}, "host:port"},
 		{"未知のフラグ", []string{"--login", "--bogus"}, runOptions{}, "bogus"},
+		{"--push", []string{"--repo", "r", "--push", "o/r"}, runOptions{repo: "r", push: "o/r"}, ""},
+		{"--push は --login と併用できない", []string{"--login", "--push", "o/r"}, runOptions{}, "--login と一緒には使えない"},
+		{"--push が owner/repo の形でない", []string{"--repo", "r", "--push", "not-a-repo"}, runOptions{}, "owner/repo の形"},
+		{"--push が空の owner", []string{"--repo", "r", "--push", "/repo"}, runOptions{}, "owner/repo の形"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stderr bytes.Buffer
@@ -81,7 +85,7 @@ func TestParseRunArgs(t *testing.T) {
 				t.Fatalf("error: %v\n%s", err, stderr.String())
 			}
 			if got.repo != tc.want.repo || got.session != tc.want.session || got.login != tc.want.login || got.name != tc.want.name ||
-				got.email != tc.want.email || got.stateDir != tc.want.stateDir || got.bin != tc.want.bin ||
+				got.email != tc.want.email || got.stateDir != tc.want.stateDir || got.bin != tc.want.bin || got.push != tc.want.push ||
 				!slices.Equal(got.allow, tc.want.allow) || !slices.Equal(got.agentArgs, tc.want.agentArgs) {
 				t.Errorf("parseRunArgs = %+v, want %+v", got, tc.want)
 			}
@@ -448,7 +452,7 @@ func TestCageEnv(t *testing.T) {
 		"xterm-256color": "xterm-256color", "screen.linux": "screen.linux", "": "dumb", "bad term": "dumb",
 		"x\ny": "dumb", "$(id)": "dumb", strings.Repeat("a", 65): "dumb", "tmux-256color": "tmux-256color",
 	} {
-		env := cageEnv(claudeProfile, term)
+		env := cageEnv(claudeProfile, term, "", "")
 		if names(env) != wantNames {
 			t.Fatalf("環境変数の名前 = %s, want %s", names(env), wantNames)
 		}
@@ -461,6 +465,31 @@ func TestCageEnv(t *testing.T) {
 	// 許可リストは、bwrap の資格情報らしい名前の検査に通る。
 	if _, err := cageSpec(testCage()).Argv(); err != nil {
 		t.Error(err)
+	}
+}
+
+// TestCageEnvPush は、push・refPrefix が空でないとき、GORO_PUSH_REPO・GORO_PUSH_REF_PREFIX と、
+// git の insteadOf (GIT_CONFIG_*) が、正しい値で足されることを確かめる。
+func TestCageEnvPush(t *testing.T) {
+	env := cageEnv(claudeProfile, "xterm", "o/r", "refs/heads/goro/sess-1/")
+	got := map[string]string{}
+	for _, e := range env {
+		got[e.Key] = e.Value
+	}
+	want := map[string]string{
+		"GORO_PUSH_REPO":       "o/r",
+		"GORO_PUSH_REF_PREFIX": "refs/heads/goro/sess-1/",
+		"GIT_CONFIG_COUNT":     "1",
+		"GIT_CONFIG_KEY_0":     "url." + jailGitBase + ".insteadOf",
+		"GIT_CONFIG_VALUE_0":   "https://github.com/",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+	if jailGitBase != "http://127.0.0.1:3128/git/github.com/" {
+		t.Fatalf("jailGitBase = %q (egress/git.PathPrefix と食い違っていないか確認)", jailGitBase)
 	}
 }
 
@@ -543,7 +572,7 @@ func TestCheckSockPath(t *testing.T) {
 	}
 	// startProxy は、長すぎる run dir を、何も作らずに断る。
 	longRun := filepath.Join(dir, strings.Repeat("d", 100))
-	if _, err := startProxy(longRun, allowList(claudeProfile, nil)); err == nil || !strings.Contains(err.Error(), "--state-dir") {
+	if _, err := startProxy(longRun, allowList(claudeProfile, nil), nil); err == nil || !strings.Contains(err.Error(), "--state-dir") {
 		t.Errorf("startProxy(長い path) = %v", err)
 	}
 	if _, err := os.Stat(longRun); err == nil {
@@ -587,14 +616,14 @@ func TestStartProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := startProxy(run, allowList(claudeProfile, []string{"extra.invalid:443"}))
+	p, err := startProxy(run, allowList(claudeProfile, []string{"extra.invalid:443"}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fi, err := os.Stat(p.sockPath); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("UDS の権限 = %v, %v, want 0600", fi, err)
 	}
-	if _, err := startProxy(run, allowList(claudeProfile, nil)); err == nil || !strings.Contains(err.Error(), "別の goro run が使っている") {
+	if _, err := startProxy(run, allowList(claudeProfile, nil), nil); err == nil || !strings.Contains(err.Error(), "別の goro run が使っている") {
 		t.Errorf("同じ run dir の 2 つ目の startProxy = %v, want 別の goro run が使っている", err)
 	}
 	if got := connectVia(t, p.sockPath, "denied.example:443"); got != "403" {
@@ -623,7 +652,7 @@ func TestStartProxy(t *testing.T) {
 	}
 
 	// Close の後は、ロックが離れていて、もう一度起動できる。
-	p2, err := startProxy(run, allowList(claudeProfile, nil))
+	p2, err := startProxy(run, allowList(claudeProfile, nil), nil)
 	if err != nil {
 		t.Fatalf("Close の後の startProxy: %v", err)
 	}

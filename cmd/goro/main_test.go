@@ -119,6 +119,9 @@ func TestDispatch(t *testing.T) {
 		{"未知のサブコマンド", []string{"bogus"}, exitUsage, `未知のサブコマンド: "bogus"`},
 		{"--help", []string{"--help"}, 0, "使い方: goro"},
 		{"-h", []string{"-h"}, 0, "使い方: goro"},
+		{"pr -h", []string{"pr", "-h"}, 0, "goro pr create"},
+		{"pr 引数なし", []string{"pr"}, exitUsage, "goro pr create"},
+		{"pr 未知のサブコマンド", []string{"pr", "bogus"}, exitUsage, `未知のサブコマンド "bogus"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stderr bytes.Buffer
