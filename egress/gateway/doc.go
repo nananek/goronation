@@ -23,6 +23,9 @@
 // # 限界
 //
 //   - Authorization の形式 (git は Basic の x-access-token・API は Bearer) を、GitHub の実機で確かめていない。
-//   - 同時数・全体の時間の上限は、まだ無い (呼び手の http.Server の設定に任せる)。upload-pack の本文は検査しない。
+//   - ヘッダ受信の締め切り (ReadHeaderTimeout)・keep-alive の空き時間の上限 (IdleTimeout) は、egress.ServeBoth
+//     が connect の Config (HeaderTimeout・IdleTimeout) をそのまま適用する (呼び手の設定に任せない: ServeBoth
+//     が内部で httpSrv を作るため、呼び手には後から設定する手段が無い)。同時数の上限は、まだ無い。
+//     upload-pack の本文は検査しない。
 //   - 1 つの listener での CONNECT との共存は egress.ServeBoth が行うが、goro run への配線は、この package の外 (PR ③)。
 package gateway

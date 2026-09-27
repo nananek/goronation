@@ -20,8 +20,16 @@ const maxSniffLine = 4 << 10
 // 変えない: 読んだ行は、そのまま接続の先頭に戻し (二重に読ませない)、connect.accepted に渡す。
 // method が CONNECT なら connect へ、GET・POST で request-target が prefixes のどれかで始まれば other (1 接続に 1 つの
 // http.Server) へ、それ以外は 400 で閉じる。戻るのは、l が閉じたとき (Close は、呼び手が l に対して行う)。
+//
+// other 側の httpSrv は ServeBoth が内部で作るため、呼び手には後から ReadHeaderTimeout 等を設定する手段が無い。
+// connect.cfg.HeaderTimeout・IdleTimeout を、ここでそのまま httpSrv にも適用する (dispatch が最初の行を読んだ後に
+// SetReadDeadline(time.Time{}) で解除する締め切りは、net/http がヘッダを読み始める時点で改めて架け直す)。
 func ServeBoth(l net.Listener, connect *Server, other http.Handler, prefixes ...string) error {
-	httpSrv := &http.Server{Handler: other}
+	httpSrv := &http.Server{
+		Handler:           other,
+		ReadHeaderTimeout: connect.cfg.HeaderTimeout,
+		IdleTimeout:       connect.cfg.IdleTimeout,
+	}
 	for {
 		c, err := l.Accept()
 		if err != nil {
