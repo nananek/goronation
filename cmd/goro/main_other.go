@@ -22,6 +22,8 @@ func runAuth(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	return unsupported("auth", stderr)
 }
 
+func runPr(args []string, stdout, stderr io.Writer) int { return unsupported("pr", stderr) }
+
 func unsupported(sub string, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "goro %s: Linux だけで使える\n", sub)
 	return 1

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,8 +19,27 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nananek/goronation/core/credential"
 	"github.com/nananek/goronation/egress"
+	"github.com/nananek/goronation/egress/gateway"
+	"github.com/nananek/goronation/egress/git"
+	"github.com/nananek/goronation/egress/github"
 )
+
+// pushConfig は、--push owner/repo が指定されたときに、startProxy が gateway.Handler を作るのに要るもの。
+// nil なら --push は無効 (startProxy は、これまでどおり CONNECT だけの egress.Server.Serve を使う)。
+type pushConfig struct {
+	Policy      git.Policy
+	Credentials credential.Source
+}
+
+// refPrefix は、push (nil でもよい) が許可する ref の接頭辞。push が nil なら空文字。
+func (push *pushConfig) refPrefix() string {
+	if push == nil {
+		return ""
+	}
+	return push.Policy.Prefix()
+}
 
 const (
 	// proxySockName・egressLogName・lockName は、run dir の中のファイル名。
@@ -111,6 +131,9 @@ func (a *auditLog) Close() int64 {
 // hostProxy は、goro run が、ホスト側で動かす egress: run dir の UDS で待ち受け、監査を egress.log に書く。
 type hostProxy struct {
 	srv      *egress.Server
+	listener net.Listener // egress.ServeBoth の doc の契約: Close は呼び手が l に対して行う (srv.Close は、
+	// Serve が自分で addListener した listener しか知らない。ServeBoth は自分で addListener しないため、
+	// push を配線したときは、srv.Close だけでは l の Accept が止まらない)。
 	audit    *auditLog
 	logFile  *os.File
 	logPath  string
@@ -122,7 +145,11 @@ type hostProxy struct {
 
 // startProxy は、runDir (0700 で、作ってある) の UDS で待ち受ける egress を起こす。同じ runDir を、同時に 2 つの goro run が
 // 使うことは、ロックで断る (前の起動が残した UDS は、ロックを持てたときだけ消す)。
-func startProxy(runDir string, allow []string) (p *hostProxy, err error) {
+// push が nil でなければ、CONNECT に加えて、git smart-HTTP・PR 作成 (git.PathPrefix・github.PathPrefix) も、
+// 同じ listener で、push から作る gateway.Handler に振り分ける (egress.ServeBoth)。gateway.Handler の監査は、
+// CONNECT と同じ audit (egress.log) に書く。gateway.New が失敗すれば (通常起きない: Policy は git.NewPolicy を
+// 経ている)、UDS も監査ログも作らずに返す。push が nil なら、これまでどおり CONNECT だけ (srv.Serve)。
+func startProxy(runDir string, allow []string, push *pushConfig) (p *hostProxy, err error) {
 	sock := filepath.Join(runDir, proxySockName)
 	if err := checkSockPath(sock); err != nil {
 		return nil, err
@@ -162,18 +189,50 @@ func startProxy(runDir string, allow []string) (p *hostProxy, err error) {
 		return nil, fmt.Errorf("UDS の権限を設定できない: %w", err)
 	}
 	audit := newAuditLog(logFile, auditQueue, auditRunBudget)
+	// MaxBodyBytes は、push が nil なら使われない (ServeBoth を呼ばないため) が、gateway.DefaultMaxPackBytes を
+	// 参照する側に揃えておく (押し戻す先の値の食い違いを、コードの上で防ぐ。egress は gateway に依存しないので、
+	// 数値そのものではなく定数を読む)。
+	srv := egress.New(egress.Config{Allow: allow, Audit: audit, MaxBodyBytes: gateway.DefaultMaxPackBytes})
+
+	var pushHandler http.Handler
+	if push != nil {
+		h, gerr := gateway.New(gateway.Config{
+			Push:        push.Policy,
+			Pull:        github.PullPolicy{Push: push.Policy},
+			Credentials: push.Credentials,
+			Audit:       audit,
+		})
+		if gerr != nil {
+			l.Close()
+			audit.Close()
+			return nil, fmt.Errorf("push の配線 (gateway) を作れない: %w", gerr)
+		}
+		pushHandler = h
+	}
+
 	p = &hostProxy{
-		srv: egress.New(egress.Config{Allow: allow, Audit: audit}), audit: audit, logFile: logFile, logPath: logPath,
+		srv: srv, listener: l, audit: audit, logFile: logFile, logPath: logPath,
 		logStart: fi.Size(), lock: lock, sockPath: sock, serveErr: make(chan error, 1),
 	}
-	go func() { p.serveErr <- p.srv.Serve(l) }()
+	go func() {
+		if pushHandler != nil {
+			p.serveErr <- egress.ServeBoth(l, srv, pushHandler, git.PathPrefix, github.PathPrefix)
+		} else {
+			p.serveErr <- srv.Serve(l)
+		}
+	}()
 	return p, nil
 }
 
 // Close は、egress を止め (進行中の接続を閉じる)、監査を書き終えて、ロックを離す。捨てた監査の行の数と、待ち受けの異常な終了を返す。
 func (p *hostProxy) Close() (dropped int64, serveErr error) {
+	p.listener.Close() // egress.ServeBoth を使っているとき、accept ループを止めるのはこれだけ (上の listener を見よ)
 	p.srv.Close()
-	if err := <-p.serveErr; err != nil && !errors.Is(err, egress.ErrClosed) {
+	// listener を先に自分で閉じたことで、Serve・ServeBoth のどちらの accept ループも、net.ErrClosed (か、それを
+	// 包んだ error) で戻ることがある (Serve は s.ctx.Err() を見て egress.ErrClosed にするが、ServeBoth には
+	// その仕組みが無く、素の net.ErrClosed のまま返る)。どちらも、こちらから閉じた結果なので、異常終了として
+	// 報告しない。
+	if err := <-p.serveErr; err != nil && !errors.Is(err, egress.ErrClosed) && !errors.Is(err, net.ErrClosed) {
 		serveErr = err
 	}
 	dropped = p.audit.Close()

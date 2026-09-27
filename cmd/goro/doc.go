@@ -2,21 +2,21 @@
 //
 // run は、ホストの repo の private clone (または前のセッション) の上で、ネットワークの無い bwrap の檻の中のエージェント (--agent claude か opencode。既定は claude) を動かし、
 // 檻の外向き通信を、ホストの egress (許可した宛先だけの CONNECT プロキシ) だけに絞る。export は、clone のコミットを bundle にして取り出す。
-// エージェントごとに違うのは、実行ファイルの解決 (--bin、GORO_<名前>、PATH。スクリプトは断る)・環境変数・既定の許可宛先・--login の起動・認証情報の共有と、HOME の種・状態のディレクトリ (すべて <state>/agents/<名前>/{auth,homes,login-home,login-work,login-run}。どのエージェントも同じ形) だけ。HOME は repo ごと (homes/<repo のキー>) で、認証情報だけ、エージェントごとの auth/ を全 repo の檻に渡す。セッションは、作ったエージェントと repo のキーを記録し (goro sessions に出る)、--session はそのエージェント・その HOME で動かす (別の --agent は断る: clone に残る設定を、別の檻で動かさない)。 sessions は一覧を出す。auth は、資格情報 (github のトークン) を、ホストのファイル <state>/credentials/<名前> (0600) に保存する (値は表示せず、檻には入れない)。init は、檻の中で最初に動くリレーで、run が起動する。オプションは goro <サブコマンド> -h に書く。
+// エージェントごとに違うのは、実行ファイルの解決 (--bin、GORO_<名前>、PATH。スクリプトは断る)・環境変数・既定の許可宛先・--login の起動・認証情報の共有と、HOME の種・状態のディレクトリ (すべて <state>/agents/<名前>/{auth,homes,login-home,login-work,login-run}。どのエージェントも同じ形) だけ。HOME は repo ごと (homes/<repo のキー>) で、認証情報だけ、エージェントごとの auth/ を全 repo の檻に渡す。セッションは、作ったエージェントと repo のキーを記録し (goro sessions に出る)、--session はそのエージェント・その HOME で動かす (別の --agent は断る: clone に残る設定を、別の檻で動かさない)。 sessions は一覧を出す。auth は、資格情報 (github のトークン) を、ホストのファイル <state>/credentials/<名前> (0600) に保存する (値は表示せず、檻には入れない)。run --push owner/repo は、git push・fetch と PR 作成を、その 1 repo だけに許す。pr create は、檻の中から PR を作る (常に draft)。pr ready は、ホストから checks を確かめて ready にする。init は、檻の中で最初に動くリレーで、run が起動する。オプションは goro <サブコマンド> -h に書く。
 //
 // # 使い方
 //
 //	goro run --login             # 初回: 既定のエージェント (claude) のログイン。エージェント自身の画面の指示に従い、終わったら終了する
 //	goro run --repo ~/work/foo   # foo の private clone の中で claude と対話する (再開は --session ID。opencode は、--agent opencode を足す。初回は --agent opencode --login)
 //	goro export ID               # bundle を作り、取り込みの git fetch を表示する (自分の repo で実行する)
-//	goro auth github             # github のトークンを、端末に表示せずに貼って保存する (作り方は goro auth -h)
 //
 // # 規則
 //
 //   - cage: 檻に入るのは、/usr・証明書・エージェントと goro の実体・run dir (すべて ro)、repo ごとの HOME・認証用ディレクトリ (auth/)・clone (rw)、許可リストの環境変数だけ。別の repo の HOME・ホストの HOME・~/.ssh・~/.claude・~/.local/share/opencode・環境変数は見えない。
 //   - egress: 許可は、エージェントごとの既定の宛先 (goro run -h に出る) に、--allow で足したもの。拒否は、終了後に宛先つきで表示する。監査 (run dir の egress.log) は、詰まっても止まらず、行を捨てて数える。
-//   - signal: 端末のシグナルは、檻の中のエージェントが直接受ける (goro init は転送しない)。ホストの goro run は SIGINT・SIGQUIT を無視し、SIGTERM・SIGHUP で檻を止める。
-//   - no-host-git: ホストは git を実行しない。clone も export も使い捨ての檻の中で行い、bundle の取り込みは、利用者が自分の repo で行う。
+//   - signal: 端末のシグナルは、檻の中のエージェントが直接受ける (goro init は転送しない)。ホストの goro run は SIGINT・SIGQUIT を無視し、SIGTERM・SIGHUP で檻を止める。no-host-git: ホストは git を実行しない (clone・export も、使い捨ての檻の中)。
+//   - push: --push owner/repo は、その 1 repo・セッションの ref 名前空間 (refs/heads/goro/<セッション>/) だけに、
+//     git push・fetch・PR 作成を限る (トークンは檻に渡さない。goro pr ready は gh を使わず GraphQL を直接叩く)。
 //
 // # 限界
 //

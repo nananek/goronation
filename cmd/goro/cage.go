@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/nananek/goronation/egress/git"
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
@@ -18,6 +19,10 @@ const (
 	jailWork      = "/work"
 	jailProxyAddr = "127.0.0.1:3128"
 )
+
+// jailGitBase は、--push のとき、檻の git が https://github.com/ の代わりに使う URL の base
+// (goro init が中継する loopback + egress/git の受け口)。CONNECT を経由しない、直接の宛先。
+const jailGitBase = "http://" + jailProxyAddr + git.PathPrefix
 
 // cageConfig は、goro run の檻 1 つに見せるものと、その中で実行するもの。path はどれもホストの絶対 path。
 type cageConfig struct {
@@ -41,6 +46,14 @@ type cageConfig struct {
 	Term string
 	// Args は、エージェントへの引数。
 	Args []string
+	// PushRepo は、--push owner/repo が指定されたときの repo ("owner/repo"。空なら無効)。指定されていれば、
+	// 檻の git が https://github.com/ の代わりに egress/git の受け口 (jailGitBase) を使うよう、GIT_CONFIG_*
+	// 環境変数で insteadOf を設定し、GORO_PUSH_REPO・GORO_PUSH_REF_PREFIX で、檻の中に repo と許可された
+	// ref の名前空間を伝える (goro pr create が GORO_PUSH_REPO を読む)。
+	PushRepo string
+	// PushRefPrefix は、PushRepo が指定されたときの、許可された ref の接頭辞 (git.Policy.Prefix の値。
+	// "refs/heads/goro/<セッション>/")。
+	PushRefPrefix string
 }
 
 // cageSpec は、c の檻の Spec を作る。標準入出力は、呼び手が足す。
@@ -72,7 +85,7 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		},
 		Tmpfs: []string{"/tmp"},
 		Binds: binds,
-		Env:   cageEnv(c.Agent, c.Term),
+		Env:   cageEnv(c.Agent, c.Term, c.PushRepo, c.PushRefPrefix),
 		Chdir: jailWork,
 		Cmd:   append(cmd, c.Args...),
 		// NewSession は付けない: 端末のシグナル (Ctrl-C・リサイズ) は、フォアグラウンドの process group ごと、檻の中のエージェントにも届く。
@@ -89,9 +102,9 @@ func (c cageConfig) bind(src, dst string, rw bool) bwrap.Bind {
 var termRE = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,64}$`)
 
 // cageEnv は、檻の環境変数 (これだけ。ホストの環境変数は渡らない): 共通の HOME・PATH・TERM・LANG に、エージェントの p.env と、
-// 認証用ディレクトリの場所を教える p.creds.env を足す。
+// 認証用ディレクトリの場所を教える p.creds.env を足す。push・refPrefix が空でなければ、--push の配線 (下の pushEnv) も足す。
 // proxy の変数は、goro init が設定する。TERM は、形が正しいときだけ渡し、そうでなければ dumb にする。
-func cageEnv(p agentProfile, term string) []bwrap.EnvVar {
+func cageEnv(p agentProfile, term, push, refPrefix string) []bwrap.EnvVar {
 	if !termRE.MatchString(term) {
 		term = "dumb"
 	}
@@ -101,5 +114,23 @@ func cageEnv(p agentProfile, term string) []bwrap.EnvVar {
 		{Key: "TERM", Value: term},
 		{Key: "LANG", Value: "C.UTF-8"},
 	}, p.env...)
-	return append(env, p.creds.env...)
+	env = append(env, p.creds.env...)
+	if push != "" {
+		env = append(env, pushEnv(push, refPrefix)...)
+	}
+	return env
+}
+
+// pushEnv は、--push owner/repo の環境変数: GORO_PUSH_REPO・GORO_PUSH_REF_PREFIX (goro pr create と、
+// エージェントへの手がかり) と、git の https://github.com/ を jailGitBase に付け替える insteadOf
+// (GIT_CONFIG_COUNT・GIT_CONFIG_KEY_0・GIT_CONFIG_VALUE_0。git 2.31 以降が読む環境変数によるコマンド設定。
+// ファイルを書かずに、この起動限りの設定にできる)。
+func pushEnv(repo, refPrefix string) []bwrap.EnvVar {
+	return []bwrap.EnvVar{
+		{Key: "GORO_PUSH_REPO", Value: repo},
+		{Key: "GORO_PUSH_REF_PREFIX", Value: refPrefix},
+		{Key: "GIT_CONFIG_COUNT", Value: "1"},
+		{Key: "GIT_CONFIG_KEY_0", Value: "url." + jailGitBase + ".insteadOf"},
+		{Key: "GIT_CONFIG_VALUE_0", Value: "https://github.com/"},
+	}
 }
