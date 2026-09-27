@@ -58,6 +58,16 @@ var DefaultRules = Rules{
 			Imports: mods("sandbox/bwrap/**", "sandbox/seatbelt/**", "agent/claude/**", "agent/opencode/**"),
 			OnlyIn:  []string{"cmd/**"},
 		},
+
+		// ADR 0004: 全 module 依存ゼロの方針の例外は、WebAuthn の署名検証・CBOR デコードに限る。この 2 つの
+		// 外部 module (cbor が float16 に依存する) を import してよいのは、cmd/internal/webauthn とその配下
+		// (結合テスト用の偽の認証器 webauthntest を含む) だけ。規則を広げるときは、新しい ADR を書き、この
+		// 表だけを変える。OnlyIn は (Imports と違い) repo 相対のファイル path のパターンで書く。
+		{
+			ID:      "webauthn-only-dep",
+			Imports: []string{"github.com/fxamacker/cbor/v2", "github.com/x448/float16"},
+			OnlyIn:  []string{"cmd/internal/webauthn/**"},
+		},
 	},
 
 	ForbidImports: []ForbidImport{
