@@ -17,7 +17,7 @@ import (
 
 const (
 	// bundleName は、export/ の中の bundle のファイル名 (固定。名前を、檻に決めさせない)。
-	bundleName = "goro.bundle"
+	bundleName = "goronation.bundle"
 	// maxHeader は、bundle のヘッダ (refs の一覧) を読む上限。
 	maxHeader = 64 << 10
 	// maxHeads は、取り込みのコマンドに書くブランチの数の上限。
@@ -34,7 +34,7 @@ type Bundle struct {
 	Heads []string
 	// Skipped は、名前が安全でなく (檻が決めた名前)、除いたブランチの数。
 	Skipped int
-	// Fetch は、利用者が、自分のリポジトリで実行する、取り込みのコマンド (シェルの 1 行)。ブランチは refs/heads/goro/<ID>/ の下に入る。
+	// Fetch は、利用者が、自分のリポジトリで実行する、取り込みのコマンド (シェルの 1 行)。ブランチは refs/heads/goronation/<ID>/ の下に入る。
 	Fetch string
 }
 
@@ -157,13 +157,13 @@ func safeHeadName(ref string) bool {
 }
 
 // fetchCommand は、利用者が、自分のリポジトリで実行する取り込みのコマンド。オブジェクトを fsck し、ブランチは、
-// 現在のブランチを上書きしないよう、refs/heads/goro/<id>/ の下へ入れる。--no-tags: 指定した ref のほかに、タグ (名前は檻が決める) を、
+// 現在のブランチを上書きしないよう、refs/heads/goronation/<id>/ の下へ入れる。--no-tags: 指定した ref のほかに、タグ (名前は檻が決める) を、
 // 自動で取り込まない。--no-recurse-submodules: 利用者の repo の submodule を、bundle の内容に応じて取りに行かない。
 // 名前は、すべて、シェルの引用をつける。
 func fetchCommand(bundle, id string, heads []string) string {
 	parts := []string{"git", "-c", "transfer.fsckObjects=true", "fetch", "--no-tags", "--no-recurse-submodules", shellQuote(bundle)}
 	for _, h := range heads {
-		parts = append(parts, shellQuote(h+":refs/heads/goro/"+id+"/"+strings.TrimPrefix(h, "refs/heads/")))
+		parts = append(parts, shellQuote(h+":refs/heads/goronation/"+id+"/"+strings.TrimPrefix(h, "refs/heads/")))
 	}
 	return strings.Join(parts, " ")
 }

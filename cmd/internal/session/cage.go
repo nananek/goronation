@@ -19,7 +19,7 @@ const gitBin = "/usr/bin/git"
 // GIT_CONFIG_* は、リポジトリの設定より優先する (コマンドラインと同じ扱い): 檻の中でも、fsmonitor と hooks は無効にし、
 // 所有者の違うリポジトリでも動くように safe.directory を許す (檻には、守るものが無い)。
 var gitEnv = []bwrap.EnvVar{
-	{Key: "HOME", Value: "/home/goro"}, {Key: "PATH", Value: "/usr/bin:/bin"}, {Key: "LANG", Value: "C.UTF-8"},
+	{Key: "HOME", Value: "/home/goronation"}, {Key: "PATH", Value: "/usr/bin:/bin"}, {Key: "LANG", Value: "C.UTF-8"},
 	{Key: "GIT_CONFIG_NOSYSTEM", Value: "1"}, {Key: "GIT_CONFIG_GLOBAL", Value: "/dev/null"}, {Key: "GIT_TERMINAL_PROMPT", Value: "0"},
 	{Key: "GIT_CONFIG_COUNT", Value: "3"},
 	{Key: "GIT_CONFIG_KEY_0", Value: "safe.directory"}, {Key: "GIT_CONFIG_VALUE_0", Value: "*"},
@@ -38,7 +38,7 @@ func (s *Store) gitSpec(binds []bwrap.Bind, args ...string) bwrap.Spec {
 			{Target: "usr/lib", Dst: "/lib"}, {Target: "usr/lib64", Dst: "/lib64"},
 			{Target: "usr/bin", Dst: "/bin"}, {Target: "usr/sbin", Dst: "/sbin"},
 		},
-		Tmpfs:      []string{"/tmp", "/home/goro"},
+		Tmpfs:      []string{"/tmp", "/home/goronation"},
 		Binds:      append([]bwrap.Bind{{Src: "/usr", Dst: "/usr"}}, binds...),
 		Env:        gitEnv,
 		Chdir:      "/tmp",

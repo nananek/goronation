@@ -94,7 +94,7 @@ func TestShellQuote(t *testing.T) {
 
 func TestFetchCommand(t *testing.T) {
 	got := fetchCommand("/x y/it's.bundle", "20260101-000000-abcdef", []string{"refs/heads/main", "refs/heads/feat/x"})
-	want := `git -c transfer.fsckObjects=true fetch --no-tags --no-recurse-submodules '/x y/it'\''s.bundle' 'refs/heads/main:refs/heads/goro/20260101-000000-abcdef/main' 'refs/heads/feat/x:refs/heads/goro/20260101-000000-abcdef/feat/x'`
+	want := `git -c transfer.fsckObjects=true fetch --no-tags --no-recurse-submodules '/x y/it'\''s.bundle' 'refs/heads/main:refs/heads/goronation/20260101-000000-abcdef/main' 'refs/heads/feat/x:refs/heads/goronation/20260101-000000-abcdef/feat/x'`
 	if got != want {
 		t.Errorf("fetchCommand:\n got %s\nwant %s", got, want)
 	}
@@ -229,7 +229,7 @@ func TestGet(t *testing.T) {
 
 // wantGitEnv は、檻の中の git の環境変数の、期待する全体 (gitEnv とは別に書く。ホストの環境変数は、1 つも渡さない)。
 var wantGitEnv = map[string]string{
-	"HOME": "/home/goro", "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
+	"HOME": "/home/goronation", "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
 	"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_COUNT": "3",
 	"GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": "*",
 	"GIT_CONFIG_KEY_1": "core.fsmonitor", "GIT_CONFIG_VALUE_1": "false",
@@ -250,8 +250,8 @@ func TestGitSpecIsValid(t *testing.T) {
 		name, state, repo string
 		inHome            bool
 	}{
-		{"状態ディレクトリと元の repo が HOME の下", "/home/tester/.local/state/goro", "/home/tester/work/repo", true},
-		{"状態ディレクトリと元の repo が HOME の外", "/data/state/goro", "/data/repos/repo", false},
+		{"状態ディレクトリと元の repo が HOME の下", "/home/tester/.local/state/goronation", "/home/tester/work/repo", true},
+		{"状態ディレクトリと元の repo が HOME の外", "/data/state/goronation", "/data/repos/repo", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &Store{root: tc.state + "/sessions", host: bwrap.Host{Home: "/home/tester"}}
@@ -279,8 +279,8 @@ func TestGitSpecIsValid(t *testing.T) {
 				if got := envMap(spec.Env); !reflect.DeepEqual(got, wantGitEnv) {
 					t.Errorf("Env = %v, want %v (これだけ。ホストの環境変数は渡らない)", got, wantGitEnv)
 				}
-				if !reflect.DeepEqual(spec.Tmpfs, []string{"/tmp", "/home/goro"}) || spec.Chdir != "/tmp" {
-					t.Errorf("Tmpfs = %v, Chdir = %q, want [/tmp /home/goro]・/tmp (HOME と /tmp は使い捨て)", spec.Tmpfs, spec.Chdir)
+				if !reflect.DeepEqual(spec.Tmpfs, []string{"/tmp", "/home/goronation"}) || spec.Chdir != "/tmp" {
+					t.Errorf("Tmpfs = %v, Chdir = %q, want [/tmp /home/goronation]・/tmp (HOME と /tmp は使い捨て)", spec.Tmpfs, spec.Chdir)
 				}
 				if len(spec.Symlinks) != 4 {
 					t.Errorf("Symlinks = %v, want /lib /lib64 /bin /sbin", spec.Symlinks)
@@ -358,16 +358,16 @@ func TestBoundedBuffer(t *testing.T) {
 
 func TestDefaultStateDir(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", "/xdg/state")
-	if got, err := DefaultStateDir(); err != nil || got != "/xdg/state/goro" {
+	if got, err := DefaultStateDir(); err != nil || got != "/xdg/state/goronation" {
 		t.Errorf("XDG_STATE_HOME あり: %q, %v", got, err)
 	}
 	t.Setenv("XDG_STATE_HOME", "relative/state") // 絶対でなければ、使わない (XDG の仕様)
 	t.Setenv("HOME", "/home/u")
-	if got, err := DefaultStateDir(); err != nil || got != "/home/u/.local/state/goro" {
+	if got, err := DefaultStateDir(); err != nil || got != "/home/u/.local/state/goronation" {
 		t.Errorf("XDG_STATE_HOME が相対: %q, %v", got, err)
 	}
 	t.Setenv("XDG_STATE_HOME", "")
-	if got, err := DefaultStateDir(); err != nil || got != "/home/u/.local/state/goro" {
+	if got, err := DefaultStateDir(); err != nil || got != "/home/u/.local/state/goronation" {
 		t.Errorf("XDG_STATE_HOME なし: %q, %v", got, err)
 	}
 }
@@ -376,7 +376,7 @@ func TestDefaultStateDir(t *testing.T) {
 func TestBindInHome(t *testing.T) {
 	st := &Store{host: bwrap.Host{Home: "/home/tester"}}
 	for path, want := range map[string]bool{
-		"/home/tester": true, "/home/tester/x": true, "/home/tester/.local/state/goro/s": true,
+		"/home/tester": true, "/home/tester/x": true, "/home/tester/.local/state/goronation/s": true,
 		"/home/testerX/y": false, "/home/teste": false, "/home": false, "/home/tester2": false, "/usr": false, "/": false,
 	} {
 		if got := st.bind(path, "/x", false).InHome; got != want {

@@ -364,7 +364,7 @@ func TestExportBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(sess.Export, "goro.bundle"); b.Path != want {
+	if want := filepath.Join(sess.Export, "goronation.bundle"); b.Path != want {
 		t.Errorf("Path = %q, want %q", b.Path, want)
 	}
 	if fi, err := os.Stat(b.Path); err != nil || fi.Size() != b.Size || b.Size == 0 {
@@ -412,7 +412,7 @@ func TestExportBundle(t *testing.T) {
 		t.Fatalf("取り込みのコマンドが失敗した: %v\n%s\n%s", err, b.Fetch, out)
 	}
 	refs := strings.Fields(hostGit(t, user, "for-each-ref", "--format=%(refname)"))
-	prefix := "refs/heads/goro/" + sess.ID + "/"
+	prefix := "refs/heads/goronation/" + sess.ID + "/"
 	if want := []string{prefix + "feature/x", prefix + "main"}; !slices.Equal(sorted(refs), want) {
 		t.Errorf("取り込んだ ref = %q, want %q", refs, want)
 	}

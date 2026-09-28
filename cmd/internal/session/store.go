@@ -48,16 +48,16 @@ type Session struct {
 	Export string // 成果の bundle を置く
 }
 
-// DefaultStateDir は、状態を置く既定のディレクトリ ($XDG_STATE_HOME/goro。無ければ ~/.local/state/goro)。
+// DefaultStateDir は、状態を置く既定のディレクトリ ($XDG_STATE_HOME/goronation。無ければ ~/.local/state/goronation)。
 func DefaultStateDir() (string, error) {
 	if x := os.Getenv("XDG_STATE_HOME"); filepath.IsAbs(x) {
-		return filepath.Join(x, "goro"), nil
+		return filepath.Join(x, "goronation"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("session: HOME を決められない: %w", err)
 	}
-	return filepath.Join(home, ".local", "state", "goro"), nil
+	return filepath.Join(home, ".local", "state", "goronation"), nil
 }
 
 // NewStore は、stateDir (絶対・クリーン) の下に、<stateDir>/sessions を 0700 で作り、Store を返す。
