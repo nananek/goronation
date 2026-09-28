@@ -102,11 +102,18 @@ func (s *webServer) handleTerminalPage(w http.ResponseWriter, r *http.Request) {
 }
 
 // newCSPNonce は、CSP nonce (RFC の要求どおり、リクエストごとに新しく生成する、予測不能な値) を作る。
-// 16 バイトの crypto/rand を base64 (nonce の慣例) にエンコードする。
+// 16 バイトの crypto/rand を base64 にエンコードする。標準の base64.StdEncoding ではなく
+// URLEncoding (「+」「/」の代わりに「-」「_」を使う) を選んでいるのは、CSP nonce-source の
+// ABNF ([A-Za-z0-9+/\-_]+={0,2}) がどちらの変種も許すことに加え、「+」だと html/template が
+// <meta name="csp-nonce" content="..."> の属性値として書き出すときに `&#43;` へエスケープして
+// しまい (html/template が「+」を UTF-7 対策として無条件にエスケープする既知の挙動)、CSP ヘッダーの
+// 生の値と <meta> の HTML ソース上の文字列表現が食い違うため (ブラウザの DOM 越しに読めば
+// エスケープは解決済みの値になるので実害は無いが、CI のテストが HTML ソースをそのまま文字列比較して
+// いて偽陽性で落ちた。URLEncoding ならその食い違いの余地自体が無くなる)。
 func newCSPNonce() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("crypto/rand から nonce を読めない: %w", err)
 	}
-	return base64.StdEncoding.EncodeToString(buf), nil
+	return base64.URLEncoding.EncodeToString(buf), nil
 }
