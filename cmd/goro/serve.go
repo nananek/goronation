@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"sync"
 	"time"
 
 	iwebauthn "github.com/nananek/goronation/cmd/internal/webauthn"
@@ -47,6 +48,20 @@ const sessionCookieName = "goro_session"
 
 // maxRequestBody は、goro serve が読む要求本体の上限 (WebAuthn の応答は、せいぜい数百バイト〜数 KiB)。
 const maxRequestBody = 64 << 10
+
+// serveReadTimeout・serveWriteTimeout・serveIdleTimeout は、*http.Server の全体の締め切り。
+// goro serve が読む要求は WebAuthn の応答 (せいぜい数 KiB) だけなので、単純な固定値で十分と判断した
+// (egress のような、大きい本文向けの stall 検知・絶対締め切りの仕組みは要らない)。ReadHeaderTimeout
+// (既存) はヘッダだけに効き、本文の読み取りには効かないので、ReadTimeout も別に設定する。
+const (
+	serveReadTimeout  = 30 * time.Second
+	serveWriteTimeout = 30 * time.Second
+	serveIdleTimeout  = 60 * time.Second
+)
+
+// maxServeConns は、goro serve が同時に受理する接続数の上限 (limitedListener が絞る)。1 ユーザー・
+// 少数のブラウザ/タブを想定した個人用ツールなので、余裕を持たせつつ、無制限にはしない。
+const maxServeConns = 64
 
 // runServe は goro serve の本体。serve と token へ振り分ける。
 func runServe(args []string, stdout, stderr io.Writer) int {
@@ -106,13 +121,72 @@ func runServeServer(args []string, stderr io.Writer) int {
 		return fail("待ち受けられない: %v", err)
 	}
 	defer l.Close()
-	srv := &http.Server{Handler: newServeMux(cfg, store, *origin), ReadHeaderTimeout: 10 * time.Second}
+	srv := newServeHTTPServer(newServeMux(cfg, store, *origin))
 	fmt.Fprintf(stderr, "goro serve: %s で待ち受けている (rp-id=%s origin=%s)\n", l.Addr(), sanitize(*rpID), sanitize(*origin))
-	if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.Serve(newLimitedListener(l, maxServeConns)); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintf(stderr, "goro serve: 終了: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// limitedListener は、net.Listener を薄くラップし、同時に受理する接続数を max で絞る (semaphore)。
+// 空きが無い間は Accept が待つ (accept せずに待たせるので、キューにも積まない)。Close は、待っている
+// Accept も含めて、すぐに終わらせる (http.Server.Close は Listener.Close を呼ぶので、そのまま繋がる)。
+type limitedListener struct {
+	net.Listener
+	sem  chan struct{}
+	done chan struct{}
+	once sync.Once
+}
+
+func newLimitedListener(l net.Listener, max int) *limitedListener {
+	return &limitedListener{Listener: l, sem: make(chan struct{}, max), done: make(chan struct{})}
+}
+
+func (l *limitedListener) Accept() (net.Conn, error) {
+	select {
+	case l.sem <- struct{}{}:
+	case <-l.done:
+		return nil, net.ErrClosed
+	}
+	c, err := l.Listener.Accept()
+	if err != nil {
+		<-l.sem
+		return nil, err
+	}
+	return &limitedConn{Conn: c, release: func() { <-l.sem }}, nil
+}
+
+func (l *limitedListener) Close() error {
+	l.once.Do(func() { close(l.done) })
+	return l.Listener.Close()
+}
+
+// limitedConn は、Close されたときに、limitedListener の枠を 1 つ空ける (二重に空けない)。
+type limitedConn struct {
+	net.Conn
+	release func()
+	once    sync.Once
+}
+
+func (c *limitedConn) Close() error {
+	c.once.Do(c.release)
+	return c.Conn.Close()
+}
+
+// newServeHTTPServer は、goro serve が実際に使う *http.Server を組み立てる (runServeServer と、結合
+// テスト (実際に生の TCP を張って確かめるもの) の、両方がこれを呼ぶ。同じ設定を、別々に書いて食い違わせない
+// ため)。goro serve が読む要求は WebAuthn の応答 (せいぜい数 KiB) だけなので、単純な固定値の締め切りで
+// 十分と判断した (serveReadTimeout 等の doc comment を参照)。
+func newServeHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       serveReadTimeout,
+		WriteTimeout:      serveWriteTimeout,
+		IdleTimeout:       serveIdleTimeout,
+	}
 }
 
 func runServeToken(args []string, stdout, stderr io.Writer) int {
