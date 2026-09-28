@@ -111,6 +111,9 @@ type stateClaims struct {
 type sessionClaims struct {
 	Purpose string `json:"purpose"` // 常に "session" (state token と取り違えないための、目的の分離)
 	Expiry  int64  `json:"exp"`
+	// Epoch は、発行時点の persistedState.SessionEpoch。VerifySession は、これが保存済みの現在の世代と
+	// 一致することを要求する (ログアウトで世代を進めると、それ以前に発行した token は一致しなくなる)。
+	Epoch int64 `json:"session_epoch"`
 }
 
 // b64 は、base64url (パディング無し) の短縮名。
@@ -343,7 +346,7 @@ func AuthenticateFinish(ctx context.Context, cfg Config, st *Store, state string
 		return "", err
 	}
 	return signToken(persisted.SessionSecret, mustJSON(sessionClaims{
-		Purpose: "session", Expiry: time.Now().Add(SessionTTL).Unix(),
+		Purpose: "session", Expiry: time.Now().Add(SessionTTL).Unix(), Epoch: persisted.SessionEpoch,
 	})), nil
 }
 
@@ -370,7 +373,21 @@ func VerifySession(ctx context.Context, st *Store, token string) error {
 	if time.Now().Unix() > claims.Expiry {
 		return errors.New("webauthn: セッションの期限が切れている")
 	}
+	if claims.Epoch != state.SessionEpoch {
+		return errors.New("webauthn: セッションはログアウト済み")
+	}
 	return nil
+}
+
+// Logout は、発行済みの全てのセッション token を一括で失効させる (世代番号を進める)。まだ登録も
+// ログインもしていない状態 (SessionSecret が無い) で呼んでも、エラーにはしない (失効させるものが無いだけ)。
+func Logout(ctx context.Context, st *Store) error {
+	state, err := st.load(ctx)
+	if err != nil {
+		return err
+	}
+	state.SessionEpoch++
+	return st.save(state)
 }
 
 // verifyStateToken は、token の署名を確かめ、purpose が一致し、期限内であることを確かめて、中身を返す。

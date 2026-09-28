@@ -175,6 +175,65 @@ func TestFullRoundTrip(t *testing.T) {
 	}
 }
 
+// TestLogoutRevokesExistingSessions は、Logout が、それ以前に発行された全てのセッション token
+// (奪われて別のクライアントが持っているものも含む) を、まとめて失効させることを確かめる。攻撃者視点
+// レビューが見つけた「logout が cookie を消すだけで、stateless なセッション token 自体は失効しない」
+// という指摘への対応 (SessionEpoch を進める設計)。
+func TestLogoutRevokesExistingSessions(t *testing.T) {
+	ctx := context.Background()
+	cfg := testConfig()
+	st := testStore(t)
+	a := newFakeAuthenticator(t)
+	mustRegister(t, ctx, cfg, st, a)
+
+	login := func() string {
+		t.Helper()
+		opts, state, err := AuthenticateBegin(ctx, cfg, st)
+		if err != nil {
+			t.Fatalf("AuthenticateBegin: %v", err)
+		}
+		resp := a.authenticate(t, cfg.RPID, cfg.Origin, opts.Challenge)
+		session, err := AuthenticateFinish(ctx, cfg, st, state, resp)
+		if err != nil {
+			t.Fatalf("AuthenticateFinish: %v", err)
+		}
+		return session
+	}
+
+	stolen := login() // 「盗まれた」セッション token として、ログアウト前に発行したものを別に持っておく。
+	if err := VerifySession(ctx, st, stolen); err != nil {
+		t.Fatalf("ログアウト前の VerifySession: %v", err)
+	}
+
+	if err := Logout(ctx, st); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	if err := VerifySession(ctx, st, stolen); err == nil {
+		t.Fatal("Logout 後も、ログアウト前に発行された (盗まれた) セッション token が有効なまま")
+	}
+
+	// ログアウト後に新しくログインし直せば、新しい token は有効。
+	fresh := login()
+	if err := VerifySession(ctx, st, fresh); err != nil {
+		t.Fatalf("ログアウト後に新しく発行した token の VerifySession: %v", err)
+	}
+	// 「盗まれた」古い token は、新しいログインの後も引き続き無効。
+	if err := VerifySession(ctx, st, stolen); err == nil {
+		t.Fatal("新しいログイン後も、古い (ログアウト前の) セッション token が有効になっている")
+	}
+}
+
+// TestLogoutWithoutSessionSecretIsNoop は、まだ登録もログインもしていない状態 (SessionSecret が
+// 無い) で Logout を呼んでもエラーにならないことを確かめる (goro serve の handleLogout は、
+// ログインしていないブラウザから POST /logout を呼ばれても、エラーにしない設計)。
+func TestLogoutWithoutSessionSecretIsNoop(t *testing.T) {
+	ctx := context.Background()
+	st := testStore(t)
+	if err := Logout(ctx, st); err != nil {
+		t.Fatalf("Logout (未登録状態): %v", err)
+	}
+}
+
 func TestRegisterRequiresValidBootstrapToken(t *testing.T) {
 	ctx := context.Background()
 	cfg := testConfig()

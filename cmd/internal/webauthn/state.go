@@ -30,6 +30,9 @@ type persistedState struct {
 	SessionSecret   []byte            `json:"session_secret,omitempty"`
 	BootstrapToken  []byte            `json:"bootstrap_token,omitempty"`
 	BootstrapExpiry int64             `json:"bootstrap_expiry,omitempty"`
+	// SessionEpoch は、発行済みのセッション token を一括で失効させるための世代番号。ログアウトのたびに
+	// 進める。セッション token は発行時点の世代を埋め込み、検証時にここと一致しないものは拒否する。
+	SessionEpoch int64 `json:"session_epoch,omitempty"`
 }
 
 // Store は、webauthn の状態 (credential・セッション署名鍵・ブートストラップトークン) を、

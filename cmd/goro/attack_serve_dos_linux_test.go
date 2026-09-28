@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -195,4 +197,93 @@ func TestLimitedListenerCapsAccepts(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("空きができたのに、待っていた接続が accept されない")
 	}
+}
+
+// TestServeKeepAliveDisabledBoundsConnectionHoldTime は、攻撃者視点レビュー (attack-review-28d386c
+// への OpenCode による独立レビューと、それを検証した増分レビュー) が見つけた可用性 DoS の再現・修正確認。
+//
+// limitedListener の枠は、接続が Close されるまで解放されない。HTTP keep-alive では、応答を返し終えた
+// 接続も Close されず、IdleTimeout (60秒の無通信) まで枠を保持し続ける。IdleTimeout は無通信の締め切りに
+// 過ぎないので、64 本の keep-alive 接続を IdleTimeout の内側で (例えば 45〜60 秒ごとに 1 リクエスト)
+// 更新し続けるだけで、枠を無期限に占有でき、65 本目 (正規の利用者) が永久に応答されない、という可用性
+// DoS が、newServeHTTPServer 修正当初の版 (ReadTimeout/WriteTimeout/IdleTimeout・同時接続数の上限だけ)
+// には残っていた (body stall ではなく、完全で正当なリクエストを繰り返すだけで再現するため、ReadTimeout も
+// 無関係だった)。
+//
+// newServeHTTPServer が SetKeepAlivesEnabled(false) を呼ぶようになった今は、1 接続=最大 1 リクエストに
+// 強制される (応答後、サーバー側が接続を閉じ、枠を解放する) ので、この具体的な攻撃 (同一接続への周期的な
+// 延命) は構造的に閉じている。ただし、可用性 DoS の完全な根治ではない: body をゆっくり送る (ReadTimeout
+// いっぱいまで) → 都度接続を張り直す、という、攻撃コストが上がった変種は残る (doc.go の「限界」を参照)。
+func TestServeKeepAliveDisabledBoundsConnectionHoldTime(t *testing.T) {
+	dir := t.TempDir()
+	store, err := iwebauthn.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := "http://" + l.Addr().String()
+	cfg := iwebauthn.Config{RPID: "127.0.0.1", RPName: "test", Origin: origin}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	srv := newServeHTTPServer(newServeMux(cfg, store, origin))
+	go srv.Serve(newLimitedListener(l, maxServeConns))
+	t.Cleanup(func() { srv.Close() })
+
+	getReq := []byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	dial := func() net.Conn {
+		c, err := net.DialTimeout("tcp", l.Addr().String(), 2*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	// 1) 攻撃者のつもりで、max 本を「保持する」ために GET / を送って応答を読む。keep-alive が無効なら、
+	// クライアントが接続を閉じなくても、応答のたびにサーバー側が閉じる (Connection: close が付く)。
+	conns := make([]net.Conn, 0, maxServeConns)
+	for i := 0; i < maxServeConns; i++ {
+		c := dial()
+		t.Cleanup(func() { c.Close() })
+		if _, err := c.Write(getReq); err != nil {
+			t.Fatalf("%d 本目の要求を送れない: %v", i+1, err)
+		}
+		c.SetReadDeadline(time.Now().Add(3 * time.Second))
+		resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: "GET"})
+		if err != nil {
+			t.Fatalf("%d 本目の応答を読めない: %v", i+1, err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		// http.ReadResponse は Connection ヘッダ自体は取り除くが (hop-by-hop)、resp.Close に反映する。
+		if !resp.Close {
+			t.Errorf("%d 本目: resp.Close = false (keep-alive が無効になっていない)", i+1)
+		}
+		conns = append(conns, c)
+	}
+
+	// 2) 同じ接続への 2 回目のリクエストは通らない (サーバーが 1 回目の応答後にすでに閉じているはず)。
+	conns[0].SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conns[0].Write(getReq); err == nil {
+		if _, err := bufio.NewReader(conns[0]).ReadByte(); err == nil {
+			t.Error("keep-alive が無効なはずなのに、同じ接続への 2 回目のリクエストが通った (枠を保持し続けられる)")
+		}
+	}
+
+	// 3) 65 本目 (正規の利用者) は、待たされずにすぐ処理される: 攻撃者が「保持したつもり」の 64 本は、
+	// 応答した時点でサーバー側からすでに閉じられていて、枠は解放済みのはず。
+	extra := dial()
+	t.Cleanup(func() { extra.Close() })
+	if _, err := extra.Write(getReq); err != nil {
+		t.Fatal(err)
+	}
+	extra.SetReadDeadline(time.Now().Add(3 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(extra), &http.Request{Method: "GET"})
+	if err != nil {
+		t.Fatalf("65 本目がすぐ処理されなかった (枠が解放されていない・可用性 DoS が再現している): %v", err)
+	}
+	resp.Body.Close()
 }

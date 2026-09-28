@@ -179,14 +179,23 @@ func (c *limitedConn) Close() error {
 // テスト (実際に生の TCP を張って確かめるもの) の、両方がこれを呼ぶ。同じ設定を、別々に書いて食い違わせない
 // ため)。goro serve が読む要求は WebAuthn の応答 (せいぜい数 KiB) だけなので、単純な固定値の締め切りで
 // 十分と判断した (serveReadTimeout 等の doc comment を参照)。
+//
+// keep-alive は無効にする: limitedListener の枠は接続が閉じるまで解放されないが、keep-alive 中の接続は
+// 応答後も閉じず、IdleTimeout (無通信の締め切り) でしか切れない。1 リクエストごとに枠を確実に返すには、
+// 1 接続=最大 1 リクエストに強制する必要がある (攻撃者視点レビューで実証された、正当なリクエストを
+// IdleTimeout の内側で周期的に送るだけで枠を無期限に占有できる、という可用性 DoS への対応)。これは
+// 「その接続への再利用」を閉じるだけで、body をゆっくり送りながら都度接続を張り直す変種までは防がない
+// (doc.go の「限界」を参照)。
 func newServeHTTPServer(handler http.Handler) *http.Server {
-	return &http.Server{
+	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       serveReadTimeout,
 		WriteTimeout:      serveWriteTimeout,
 		IdleTimeout:       serveIdleTimeout,
 	}
+	srv.SetKeepAlivesEnabled(false)
+	return srv
 }
 
 func runServeToken(args []string, stdout, stderr io.Writer) int {
@@ -362,7 +371,14 @@ func (s *server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// handleLogout は、cookie を消すだけでなく、サーバー側でも世代番号を進めて、発行済みの全セッション
+// token (このブラウザ以外が持っているものも含む) を失効させる。盗まれた cookie が logout 後も有効期限
+// いっぱい通ってしまう、という攻撃者視点レビューの指摘への対応。
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if err := iwebauthn.Logout(r.Context(), s.store); err != nil {
+		writeError(w, http.StatusInternalServerError, "ログアウトできない")
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, Secure: s.secure,
 		SameSite: http.SameSiteStrictMode, MaxAge: -1,
