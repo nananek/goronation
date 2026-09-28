@@ -1,0 +1,87 @@
+diff --git a/src/browser/renderer/dom/DomRenderer.ts b/src/browser/renderer/dom/DomRenderer.ts
+index 1c27179..274603a 100644
+--- a/src/browser/renderer/dom/DomRenderer.ts
++++ b/src/browser/renderer/dom/DomRenderer.ts
+@@ -136,6 +136,7 @@ export class DomRenderer extends Disposable implements IRenderer {
+ 
+     if (!this._dimensionsStyleElement) {
+       this._dimensionsStyleElement = this._document.createElement('style');
++      this._setStyleElementNonce(this._dimensionsStyleElement);
+       this._screenElement.appendChild(this._dimensionsStyleElement);
+     }
+ 
+@@ -153,9 +154,24 @@ export class DomRenderer extends Disposable implements IRenderer {
+     this._screenElement.style.height = `${this.dimensions.css.canvas.height}px`;
+   }
+ 
++  /**
++   * goronation-local addition, not upstream: applies the `cspNonce` option (if set) to a
++   * dynamically created `<style>` element via the `nonce` IDL property. Setting the `nonce`
++   * *attribute* instead does not work reliably across browsers for elements created after page
++   * load (per the HTML spec, `nonce` is intentionally hidden from attribute reflection once set).
++   * See cmd/goronation/vendor/xterm/PATCH.md and https://github.com/xtermjs/xterm.js/issues/4445
++   */
++  private _setStyleElementNonce(element: HTMLStyleElement): void {
++    const nonce = this._optionsService.rawOptions.cspNonce;
++    if (nonce) {
++      element.nonce = nonce;
++    }
++  }
++
+   private _injectCss(colors: ReadonlyColorSet): void {
+     if (!this._themeStyleElement) {
+       this._themeStyleElement = this._document.createElement('style');
++      this._setStyleElementNonce(this._themeStyleElement);
+       this._screenElement.appendChild(this._themeStyleElement);
+     }
+ 
+diff --git a/src/common/services/OptionsService.ts b/src/common/services/OptionsService.ts
+index 6ad48b9..6564287 100644
+--- a/src/common/services/OptionsService.ts
++++ b/src/common/services/OptionsService.ts
+@@ -17,6 +17,7 @@ export const DEFAULT_OPTIONS: Readonly<Required<ITerminalOptions>> = {
+   cursorWidth: 1,
+   cursorInactiveStyle: 'outline',
+   customGlyphs: true,
++  cspNonce: null,
+   drawBoldTextInBrightColors: true,
+   documentOverride: null,
+   fastScrollModifier: 'alt',
+diff --git a/src/common/services/Services.ts b/src/common/services/Services.ts
+index a2847f1..ba42c09 100644
+--- a/src/common/services/Services.ts
++++ b/src/common/services/Services.ts
+@@ -226,6 +226,8 @@ export interface ITerminalOptions {
+   altClickMovesCursor?: boolean;
+   cols?: number;
+   convertEol?: boolean;
++  /** goronation-local addition, not upstream: see cmd/goronation/vendor/xterm/PATCH.md */
++  cspNonce?: string | null;
+   cursorBlink?: boolean;
+   cursorStyle?: CursorStyle;
+   cursorWidth?: number;
+diff --git a/typings/xterm.d.ts b/typings/xterm.d.ts
+index 457f161..c108869 100644
+--- a/typings/xterm.d.ts
++++ b/typings/xterm.d.ts
+@@ -57,6 +57,20 @@ declare module '@xterm/xterm' {
+      */
+     convertEol?: boolean;
+ 
++    /**
++     * A Content-Security-Policy `nonce` value to apply to the `<style>`
++     * elements that the DOM renderer creates dynamically at runtime (theme
++     * colors and cell dimensions). Required when the page's CSP does not
++     * allow `'unsafe-inline'` for `style-src` and instead uses a per-request
++     * nonce. When unset, the created `<style>` elements have no nonce, which
++     * matches upstream's stock behavior.
++     *
++     * goronation-local addition: not part of upstream xterm.js. See
++     * `cmd/goronation/vendor/xterm/PATCH.md` and
++     * https://github.com/xtermjs/xterm.js/issues/4445
++     */
++    cspNonce?: string | null;
++
+     /**
+      * Whether the cursor blinks.
+      */
