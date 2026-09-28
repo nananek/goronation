@@ -1,0 +1,107 @@
+# cmd/goronation/vendor/xterm/ が fork している xterm.js (PATCH.md 参照) の upstream に新しい
+# バージョンが出たことを検知し、Issue を自動作成する。
+#
+# このリポジトリの xterm.js は、CSP nonce 対応のためにソースへローカルパッチを当てて自前ビルドした
+# ものを vendor している (cmd/goronation/vendor/xterm/PATCH.md)。vendor コードが古くなっていくのを
+# 放置しないため、また upstream Issue https://github.com/xtermjs/xterm.js/issues/4445 (CSP nonce
+# 対応の feature request) が解決された時点でこの fork をやめられないかに毎回気づけるようにするために、
+# nvchecker (https://github.com/lilydjwg/nvchecker) で新バージョンを検知し、その都度 Issue で
+# 確認を促す。外部の Action は commit SHA でピン留めする (末尾のコメントが tag。ci.yml と同じ方針)。
+
+name: xterm-version-check
+
+on:
+  schedule:
+    # 毎週月曜 03:00 UTC。vendor 更新はすぐには要らない (upstream 側の nonce 対応が入るまでは、
+    # このパッチを維持するのが前提の運用のため)ので、日次にはしない。
+    - cron: "0 3 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: nvchecker を入れる
+        run: pip install --disable-pip-version-check nvchecker==2.19
+
+      - name: vendor している現在のバージョンを読む
+        id: current
+        run: |
+          version="$(tr -d '[:space:]' < cmd/goronation/vendor/xterm/VERSION)"
+          if [ -z "$version" ]; then
+            echo "cmd/goronation/vendor/xterm/VERSION が空、または読めない" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: nvchecker で upstream (npm @xterm/xterm) の最新バージョンを取得する
+        id: latest
+        run: |
+          version="$(nvchecker -c .github/nvchecker/xterm.toml --logger json --failures -t 3 \
+            | tail -n1 | jq -r '.version')"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "nvchecker が upstream の最新バージョンを取得できなかった" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: 新バージョンが出ていれば Issue を起票する (既に open な Issue があれば作らない)
+        if: steps.latest.outputs.version != steps.current.outputs.version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_VERSION: ${{ steps.current.outputs.version }}
+          LATEST_VERSION: ${{ steps.latest.outputs.version }}
+          # Issue のタイトルは固定文字列にして、複数回の起票を避けるための検索キーにする
+          # (バージョン番号を含めると、検索の完全一致が崩れて毎回新規作成されてしまう)。
+          ISSUE_TITLE: "xterm.js upstream update available"
+        run: |
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "in:title \"${ISSUE_TITLE}\"" --json number --jq 'length')"
+          if [ "$existing" != "0" ]; then
+            echo "open な Issue が既にあるため、新規作成しない (${existing} 件)"
+            exit 0
+          fi
+
+          body_file="$(mktemp)"
+          cat > "$body_file" <<EOF
+          xterm.js の upstream (npm \`@xterm/xterm\`) で新しいバージョン **${LATEST_VERSION}** が検出されました。
+
+          - goronation が現在 vendor しているバージョン: **${CURRENT_VERSION}**
+            (\`cmd/goronation/vendor/xterm/VERSION\` が正本)
+          - このリポジトリの xterm.js は、CSP nonce 対応のためのローカルパッチを当てた自前ビルドを
+            vendor しています。詳細: \`cmd/goronation/vendor/xterm/PATCH.md\`
+
+          ## 確認事項
+
+          - [ ] upstream の \`${LATEST_VERSION}\` のリリースノート・変更履歴を確認する
+                (https://github.com/xtermjs/xterm.js/releases)
+          - [ ] **upstream Issue [#4445](https://github.com/xtermjs/xterm.js/issues/4445)
+                (CSP nonce 対応の feature request) が、このバージョンで解決されていないか確認する。
+                解決されていれば、\`cmd/goronation/vendor/xterm/PATCH.md\` に書かれているローカル
+                パッチ (\`csp-nonce.patch\`) を廃止し、pristine な upstream の公式ビルドに戻すことを
+                検討する。**
+          - [ ] (nonce 対応がまだ入っていない場合) vendor を \`${LATEST_VERSION}\` に更新するかどうかを
+                判断する。更新する場合は \`cmd/goronation/vendor/xterm/PATCH.md\` の再適用手順に従う。
+
+          このリポジトリの xterm.js fork は恒久的な前提ではありません。この Issue が起票されるたびに、
+          「もう fork をやめられないか」を毎回検討してください。
+
+          ---
+          このIssueは \`.github/workflows/xterm-version-check.yml\` (nvchecker) により自動作成されました。
+          EOF
+
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body-file "$body_file"

@@ -299,6 +299,32 @@ func TestWebTerminalPageHasNoInlineStyle(t *testing.T) {
 	}
 }
 
+// TestWebVendorXtermSupportsCspNonceOption は、Issue #46 (CSP 下で xterm.js の動的 <style> がブロック
+// される) 対応の一部 (PR①、cmd/goronation/vendor/xterm/PATCH.md) の回帰テスト。vendor 済み xterm.js が
+// `cspNonce` Terminal オプションと、それを <style> 要素に適用する内部メソッドを含んでいることを、配信
+// された本文から確かめる (ブラウザを起動しての実際の DOM 検証はできないため、パッチが取り除かれて
+// pristine な公式ビルドに巻き戻ってしまう退行を文字列の存在で検知する)。
+// nonce を実際にサーバーが生成して Terminal に渡す配線 (PR②) はまだ無いため、cspNonce 未指定時に
+// 既存の CSP (style-src 'self') のまま動作が変わらないことは、TestWebTerminalPageHasNoInlineStyle と
+// TestWebSecurityHeaders (CSP ヘッダーが変わっていないこと) が既存どおり通ることで担保する。
+func TestWebVendorXtermSupportsCspNonceOption(t *testing.T) {
+	srv, _, _, _ := newTestServer(t)
+	client := &http.Client{}
+
+	resp := doJSON(t, client, "GET", srv.URL+"/static/vendor/xterm.js", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/static/vendor/xterm.js = %d, want 200", resp.StatusCode)
+	}
+	body := new(bytes.Buffer)
+	if _, err := body.ReadFrom(resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body.String(), "cspNonce") {
+		t.Error("vendor 済み xterm.js に cspNonce オプションが見当たらない (PATCH.md のパッチが失われていないか確認する)")
+	}
+}
+
 // TestWebSessionsListRequiresAuth・TestWebSessionsListEmpty は、GET /api/sessions の認証・応答の形を
 // 確かめる (実際にセッションを作る結合テストは web_proxy_bwrap_linux_test.go)。
 func TestWebSessionsListRequiresAuth(t *testing.T) {

@@ -1,0 +1,13 @@
+# cmd/goronation/vendor/xterm/xterm.js が追跡している upstream の新バージョンを検知するための
+# nvchecker (https://github.com/lilydjwg/nvchecker) 設定。
+#
+# .github/workflows/xterm-version-check.yml が週次でこの設定を使い、npm 上の @xterm/xterm パッケージの
+# 最新バージョンを取得する。vendor している現在のバージョンの正本は
+# cmd/goronation/vendor/xterm/VERSION (このファイルではない)。
+#
+# 旧パッケージ名 "xterm" (スコープなし) は 6.0.0 で deprecated 化されており、6.0.0 以降は
+# "@xterm/xterm" に移行済み (2026-09-29 に nvchecker で実測して確認済み)。
+
+[xterm]
+source = "npm"
+npm = "@xterm/xterm"
