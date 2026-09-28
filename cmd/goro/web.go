@@ -298,6 +298,7 @@ func newWebMux(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, sess
 	mux.HandleFunc("GET /static/app.js", s.handleAppJS)
 	mux.HandleFunc("GET /static/sessions.js", s.handleSessionsJS)
 	mux.HandleFunc("GET /static/terminal.js", s.handleTerminalJS)
+	mux.HandleFunc("GET /static/terminal.css", s.handleTerminalCSS)
 	mux.HandleFunc("GET /static/vendor/xterm.js", serveEmbedded(xtermVendor, "vendor/xterm/xterm.js", "text/javascript; charset=utf-8"))
 	mux.HandleFunc("GET /static/vendor/xterm.css", serveEmbedded(xtermVendor, "vendor/xterm/xterm.css", "text/css; charset=utf-8"))
 	mux.HandleFunc("GET /static/vendor/addon-fit.js", serveEmbedded(xtermVendor, "vendor/xterm/addon-fit.js", "text/javascript; charset=utf-8"))
@@ -360,6 +361,11 @@ func (s *webServer) handleSessionsJS(w http.ResponseWriter, r *http.Request) {
 func (s *webServer) handleTerminalJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	io.WriteString(w, terminalJS)
+}
+
+func (s *webServer) handleTerminalCSS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	io.WriteString(w, terminalCSS)
 }
 
 // serveEmbedded は、fsys の name (vendor から埋め込んだファイル) を、contentType で返すハンドラを作る。
