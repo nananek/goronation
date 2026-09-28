@@ -39,7 +39,7 @@ func TestServeHTTPBodyStallEnforced(t *testing.T) {
 		t.Fatal(err)
 	}
 	// runServeServer (serve.go) と、まったく同じ *http.Server・Listener の組み立て。
-	srv := newServeHTTPServer(newServeMux(cfg, store, origin))
+	srv := newServeHTTPServer(newServeMux(cfg, store, origin, nil))
 	go srv.Serve(newLimitedListener(l, maxServeConns))
 	t.Cleanup(func() { srv.Close() })
 
@@ -97,7 +97,7 @@ func TestServeManyStalledConnectionsAccepted(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServeHTTPServer(newServeMux(cfg, store, origin))
+	srv := newServeHTTPServer(newServeMux(cfg, store, origin, nil))
 	go srv.Serve(newLimitedListener(l, maxServeConns))
 	t.Cleanup(func() { srv.Close() })
 
@@ -229,7 +229,7 @@ func TestServeKeepAliveDisabledBoundsConnectionHoldTime(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServeHTTPServer(newServeMux(cfg, store, origin))
+	srv := newServeHTTPServer(newServeMux(cfg, store, origin, nil))
 	go srv.Serve(newLimitedListener(l, maxServeConns))
 	t.Cleanup(func() { srv.Close() })
 

@@ -68,6 +68,15 @@ var DefaultRules = Rules{
 			Imports: []string{"github.com/fxamacker/cbor/v2", "github.com/x448/float16"},
 			OnlyIn:  []string{"cmd/internal/webauthn/**"},
 		},
+
+		// ADR 0005: 全 module 依存ゼロの方針のもう 1 つの例外は、端末ビューの WebSocket 終端に限る。
+		// この module を import してよいのは、cmd/internal/termrelay とその配下だけ。規則を広げるときは、
+		// 新しい ADR を書き、この表だけを変える。
+		{
+			ID:      "websocket-only-dep",
+			Imports: []string{"github.com/coder/websocket"},
+			OnlyIn:  []string{"cmd/internal/termrelay/**"},
+		},
 	},
 
 	ForbidImports: []ForbidImport{

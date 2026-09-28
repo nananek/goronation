@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func newTestServer(t *testing.T) (srv *httptest.Server, store *iwebauthn.Store, 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("testConfig を作れない: %v", err)
 	}
-	handler = newServeMux(cfg, store, origin)
+	handler = newServeMux(cfg, store, origin, nil)
 	return srv, store, rpID, origin
 }
 
@@ -217,5 +218,79 @@ func TestServeSecurityHeaders(t *testing.T) {
 	}
 	if resp.Header.Get("Content-Security-Policy") == "" {
 		t.Error("Content-Security-Policy が無い")
+	}
+}
+
+// TestServeTerminalWithoutSessionIs404 は、--repo・--session なしで起動した goro serve (term が nil)
+// では、認証済みでも端末ビューの WebSocket endpoint が 404 になることを確かめる (bwrap 結合テスト
+// TestServeTerminalRelaysRawBytes とは別に、term が無いときの分岐を、bwrap 無しで検証する)。
+func TestServeTerminalWithoutSessionIs404(t *testing.T) {
+	srv, store, rpID, origin := newTestServer(t)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	tok, err := iwebauthn.IssueBootstrapToken(t.Context(), store, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred, err := webauthntest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	beginBody, _ := json.Marshal(map[string]string{"token": tok})
+	resp := doJSON(t, client, "POST", srv.URL+"/webauthn/register/begin", beginBody)
+	begin := decodeJSON[optionsAndState](t, resp)
+	attResp, err := cred.Register(rpID, origin, begin.Options.Challenge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishBody, _ := json.Marshal(map[string]any{"state": begin.State, "credential": attResp})
+	resp = doJSON(t, client, "POST", srv.URL+"/webauthn/register/finish", finishBody)
+	resp.Body.Close()
+	resp = doJSON(t, client, "POST", srv.URL+"/webauthn/login/begin", nil)
+	lb := decodeJSON[optionsAndState](t, resp)
+	assResp, err := cred.Authenticate(rpID, origin, lb.Options.Challenge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lfBody, _ := json.Marshal(map[string]any{"state": lb.State, "credential": assResp})
+	resp = doJSON(t, client, "POST", srv.URL+"/webauthn/login/finish", lfBody)
+	resp.Body.Close()
+
+	resp = doJSON(t, client, "GET", srv.URL+"/ws/terminal", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("term が nil のときの /ws/terminal = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestServeTerminalPageAndVendorAssets は、端末ビューのページ (認証必須) と、埋め込んだ vendor の
+// 静的アセット (認証不要) が、それぞれ想定どおりの状態コード・Content-Type で返ることを確かめる。
+func TestServeTerminalPageAndVendorAssets(t *testing.T) {
+	srv, _, _, _ := newTestServer(t)
+	client := &http.Client{}
+
+	resp := doJSON(t, client, "GET", srv.URL+"/terminal", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("未認証の /terminal = %d, want 401", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	for path, wantType := range map[string]string{
+		"/static/terminal.js":         "text/javascript",
+		"/static/vendor/xterm.js":     "text/javascript",
+		"/static/vendor/xterm.css":    "text/css",
+		"/static/vendor/addon-fit.js": "text/javascript",
+	} {
+		resp := doJSON(t, client, "GET", srv.URL+path, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s = %d, want 200", path, resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, wantType) {
+			t.Errorf("%s の Content-Type = %q, want %q で始まる", path, ct, wantType)
+		}
+		resp.Body.Close()
 	}
 }

@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -21,16 +22,32 @@ import (
 // serveUsage は、goro serve -h の使い方。serve (常駐の HTTP サーバー) と token (ブートストラップトークンの
 // 発行) の 2 つで、動く場所が違う (token は、サーバーを起こさず、状態ファイルに書くだけ)。
 const serveUsage = `使い方: goro serve --listen ADDR --rp-id HOST --origin URL [--state-dir DIR]
+                   [(--repo PATH [--name N] [--email E]) | --session ID] [--agent NAME]
+                   [-- ARGS...]
         goro serve token [--ttl DURATION] [--state-dir DIR]
 
-serve: WebAuthn (passkey) でログインしたブラウザだけがアクセスできる、最小限の HTTP サーバーを起こす
-       (登録・ログインの骨組みだけ。端末ビュー・チャット UI は、まだ無い)。TLS 終端は、tailscale serve の
-       ようなリバースプロキシに任せる前提で、goro serve 自身は既定で loopback にしか listen しない。
+serve: WebAuthn (passkey) でログインしたブラウザだけがアクセスできる、最小限の HTTP サーバーを起こす。
+       TLS 終端は、tailscale serve のようなリバースプロキシに任せる前提で、goro serve 自身は既定で
+       loopback にしか listen しない。--repo か --session を指定すると、goro run --repo/--session と
+       同じ組み立てで檻を 1 つ起こし (サーバーの寿命いっぱい生かす)、ログイン後の端末ビュー
+       (xterm.js。WebSocket 越し) で操作できるようになる。どちらも指定しなければ、これまでどおり
+       ログインの骨組みだけ (端末ビューは使えない)。
 
   --listen ADDR   待ち受ける loopback の TCP (IP リテラル:ポート。127.0.0.1:8443 など)
   --rp-id HOST    WebAuthn の RP ID (--origin のホスト名と、完全に一致すること)
   --origin URL    ブラウザから見た origin ("https://host[:port]"。開発用に http://localhost も可)
   --state-dir DIR 状態を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
+  --repo PATH     PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
+  --session ID    前に goro serve 自身が作ったセッションを再開する (--repo とは同時に使えない)
+  --agent NAME    動かすエージェント (goro run と同じ表。--session のときは、記録したものと違うと断る)
+  --name N        clone の user.name (--repo のとき)
+  --email E       clone の user.email (--repo のとき)
+  -- ARGS...      エージェントへの引数 (--repo/--session が要る。実運用では通常は要らない: エージェントの
+                  既定の対話モードで起動し、操作は端末ビューで行う)
+
+  見送った範囲 (この版には無い): --push・--allow・--bin。複数セッションの並行管理。エージェントが
+  終了したら、HTTP サーバー自体は落とさず、端末ビューが使えなくなるだけ (新しいセッションは、
+  goro serve を再起動して作る)。
 
 token: 最初の 1 回だけの登録に使う、ブートストラップトークンを発行し、標準出力に書く。シェルにアクセスできる
        人だけが呼べる想定 (Issue #1 の「初回ログインの信頼は、シェルで発行するアクセストークン」)。すでに
@@ -79,16 +96,28 @@ func serveFlags(name string, args []string, stderr io.Writer) (*flag.FlagSet, *s
 	return flags, flags.String("state-dir", "", "")
 }
 
+// serveShutdownTimeout は、SIGTERM 等を受けてからの graceful shutdown (http.Server.Shutdown) に許す猶予。
+const serveShutdownTimeout = 5 * time.Second
+
 func runServeServer(args []string, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
 		fmt.Fprintf(stderr, "goro serve: "+format+"\n", a...)
 		return exitUsage
 	}
-	flags, stateDirFlag := serveFlags("goro serve", args, stderr)
+	head, tail := args, []string(nil)     // -- より後ろは、agentArgs (goro run と同じ split。実運用では
+	if i := indexOf(args, "--"); i >= 0 { // まず使わないが、テストが場面を選ぶのに要る)
+		head, tail = args[:i], args[i+1:]
+	}
+	flags, stateDirFlag := serveFlags("goro serve", head, stderr)
 	listen := flags.String("listen", "", "")
 	rpID := flags.String("rp-id", "", "")
 	origin := flags.String("origin", "", "")
-	if err := flags.Parse(args); err != nil {
+	repoFlag := flags.String("repo", "", "")
+	sessionFlag := flags.String("session", "", "")
+	agentFlag := flags.String("agent", "", "")
+	nameFlag := flags.String("name", "", "")
+	emailFlag := flags.String("email", "", "")
+	if err := flags.Parse(head); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
@@ -104,6 +133,20 @@ func runServeServer(args []string, stderr io.Writer) int {
 	if err != nil || !ap.Addr().IsLoopback() {
 		return fail("--listen は loopback の IP リテラル:ポートだけ (127.0.0.1:8443 など): %q", *listen)
 	}
+	if *repoFlag != "" && *sessionFlag != "" {
+		return fail("--repo と --session は同時に指定できない")
+	}
+	if (*nameFlag != "" || *emailFlag != "") && *repoFlag == "" {
+		return fail("--name と --email は、--repo のときだけ使える")
+	}
+	if *agentFlag != "" {
+		if _, ok := agentByName(*agentFlag); !ok {
+			return fail("--agent は %s: %q", agentNames(), *agentFlag)
+		}
+	}
+	if len(tail) > 0 && *repoFlag == "" && *sessionFlag == "" {
+		return fail("-- の後ろの引数は、--repo か --session と一緒のときだけ使える")
+	}
 	cfg := iwebauthn.Config{RPID: *rpID, RPName: "goro", Origin: *origin}
 	if err := cfg.Validate(); err != nil {
 		return fail("%v", err)
@@ -116,12 +159,43 @@ func runServeServer(args []string, stderr io.Writer) int {
 	if err != nil {
 		return fail("%v", err)
 	}
+
+	// goro serve は、goro run のような、ホストの端末を檻と共有する前提の signal 処理 (sigWatch) を
+	// 使わない (端末ビューは WebSocket 越しで、檻とホストの制御端末は無関係)。SIGINT・SIGTERM・SIGHUP
+	// は、単純に ctx を取り消すだけにする (serve_signals.go)。
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopSig := watchServeSignals(cancel)
+	defer stopSig()
+
+	var term *termSession
+	if *repoFlag != "" || *sessionFlag != "" {
+		t, err := startServeTermSession(ctx, stateDir, *sessionFlag, *agentFlag, *nameFlag, *emailFlag, *repoFlag, tail, stderr)
+		if err != nil {
+			return fail("端末ビューのセッションを起動できない: %v", err)
+		}
+		term = t
+		// 戻る前に、檻の後片付け (proxy.Close・master.Close) が終わるまで待つ。ただし、待つだけでは
+		// ハングする: 檻は ctx が取り消されたときにしか終わらないが、defer は登録順と逆に走るので、
+		// このまま defer term.Wait() とだけ書くと、外側の defer cancel() より先に (cancel が走る前に)
+		// 実行され、term.Wait が無期限にブロックする (攻撃者視点レビューで発見。net.Listen の失敗など、
+		// シグナルを経由しない異常系の return で起きる)。cancel を、ここで明示的に先に呼ぶ (cancel は
+		// 冪等なので、外側の defer cancel() と重複しても安全)。
+		defer func() { cancel(); term.Wait() }()
+	}
+
 	l, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return fail("待ち受けられない: %v", err)
 	}
 	defer l.Close()
-	srv := newServeHTTPServer(newServeMux(cfg, store, *origin))
+	srv := newServeHTTPServer(newServeMux(cfg, store, *origin, term))
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), serveShutdownTimeout)
+		defer cancel()
+		srv.Shutdown(shutdownCtx)
+	}()
 	fmt.Fprintf(stderr, "goro serve: %s で待ち受けている (rp-id=%s origin=%s)\n", l.Addr(), sanitize(*rpID), sanitize(*origin))
 	if err := srv.Serve(newLimitedListener(l, maxServeConns)); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintf(stderr, "goro serve: 終了: %v\n", err)
@@ -235,18 +309,26 @@ func runServeToken(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// newServeMux は、goro serve の HTTP のハンドラをまとめる。
-func newServeMux(cfg iwebauthn.Config, store *iwebauthn.Store, origin string) http.Handler {
-	s := &server{cfg: cfg, store: store, secure: hasHTTPSScheme(origin)}
+// newServeMux は、goro serve の HTTP のハンドラをまとめる。term は、端末ビューのセッション (--repo・
+// --session のどちらも指定せずに起動したときは nil。/terminal・/ws/terminal は、nil でも登録はするが、
+// handleTerminal が 404 を返す)。
+func newServeMux(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, term *termSession) http.Handler {
+	s := &server{cfg: cfg, store: store, secure: hasHTTPSScheme(origin), term: term}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.HandleFunc("GET /static/app.js", s.handleAppJS)
+	mux.HandleFunc("GET /static/terminal.js", s.handleTerminalJS)
+	mux.HandleFunc("GET /static/vendor/xterm.js", serveEmbedded(xtermVendor, "vendor/xterm/xterm.js", "text/javascript; charset=utf-8"))
+	mux.HandleFunc("GET /static/vendor/xterm.css", serveEmbedded(xtermVendor, "vendor/xterm/xterm.css", "text/css; charset=utf-8"))
+	mux.HandleFunc("GET /static/vendor/addon-fit.js", serveEmbedded(xtermVendor, "vendor/xterm/addon-fit.js", "text/javascript; charset=utf-8"))
 	mux.HandleFunc("POST /webauthn/register/begin", s.handleRegisterBegin)
 	mux.HandleFunc("POST /webauthn/register/finish", s.handleRegisterFinish)
 	mux.HandleFunc("POST /webauthn/login/begin", s.handleLoginBegin)
 	mux.HandleFunc("POST /webauthn/login/finish", s.handleLoginFinish)
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("GET /api/whoami", s.requireSession(s.handleWhoami))
+	mux.HandleFunc("GET /terminal", s.requireSession(s.handleTerminalPage))
+	mux.HandleFunc("GET /ws/terminal", s.requireSession(s.handleTerminal))
 	return securityHeaders(mux)
 }
 
@@ -254,7 +336,8 @@ func newServeMux(cfg iwebauthn.Config, store *iwebauthn.Store, origin string) ht
 type server struct {
 	cfg    iwebauthn.Config
 	store  *iwebauthn.Store
-	secure bool // origin が https か (cookie の Secure 属性に使う。開発用の http://localhost では false)
+	secure bool         // origin が https か (cookie の Secure 属性に使う。開発用の http://localhost では false)
+	term   *termSession // 端末ビューのセッション (無ければ nil)
 }
 
 func hasHTTPSScheme(origin string) bool { return len(origin) >= 8 && origin[:8] == "https://" }
@@ -280,6 +363,32 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleAppJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	io.WriteString(w, appJS)
+}
+
+func (s *server) handleTerminalJS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	io.WriteString(w, terminalJS)
+}
+
+// handleTerminalPage は、requireSession でラップ済みの、端末ビューのページ。s.term が nil でも、
+// ページ自体は返す (中の terminal.js が、WebSocket の接続失敗として案内を出す。goro-serve-plan の
+// 「見送った範囲」に、専用のエラー画面は含めていない)。
+func (s *server) handleTerminalPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	io.WriteString(w, terminalHTML)
+}
+
+// serveEmbedded は、fsys の name (vendor から埋め込んだファイル) を、contentType で返すハンドラを作る。
+func serveEmbedded(fsys embed.FS, name, contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b, err := fsys.ReadFile(name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Write(b)
+	}
 }
 
 // readJSON は、r の本体を上限つきで読み、v へ JSON として読む。
