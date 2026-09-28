@@ -47,7 +47,7 @@ func safeText(s string) bool {
 	return true
 }
 
-func headOf(branch string) string { return "goro/" + sess + "/" + branch }
+func headOf(branch string) string { return "goronation/" + sess + "/" + branch }
 
 // pullBody は、要求の JSON を作る (項目の値は json.Marshal で書く)。
 func pullBody(t testing.TB, kv ...any) string {
@@ -282,9 +282,9 @@ func TestParsePullRejects(t *testing.T) {
 		{"base-201", same, repoOR, ok("base", strings.Repeat("a", 201)), CodeBadField},
 		// head
 		{"head-main", same, repoOR, ok("head", "main"), CodeHeadNotAllowed},
-		{"head-other-session", same, repoOR, ok("head", "goro/20260927-041500-ffffff/x"), CodeHeadNotAllowed},
-		{"head-session-only", same, repoOR, ok("head", "goro/"+sess), CodeHeadNotAllowed},
-		{"head-session-slash", same, repoOR, ok("head", "goro/"+sess+"/"), CodeHeadNotAllowed},
+		{"head-other-session", same, repoOR, ok("head", "goronation/20260927-041500-ffffff/x"), CodeHeadNotAllowed},
+		{"head-session-only", same, repoOR, ok("head", "goronation/"+sess), CodeHeadNotAllowed},
+		{"head-session-slash", same, repoOR, ok("head", "goronation/"+sess+"/"), CodeHeadNotAllowed},
 		{"head-dotdot", same, repoOR, ok("head", hd("../x")), CodeHeadNotAllowed},
 		{"head-full-ref", same, repoOR, ok("head", "refs/heads/"+hd("x")), CodeHeadNotAllowed},
 		{"head-colon-suffix", same, repoOR, ok("head", hd("x:y")), CodeHeadNotAllowed},
@@ -303,7 +303,7 @@ func TestParsePullRejects(t *testing.T) {
 		{"fork-other-owner", fork, repoUp, ok("head", "other:"+hd("x")), CodeHeadNotAllowed},
 		{"fork-upstream-owner", fork, repoUp, ok("head", "up:"+hd("x")), CodeHeadNotAllowed},
 		{"fork-main", fork, repoUp, ok("head", "me:main"), CodeHeadNotAllowed},
-		{"fork-other-session", fork, repoUp, ok("head", "me:goro/20260927-041500-ffffff/x"), CodeHeadNotAllowed},
+		{"fork-other-session", fork, repoUp, ok("head", "me:goronation/20260927-041500-ffffff/x"), CodeHeadNotAllowed},
 	}
 	// dup-draft の本文は、重複を書いたものにする。
 	for i := range cases {
@@ -383,7 +383,7 @@ func TestWithBase(t *testing.T) {
 	}
 }
 
-var headShape = regexp.MustCompile(`^((me|o):)?goro/` + regexp.QuoteMeta(sess) + `/[A-Za-z0-9._/-]+$`)
+var headShape = regexp.MustCompile(`^((me|o):)?goronation/` + regexp.QuoteMeta(sess) + `/[A-Za-z0-9._/-]+$`)
 
 // FuzzParsePull は、任意の本文で、パニックせず、通したものが次を満たすことを確かめる:
 // 上流に送る JSON は、固定の 5 項目だけで draft が true・head が許可した形・文字が規則の内側にある。

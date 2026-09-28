@@ -16,7 +16,7 @@
 //   - fields: title・body・head・base・draft だけ (完全一致)。重複・大文字違い・未知の項目・null・末尾の続きは断る。未知の項目は、値を読む前に断る。
 //   - rebuild: 上流へは、検査した値から作り直した JSON を送る。項目の並びは固定で、受けた本文は送らない。
 //   - draft: 上流に送る draft は、常に true。檻が draft: false を送っても、上書きする。
-//   - head: Push の名前空間 (refs/heads/goro/<セッション>/ の下) のブランチだけ。fork の元への PR は、owner:branch (owner は Push の owner) の形だけ。
+//   - head: Push の名前空間 (refs/heads/goronation/<セッション>/ の下) のブランチだけ。fork の元への PR は、owner:branch (owner は Push の owner) の形だけ。
 //   - text: title は 256 バイト・body は 64 KiB・要求は 512 KiB まで。制御文字 (body の改行とタブを除く)・行区切り・書式制御文字 (Cf の全て: 双方向の制御・ゼロ幅・BOM・タグ文字)・見えない文字 (Default_Ignorable) は断る。異体字セレクタは、基底の文字に付くときだけ通す。
 //   - result: 檻に返すのは number と html_url だけ。html_url は、検査した number と repo から作り直す。
 //   - quota: PR の作成の試行は、Quota の回数まで。上流が断った試行も数える。

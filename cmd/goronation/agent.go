@@ -20,10 +20,10 @@ import (
 //
 // エージェントごとに違うものは、すべて、この構造体のデータ (と、名前から導出するもの) で、「claude なら A・opencode なら B」の
 // 分岐は、コードに書かない。新しいエージェントを足す作業は、profile を 1 つ書いて、agents の表に足すことだけ (宛先は egress の
-// 関数、環境変数はこの定数の中)。名前から導出するもの: 環境変数 GORO_<NAME> (exeEnv)・檻の中の path (jailExe)・状態の
+// 関数、環境変数はこの定数の中)。名前から導出するもの: 環境変数 GORONATION_<NAME> (exeEnv)・檻の中の path (jailExe)・状態の
 // ディレクトリ <state>/agents/<name>/ (dirs)・--agent の値。
 type agentProfile struct {
-	// name は、--agent の値で、エージェントの識別子: 状態のディレクトリ名・セッションの記録・環境変数の名前 (GORO_<NAME>) の元。
+	// name は、--agent の値で、エージェントの識別子: 状態のディレクトリ名・セッションの記録・環境変数の名前 (GORONATION_<NAME>) の元。
 	// [a-z][a-z0-9-]{0,31} (session の記録と同じ形)。表の中で、重ならない。
 	name string
 	// bin は、PATH で探す実行ファイルの名前。空なら name。
@@ -92,9 +92,9 @@ func (p agentProfile) binName() string {
 	return p.name
 }
 
-// exeEnvName は、名前 name のエージェントの、実行ファイルを指す環境変数の名前 (--bin と同じ効果。--bin > この変数 > PATH): GORO_<NAME 大文字>。
+// exeEnvName は、名前 name のエージェントの、実行ファイルを指す環境変数の名前 (--bin と同じ効果。--bin > この変数 > PATH): GORONATION_<NAME 大文字>。
 func exeEnvName(name string) string {
-	return "GORO_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+	return "GORONATION_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 }
 
 // exeEnv は、p の、実行ファイルを指す環境変数の名前。

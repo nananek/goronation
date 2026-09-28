@@ -330,13 +330,13 @@ func mcpCreatePR(args json.RawMessage) mcpToolCallResult {
 	return mcpToolCallResult{Content: mcpText(fmt.Sprintf("PR #%d を作った (draft): %s", result.Number, result.HTMLURL))}
 }
 
-// mcpPushContext は、push_context tool。GORO_PUSH_REPO・GORO_PUSH_REF_PREFIX と、今のブランチを返すだけ
+// mcpPushContext は、push_context tool。GORONATION_PUSH_REPO・GORONATION_PUSH_REF_PREFIX と、今のブランチを返すだけ
 // (ネットワークへは繋がない)。エージェントが、create_pr の base やブランチ名を、毎回説明されなくても
 // 組み立てられるようにするための、読み取り専用の手がかり。
 func mcpPushContext(args json.RawMessage) mcpToolCallResult {
-	repo := os.Getenv("GORO_PUSH_REPO")
+	repo := os.Getenv("GORONATION_PUSH_REPO")
 	if repo == "" {
-		return mcpErrorResult(errors.New("GORO_PUSH_REPO が無い (goronation run --push owner/repo で起動していない)"))
+		return mcpErrorResult(errors.New("GORONATION_PUSH_REPO が無い (goronation run --push owner/repo で起動していない)"))
 	}
 	branch, err := currentBranch(".")
 	if err != nil {
@@ -346,7 +346,7 @@ func mcpPushContext(args json.RawMessage) mcpToolCallResult {
 		Repo          string `json:"repo"`
 		Branch        string `json:"branch"`
 		PushRefPrefix string `json:"push_ref_prefix"`
-	}{Repo: repo, Branch: branch, PushRefPrefix: os.Getenv("GORO_PUSH_REF_PREFIX")}
+	}{Repo: repo, Branch: branch, PushRefPrefix: os.Getenv("GORONATION_PUSH_REF_PREFIX")}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return mcpErrorResult(err)

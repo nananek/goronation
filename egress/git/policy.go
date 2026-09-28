@@ -8,7 +8,7 @@ import (
 // maxRefLen は、許す ref の全体の長さ (バイト)。
 const maxRefLen = 200
 
-// Policy は、1 セッションが git で触れてよい範囲: 1 つの repo と、その中の、セッション専用の名前空間 refs/heads/goro/<Session>/ だけ。
+// Policy は、1 セッションが git で触れてよい範囲: 1 つの repo と、その中の、セッション専用の名前空間 refs/heads/goronation/<Session>/ だけ。
 type Policy struct {
 	Repo    Repo
 	Session string
@@ -25,8 +25,8 @@ func NewPolicy(repo Repo, session string) (Policy, error) {
 	return Policy{Repo: repo, Session: session}, nil
 }
 
-// Prefix は、許す ref の接頭辞 "refs/heads/goro/<Session>/" を返す。
-func (p Policy) Prefix() string { return "refs/heads/goro/" + p.Session + "/" }
+// Prefix は、許す ref の接頭辞 "refs/heads/goronation/<Session>/" を返す。
+func (p Policy) Prefix() string { return "refs/heads/goronation/" + p.Session + "/" }
 
 // CheckRepo は、r が許した repo かを確かめる (大文字小文字は区別しない)。
 func (p Policy) CheckRepo(r Repo) error {

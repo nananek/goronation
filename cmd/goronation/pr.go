@@ -37,7 +37,7 @@ const prUsage = `使い方: goronation pr create --title T [--body B] [--base BR
         goronation pr ready OWNER/REPO N [--state-dir DIR]
 
 create: 檻の中から、PR 作成の要求を送る (goronation run --push owner/repo で起動した檻の中でだけ動く。
-        GORO_PUSH_REPO が無ければ断る)。head は、今いる repo の現在のブランチ。base を省くと、
+        GORONATION_PUSH_REPO が無ければ断る)。head は、今いる repo の現在のブランチ。base を省くと、
         repo の既定の branch になる。PR は常に draft で作られる (ready にするのは、ホスト側の
         goronation pr ready)。
 
@@ -126,18 +126,18 @@ type prCreateResult struct {
 
 // createPR は、title (必須)・body・base (どちらも省略可) から PR 作成の要求を組み立て、egress の
 // loopback (jailAPIBase) に送る。head は、今いる repo の現在のブランチ (currentBranch)、repo は
-// GORO_PUSH_REPO から取る。goronation pr create (CLI) と goronation mcp の create_pr tool が、この 1 つを共有する。
+// GORONATION_PUSH_REPO から取る。goronation pr create (CLI) と goronation mcp の create_pr tool が、この 1 つを共有する。
 // 返す error の文言は、すでに (sanitize などで) 端末・MCP の応答に出してよい形にしてある。
 func createPR(ctx context.Context, title, body, base string) (prCreateResult, error) {
 	if strings.TrimSpace(title) == "" {
 		return prCreateResult{}, errors.New("title が空")
 	}
-	repo := os.Getenv("GORO_PUSH_REPO")
+	repo := os.Getenv("GORONATION_PUSH_REPO")
 	if repo == "" {
-		return prCreateResult{}, errors.New("GORO_PUSH_REPO が無い (goronation run --push owner/repo で起動していない)")
+		return prCreateResult{}, errors.New("GORONATION_PUSH_REPO が無い (goronation run --push owner/repo で起動していない)")
 	}
 	if _, err := git.ParseRepo(repo); err != nil {
-		return prCreateResult{}, fmt.Errorf("GORO_PUSH_REPO %s が owner/repo の形ではない", sanitize(repo))
+		return prCreateResult{}, fmt.Errorf("GORONATION_PUSH_REPO %s が owner/repo の形ではない", sanitize(repo))
 	}
 	head, err := currentBranch(".")
 	if err != nil {

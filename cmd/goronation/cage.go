@@ -12,25 +12,25 @@ import (
 
 // 檻の中の path と、待ち受けるアドレス。エージェントの実行ファイルの path は、agentProfile.jailExe()。
 const (
-	jailGoro      = "/opt/goro/goro"
-	jailRun       = "/run/goro"
-	jailHome      = "/home/goro"
+	jailGoro      = "/opt/goronation/goronation"
+	jailRun       = "/run/goronation"
+	jailHome      = "/home/goronation"
 	jailAuth      = "/auth"
 	jailWork      = "/work"
 	jailProxyAddr = "127.0.0.1:3128"
 )
 
 // jailGitBase は、--push のとき、檻の git が https://github.com/ の代わりに使う URL の base
-// (goro init が中継する loopback + egress/git の受け口)。CONNECT を経由しない、直接の宛先。
+// (goronation init が中継する loopback + egress/git の受け口)。CONNECT を経由しない、直接の宛先。
 const jailGitBase = "http://" + jailProxyAddr + git.PathPrefix
 
-// cageConfig は、goro run の檻 1 つに見せるものと、その中で実行するもの。path はどれもホストの絶対 path。
+// cageConfig は、goronation run の檻 1 つに見せるものと、その中で実行するもの。path はどれもホストの絶対 path。
 type cageConfig struct {
 	// Host は、bwrap.Spec の検証に使う、ホストの状態 (bwrap.CurrentHost)。
 	Host bwrap.Host
 	// Agent は、檻の中で動かすエージェント。
 	Agent agentProfile
-	// AgentExe・GoroExe は、エージェント (Agent.jailExe() に見せる) と goro 自身の実体 (symlink を辿ったもの)。ro で見せる。
+	// AgentExe・GoroExe は、エージェント (Agent.jailExe() に見せる) と goronation 自身の実体 (symlink を辿ったもの)。ro で見せる。
 	AgentExe, GoroExe string
 	// CACerts は、ホストの /etc/ssl/certs (無ければ空)。ro で見せる。
 	CACerts string
@@ -50,18 +50,18 @@ type cageConfig struct {
 	Args []string
 	// PushRepo は、--push owner/repo が指定されたときの repo ("owner/repo"。空なら無効)。指定されていれば、
 	// 檻の git が https://github.com/ の代わりに egress/git の受け口 (jailGitBase) を使うよう、GIT_CONFIG_*
-	// 環境変数で insteadOf を設定し、GORO_PUSH_REPO・GORO_PUSH_REF_PREFIX で、檻の中に repo と許可された
-	// ref の名前空間を伝える (goro pr create が GORO_PUSH_REPO を読む)。
+	// 環境変数で insteadOf を設定し、GORONATION_PUSH_REPO・GORONATION_PUSH_REF_PREFIX で、檻の中に repo と許可された
+	// ref の名前空間を伝える (goronation pr create が GORONATION_PUSH_REPO を読む)。
 	PushRepo string
 	// PushRefPrefix は、PushRepo が指定されたときの、許可された ref の接頭辞 (git.Policy.Prefix の値。
-	// "refs/heads/goro/<セッション>/")。
+	// "refs/heads/goronation/<セッション>/")。
 	PushRefPrefix string
 	// MCPServers は、Agent に登録する MCP サーバー (mcp.go の mcpServersFor が作る。--push が無効なら空)。
 	// Agent.mcp が nil のエージェントには、何も注入しない。
 	MCPServers []mcpServerDef
-	// PTY は、Stdin・Stdout・Stderr が、goro run 専用の pty の slave であることを示す (呼び手 (runCage) が、
+	// PTY は、Stdin・Stdout・Stderr が、goronation run 専用の pty の slave であることを示す (呼び手 (runCage) が、
 	// ホストの実端末に直結できるときだけ true にする)。true なら、bwrap を --new-session (NewSession) で起動し
-	// (TIOCSTI の確認を要らなくする)、goro init に --set-ctty を渡す: goro init が、エージェントを起動すると
+	// (TIOCSTI の確認を要らなくする)、goronation init に --set-ctty を渡す: goronation init が、エージェントを起動すると
 	// き、エージェント自身が新しいセッションの leader になり、渡された pty を自分の制御端末にする。false
 	// (既定) なら、これまでどおり、ホストの端末に直結する。
 	PTY bool
@@ -69,10 +69,10 @@ type cageConfig struct {
 
 // cageSpec は、c の檻の Spec を作る。標準入出力は、呼び手が足す。
 //
-// 檻に入るのは、ここに書いたものだけ: /usr (ro) とその symlink・証明書 (ro)・エージェントと goro の実体 (ro)・egress の UDS の
+// 檻に入るのは、ここに書いたものだけ: /usr (ro) とその symlink・証明書 (ro)・エージェントと goronation の実体 (ro)・egress の UDS の
 // ディレクトリ (ro)・repo ごとの HOME と認証用ディレクトリと作業ディレクトリ (rw)。ホストの HOME・~/.ssh・~/.claude・環境変数は入らない。
 // 別の repo の HOME は、入らない。
-// ネットワークは無く (bwrap が --unshare-all)、goro init が、loopback の TCP を UDS へ中継する。
+// ネットワークは無く (bwrap が --unshare-all)、goronation init が、loopback の TCP を UDS へ中継する。
 func cageSpec(c cageConfig) bwrap.Spec {
 	binds := []bwrap.Bind{c.bind("/usr", "/usr", false)}
 	if c.CACerts != "" {
@@ -93,7 +93,7 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		cmd = append(cmd, "--set-ctty")
 	}
 	cmd = append(cmd, "--", c.Agent.jailExe())
-	// MCP サーバー (goro mcp) の登録: エージェントごとの変換 (Agent.mcp) が、起動時の引数・環境変数のどちらに
+	// MCP サーバー (goronation mcp) の登録: エージェントごとの変換 (Agent.mcp) が、起動時の引数・環境変数のどちらに
 	// するかを決める (claude は引数、opencode は環境変数。cageSpec は、その違いを知らない)。
 	var mcpArgs []string
 	var mcpEnv []bwrap.EnvVar
@@ -113,7 +113,7 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		Env:   env,
 		Chdir: jailWork,
 		Cmd:   append(cmd, c.Args...),
-		// NewSession は、c.PTY のときだけ付ける: 専用の pty の slave を、goro init が (--set-ctty で) 自分の
+		// NewSession は、c.PTY のときだけ付ける: 専用の pty の slave を、goronation init が (--set-ctty で) 自分の
 		// 制御端末にできるよう、まず制御端末の無い新しいセッションにする。c.PTY でないとき (ホストの実端末に
 		// 直結するとき) は付けない: 端末のシグナル (Ctrl-C・リサイズ) が、フォアグラウンドの process group
 		// ごと、檻の中のエージェントにも届く、これまでの形のまま。
@@ -122,7 +122,7 @@ func cageSpec(c cageConfig) bwrap.Spec {
 }
 
 // bind は、ホストの path src を、檻の中の dst に見せる Bind。src がホストの HOME の下なら、InHome を明示する
-// (clone・エージェントの HOME・run dir・利用者が置いたエージェントの実行ファイルなど、goro run が決めた path だけ。機密の path は bwrap が拒否する)。
+// (clone・エージェントの HOME・run dir・利用者が置いたエージェントの実行ファイルなど、goronation run が決めた path だけ。機密の path は bwrap が拒否する)。
 func (c cageConfig) bind(src, dst string, rw bool) bwrap.Bind {
 	return bwrap.Bind{Src: src, Dst: dst, RW: rw, InHome: strings.HasPrefix(src, c.Host.Home+"/")}
 }
@@ -132,7 +132,7 @@ var termRE = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,64}$`)
 
 // cageEnv は、檻の環境変数 (これだけ。ホストの環境変数は渡らない): 共通の HOME・PATH・TERM・LANG に、エージェントの p.env と、
 // 認証用ディレクトリの場所を教える p.creds.env を足す。tz が空でなければ TZ も足す (--push の有無に関わらず、常に)。
-// push・refPrefix が空でなければ、--push の配線 (下の pushEnv) も足す。proxy の変数は、goro init が設定する。
+// push・refPrefix が空でなければ、--push の配線 (下の pushEnv) も足す。proxy の変数は、goronation init が設定する。
 // TERM は、形が正しいときだけ渡し、そうでなければ dumb にする。
 func cageEnv(p agentProfile, term, tz, push, refPrefix string) []bwrap.EnvVar {
 	if !termRE.MatchString(term) {
@@ -154,14 +154,14 @@ func cageEnv(p agentProfile, term, tz, push, refPrefix string) []bwrap.EnvVar {
 	return env
 }
 
-// pushEnv は、--push owner/repo の環境変数: GORO_PUSH_REPO・GORO_PUSH_REF_PREFIX (goro pr create と、
+// pushEnv は、--push owner/repo の環境変数: GORONATION_PUSH_REPO・GORONATION_PUSH_REF_PREFIX (goronation pr create と、
 // エージェントへの手がかり) と、git の https://github.com/ を jailGitBase に付け替える insteadOf
 // (GIT_CONFIG_COUNT・GIT_CONFIG_KEY_0・GIT_CONFIG_VALUE_0。git 2.31 以降が読む環境変数によるコマンド設定。
 // ファイルを書かずに、この起動限りの設定にできる)。
 func pushEnv(repo, refPrefix string) []bwrap.EnvVar {
 	return []bwrap.EnvVar{
-		{Key: "GORO_PUSH_REPO", Value: repo},
-		{Key: "GORO_PUSH_REF_PREFIX", Value: refPrefix},
+		{Key: "GORONATION_PUSH_REPO", Value: repo},
+		{Key: "GORONATION_PUSH_REF_PREFIX", Value: refPrefix},
 		{Key: "GIT_CONFIG_COUNT", Value: "1"},
 		{Key: "GIT_CONFIG_KEY_0", Value: "url." + jailGitBase + ".insteadOf"},
 		{Key: "GIT_CONFIG_VALUE_0", Value: "https://github.com/"},
