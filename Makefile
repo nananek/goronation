@@ -55,9 +55,9 @@ test: ## 全 module に go test (フラグは GO_TEST_FLAGS・GO_TEST_EXTRA で�
 	$(call each_module,go test $(GO_TEST_FLAGS) ./...)
 
 # 単一バイナリ・cgo 禁止 (CGO_ENABLED=0) の裏取り。
-build: ## CGO_ENABLED=0 で bin/goro を作る (単一バイナリと cgo 禁止の裏取り)
+build: ## CGO_ENABLED=0 で bin/goronation を作る (単一バイナリと cgo 禁止の裏取り)
 	@mkdir -p bin
-	cd cmd && CGO_ENABLED=0 go build -o "$(CURDIR)/bin/goro" ./goro
+	cd cmd && CGO_ENABLED=0 go build -o "$(CURDIR)/bin/goronation" ./goronation
 
 # bwrap を要するテストを、skip ではなく必須にして回す (CI の bwrap leg と同じ)。
 test-bwrap: ## GORO_REQUIRE_BWRAP=1 で make test を実行する (bwrap を skip でなく必須にする)

@@ -6,13 +6,13 @@ goronation は、**信頼できない AI コーディングエージェントを
 
 ## 現在の状態
 
-M0 (土台と spike) の途中です。リポジトリ土台 (multi-module workspace、CI の leg、import 制約テスト、CODEOWNERS、ADR の置き場) と、最初に使える形の `goro run` (下記) があります。
+M0 (土台と spike) の途中です。リポジトリ土台 (multi-module workspace、CI の leg、import 制約テスト、CODEOWNERS、ADR の置き場) と、最初に使える形の `goronation run` (下記) があります。
 
-## goro run (最初に使える形)
+## goronation run (最初に使える形)
 
-`make build` の後、`bin/goro run --login` でログインし、`bin/goro run --repo PATH` で、その repo の private clone の中で claude を檻に入れて動かします。
-`bin/goro export ID` で成果 (コミット) を bundle にして取り出し、取り込みのコマンドを表示します。要るもの: Linux・bubblewrap (`/usr/bin/bwrap`)・native 版の claude。
-オプションは `bin/goro run -h`、規則と限界は `cmd/goro/doc.go` に書いてあります。
+`make build` の後、`bin/goronation run --login` でログインし、`bin/goronation run --repo PATH` で、その repo の private clone の中で claude を檻に入れて動かします。
+`bin/goronation export ID` で成果 (コミット) を bundle にして取り出し、取り込みのコマンドを表示します。要るもの: Linux・bubblewrap (`/usr/bin/bwrap`)・native 版の claude。
+オプションは `bin/goronation run -h`、規則と限界は `cmd/goronation/doc.go` に書いてあります。
 
 ## 構成
 
@@ -23,7 +23,7 @@ Go の multi-module workspace で、トップディレクトリ 1 つが 1 modul
 | `core/` | domain 型と ports。backend / adapter の実装を import しない |
 | `sandbox/` | サンドボックスのバックエンド (`sandbox/bwrap` など) |
 | `hostfs/` | 檻が書いたファイル (敵対入力) を、ホストが安全に読む (`os.Root`・fd 固定・通常ファイルだけ・大きさの上限) |
-| `cmd/` | 実行ファイル (`cmd/goro`)。実装の配線はここだけで行う |
+| `cmd/` | 実行ファイル (`cmd/goronation`)。実装の配線はここだけで行う |
 | `tools/archtest/` | import 制約テスト (依存方向と不変条件 I1 を機械的に強制する) |
 | `docs/adr/` | ADR (設計判断の記録) |
 
@@ -39,7 +39,7 @@ Go の multi-module workspace で、トップディレクトリ 1 つが 1 modul
 | `make fmt-check` | `gofmt -l` の出力が空であること |
 | `make vet` | 全 module に `go vet ./...` |
 | `make test` | 全 module に `go test -race -count=1 ./...` (追加のフラグは `GO_TEST_EXTRA` で渡す) |
-| `make build` | `CGO_ENABLED=0` で `bin/goro` を作る (単一バイナリと cgo 禁止の裏取り) |
+| `make build` | `CGO_ENABLED=0` で `bin/goronation` を作る (単一バイナリと cgo 禁止の裏取り) |
 | `make test-bwrap` | `GORO_REQUIRE_BWRAP=1` で `make test` を実行する |
 
 workspace のルートでは `go build ./...` が使えません (`directory prefix . does not contain modules listed in go.work`)。Makefile が `go list -m` で全 module を列挙し、各 module で実行します。
