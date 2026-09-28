@@ -23,7 +23,7 @@
 //   - 許可した宛先 (api.anthropic.com・opencode.ai など) 経由の持ち出しは防げない (TLS の中身を見ない)。大量の拒否 CONNECT で監査の予算 (8 MiB) を使い切られると、以降の宛先は egress.log に載らない (捨てた行数は終了時に表示する)。
 //   - 檻の HOME は、repo ごとに、同じ repo の全セッションで共有する (履歴・メモリが続く)。同じ repo の別セッションの檻は、共有の /home/goro の UDS などで通信でき、--allow は同じ repo のセッション間の境界ではない。認証情報 (auth/) は、そのエージェントの全 repo の檻から読み書きでき (信頼できない repo の檻も)、許可した宛先経由で持ち出せ、別のアカウントに差し替えられる。信頼できない repo の檻が auth/ に置いた symlink は、別の repo のセッションが認証情報を書くときに辿られ、その檻の自分のファイル (HOME・clone) を壊せる (opencode の symlink 方式。claude は rename で書くので当たらない。破壊のみで、読みも内容の指定もできない)。repo のキーは実 path で、repo の実体ではない: 同じ path に別の repo を置くと、履歴・メモリ・trust を引き継ぐ。
 //   - 標準入出力の 3 つとも実端末なら、goro run 専用の pty を用意し、そこだけに中継する (エスケープシーケンスは解釈もフィルタもしない。TIOCSTI は、専用の pty にしか効かず、legacy_tiocsti に頼らない)。3 つのどれかが端末でなければ (redirect・pipe)、これまでどおりホストの標準入出力に直結する (TIOCSTI は legacy_tiocsti の確認で塞ぐ)。termios は、終了後に戻す。
-//   - 起動後の Ctrl-C は、エージェントの中断として効く (goro 自身は終了しない。終了はエージェントの終了操作か SIGTERM)。seccomp・cap-drop は未実装。repo は、ローカルの path だけ。Linux (bwrap) だけ。檻からホストの localhost には届かず、ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。
+//   - 起動後の Ctrl-C は、エージェントの中断として効く (goro 自身は終了しない。終了はエージェントの終了操作か SIGTERM)。seccomp・cap-drop は未実装。repo は、ローカルの path だけ。Linux (bwrap) だけ。檻からホストの localhost には届かず、ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。goro serve は、同時接続数の上限 (64) を keep-alive 無効化で構造的に守るが、body をゆっくり送って都度接続を張り直す変種の可用性 DoS までは防がない (到達できる主体は、無認証でも一時的に service を止められる)。
 //
 // # 関連
 //
