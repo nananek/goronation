@@ -86,13 +86,17 @@ func (s *webServer) handleRepoStart(w http.ResponseWriter, r *http.Request) {
 // ルートの応答に限り、リクエストごとに新しい CSP nonce を発行する。securityHeaders が先に設定した
 // 既定の Content-Security-Policy を、Write 前にここで上書きする (net/http は WriteHeader/Write 前
 // ならヘッダーを何度でも書き換えられる)。他のルートは既定のまま変えない。
+//
+// baseContentSecurityPolicy への文字列連結ではなく cspWithoutStyleSrc から組み立てる: style-src
+// directive を自分で明示するので、baseContentSecurityPolicy の並びが将来変わっても、nonce が
+// 意図しない directive に付く事故が起きない。
 func (s *webServer) handleTerminalPage(w http.ResponseWriter, r *http.Request) {
 	nonce, err := newCSPNonce()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "nonce を生成できない")
 		return
 	}
-	w.Header().Set("Content-Security-Policy", baseContentSecurityPolicy+" 'nonce-"+nonce+"'")
+	w.Header().Set("Content-Security-Policy", cspWithoutStyleSrc+"; style-src 'self' 'nonce-"+nonce+"'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	terminalHTMLTmpl.Execute(w, terminalPageData{Nonce: nonce})
 }
