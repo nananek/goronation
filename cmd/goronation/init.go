@@ -54,16 +54,6 @@ var (
 	noProxyLoopback = []string{"127.0.0.1", "localhost", "::1"}
 )
 
-// selfExecArgv は、自分自身を __exec-hardened として再起動する argv の前置き (exe に続けて、CMD の前の "--" までの
-// 引数)。既定は [自分の実行ファイル, "__exec-hardened"]。テストが、テストバイナリの再実行の都合で差し替える。
-var selfExecArgv = func() ([]string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, err
-	}
-	return []string{exe, "__exec-hardened"}, nil
-}
-
 // forwardedSignals は、子に転送するシグナル。
 var forwardedSignals = []os.Signal{
 	syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGWINCH,
@@ -137,17 +127,7 @@ func runInit(args []string, stderr io.Writer) int {
 	defer l.Close()
 	go newRelay(cfg.upstream, maxConns).serve(l)
 
-	prefix, err := selfExecArgv()
-	if err != nil {
-		fmt.Fprintf(stderr, "goronation init: 自分の実行ファイルを解決できない: %v\n", err)
-		return exitInit
-	}
-	// 子は、直接 CMD を起動せず、goronation __exec-hardened -- CMD [ARGS...] を起動する: fork の直後・execve の前に、
-	// __exec-hardened が自分に prctl(PR_SET_DUMPABLE, 0) を設定してから、CMD へ execve で成り代わる (Go の os/exec は
-	// fork 後・exec 前のフックを提供しないため、自分自身の再実行で行う)。既知の限界 (要検討・未解決): この dumpable=0
-	// は、CMD への execve の時点で Linux にリセットされ、CMD には及ばない (exechardened.go の execHardenedUsage 参照)。
-	hardenedArgv := append(append(slices.Clone(prefix), "--"), cfg.argv...)
-	cmd := exec.Command(hardenedArgv[0], hardenedArgv[1:]...)
+	cmd := exec.Command(cfg.argv[0], cfg.argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Env = childEnv(os.Environ(), l.Addr().String(), !cfg.noProxyEnv)
 	if cfg.setCtty {

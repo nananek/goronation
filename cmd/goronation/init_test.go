@@ -25,16 +25,6 @@ func init() {
 	helpers["printenv"] = helperPrintEnv
 	helpers["proxyclient"] = helperProxyClient
 	helpers["waitstdin"] = helperWaitStdin
-
-	// runInit は、自分自身を __exec-hardened として再実行する (selfExecArgv)。テストバイナリの中では、その再実行も
-	// helperArg 経由の convention (TestMain) に乗せないと、go test の flag として解釈されて失敗する。
-	selfExecArgv = func() ([]string, error) {
-		exe, err := os.Executable()
-		if err != nil {
-			return nil, err
-		}
-		return []string{exe, helperArg, "goronation", "__exec-hardened"}, nil
-	}
 }
 
 // helperSigRecorder は、転送されるシグナルを受けるたびに、その名前を 1 行で出す。SIGTERM を受けたら、5 で終わる。

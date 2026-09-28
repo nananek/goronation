@@ -23,14 +23,17 @@ const (
 // defaultCapDrop は、檻の中の全プロセスから落とす、既定の capability。CAP_SYS_PTRACE の除去が主目的
 // (bounding set から落ちるので、後から取り戻せない)。
 //
-// 既知の限界 (要検討・未解決): CAP_SYS_PTRACE を落とすだけでは、Yama LSM の既定 (ptrace_scope=0) の「同一 uid・
-// dumpable なら、capability なしでも通す」規則を迂回できない。エージェント本体プロセス自身が prctl(PR_SET_DUMPABLE, 0)
-// を設定していれば、この規則も閉じられるはずだが、goronation init が __exec-hardened 経由で行うこの設定は、
-// エージェント本体への execve の時点で Linux に無効化される (execve は、特権が変わらない通常の実行では、dumpable を
-// 都度 1 に戻すため。exechardened.go の execHardenedUsage を参照)。そのため、現状、この cap-drop だけでは、
-// 同一檻内の兄弟プロセス (エージェント本体と、そこから fork される bash ツール等の子プロセス) 間の ptrace・procfs
-// (/proc/<pid>/fd) 経由の介入は、まだ防げていない。残りの capability は、コーディングエージェントの通常動作に
-// 不要と判断できる特権的なもの。
+// 対象外 (この PR のスコープ外。将来の別再設計に持ち越す): CAP_SYS_PTRACE を落とすだけでは、Yama LSM の既定
+// (ptrace_scope=0) の「同一 uid・dumpable なら、capability なしでも通す」規則を迂回できない。同一檻内の兄弟
+// プロセス (エージェント本体と、そこから fork される bash ツール等の子プロセス) 間の ptrace・procfs
+// (/proc/<pid>/fd) 経由の介入を、cap-drop だけで防ぐことはできない。エージェント本体プロセス自身が
+// prctl(PR_SET_DUMPABLE, 0) を設定していれば、この規則も閉じられるが、bwrap の檻の中でこれを行う手段
+// (goronation 自身が fork 直後・execve 前に自分に設定しても、Linux は特権の変わらない通常の execve で dumpable を
+// 都度 1 に戻すため、成り代わった先のエージェント本体には引き継がれない。実機で確認済み) が、cgo・LD_PRELOAD 用の
+// 共有ライブラリなしには無く、それらはこのリポジトリの不変条件 (tools/archtest の non-go-source・cgo の禁止:
+// 静的解析で追跡できない実行パスを一切許さない方針) と衝突するため、この PR では見送る。防ぐには、エージェント
+// 本体と、そこから fork される子プロセスを別 uid で動かす等、別の設計が要る。残りの capability は、コーディング
+// エージェントの通常動作に不要と判断できる特権的なもの。
 var defaultCapDrop = []string{
 	"CAP_SYS_PTRACE", "CAP_SYS_ADMIN", "CAP_SYS_MODULE", "CAP_SYS_RAWIO", "CAP_SYS_BOOT",
 	"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_MKNOD",
