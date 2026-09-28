@@ -17,7 +17,7 @@ import (
 )
 
 // probeArg は、檻の中で、テストバイナリが probe として動く印 (第 1 引数)。
-const probeArg = "--goro-conformance-probe"
+const probeArg = "--goronation-conformance-probe"
 
 // init は、第 1 引数が probeArg なら、probe として動いて終わる (TestMain より前に動くので、バックエンドのテストは、何も書かなくてよい)。
 func init() {

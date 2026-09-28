@@ -322,7 +322,7 @@ func processesWith(marker string) []int {
 
 // TestCageDiesWithParent は、檻を起動した親が SIGKILL で死ぬと、檻 (bwrap と、檻の中のプロセス) も死ぬことを確認する。
 func TestCageDiesWithParent(t *testing.T) {
-	marker := fmt.Sprintf("goro-bwrap-parent-%d-%d", os.Getpid(), time.Now().UnixNano())
+	marker := fmt.Sprintf("goronation-bwrap-parent-%d-%d", os.Getpid(), time.Now().UnixNano())
 	parent, _ := startParent(t, marker)
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -350,7 +350,7 @@ func TestCageDiesWithParent(t *testing.T) {
 func TestBwrapProcessIsClean(t *testing.T) {
 	t.Setenv("GORO_HOST_ONLY", "fake")
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/fake-agent")
-	marker := fmt.Sprintf("goro-bwrap-clean-%d-%d", os.Getpid(), time.Now().UnixNano())
+	marker := fmt.Sprintf("goronation-bwrap-clean-%d-%d", os.Getpid(), time.Now().UnixNano())
 	_, pid := startParent(t, marker)
 	env, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	if errors.Is(err, os.ErrPermission) {

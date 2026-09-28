@@ -20,8 +20,8 @@ import (
 // このファイルは、実際に bwrap を起動するテストの道具。檻の中で、テストバイナリ自身が probe として動き
 // (TestMain が、第 1 引数の印で切り替える)、檻の中から見えるものを JSON で報告する。
 const (
-	probeArg  = "--goro-bwrap-probe"  // 檻の中: probe として動く
-	parentArg = "--goro-bwrap-parent" // ホスト: 檻を起動して、そのまま待つ親として動く
+	probeArg  = "--goronation-bwrap-probe"  // 檻の中: probe として動く
+	parentArg = "--goronation-bwrap-parent" // ホスト: 檻を起動して、そのまま待つ親として動く
 )
 
 func TestMain(m *testing.M) {
