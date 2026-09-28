@@ -224,7 +224,7 @@ func TestLogoutRevokesExistingSessions(t *testing.T) {
 }
 
 // TestLogoutWithoutSessionSecretIsNoop は、まだ登録もログインもしていない状態 (SessionSecret が
-// 無い) で Logout を呼んでもエラーにならないことを確かめる (goro serve の handleLogout は、
+// 無い) で Logout を呼んでもエラーにならないことを確かめる (goronation serve の handleLogout は、
 // ログインしていないブラウザから POST /logout を呼ばれても、エラーにしない設計)。
 func TestLogoutWithoutSessionSecretIsNoop(t *testing.T) {
 	ctx := context.Background()
