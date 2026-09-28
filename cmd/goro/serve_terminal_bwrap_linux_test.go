@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -274,5 +275,29 @@ func readUntil(t *testing.T, cli *termrelaytest.Conn, want string) {
 			continue
 		}
 		got.Write(b)
+	}
+}
+
+// termReadUntil は、readUntil と同じことを、蓄積したバイト列 ([]byte) をそのまま返す形でする
+// (攻撃者視点レビューの再現テストが、受け取った生バイト列そのものを検査するのに使う)。
+func termReadUntil(t *testing.T, cli *termrelaytest.Conn, want string, timeout time.Duration) []byte {
+	t.Helper()
+	var got []byte
+	deadline := time.Now().Add(timeout)
+	for {
+		if bytes.Contains(got, []byte(want)) {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%q が届かない (got %q)", want, got)
+		}
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		b, err := cli.ReadBinary(ctx)
+		cancel()
+		if err != nil {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		got = append(got, b...)
 	}
 }

@@ -175,7 +175,13 @@ func runServeServer(args []string, stderr io.Writer) int {
 			return fail("端末ビューのセッションを起動できない: %v", err)
 		}
 		term = t
-		defer term.Wait() // 檻の後片付け (proxy.Close・master.Close) が終わるまで、戻る前に待つ
+		// 戻る前に、檻の後片付け (proxy.Close・master.Close) が終わるまで待つ。ただし、待つだけでは
+		// ハングする: 檻は ctx が取り消されたときにしか終わらないが、defer は登録順と逆に走るので、
+		// このまま defer term.Wait() とだけ書くと、外側の defer cancel() より先に (cancel が走る前に)
+		// 実行され、term.Wait が無期限にブロックする (攻撃者視点レビューで発見。net.Listen の失敗など、
+		// シグナルを経由しない異常系の return で起きる)。cancel を、ここで明示的に先に呼ぶ (cancel は
+		// 冪等なので、外側の defer cancel() と重複しても安全)。
+		defer func() { cancel(); term.Wait() }()
 	}
 
 	l, err := net.Listen("tcp", *listen)
