@@ -8,4 +8,5 @@ use (
 	./sandbox
 	./tools/archtest
 	./tools/docgen
+	./tools/fakeproviders
 )
