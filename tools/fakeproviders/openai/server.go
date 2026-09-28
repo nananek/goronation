@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// readBodyTimeout は、POST /v1/chat/completions の本文を読み取る期限。本文を送り切らずに接続だけ繋ぎ続ける
+// (slow-body) 接続が、ハンドラの goroutine を無期限にブロックしないためのもの (攻撃者視点レビューで、
+// 期限が無いとハングすることを確認済み)。var なのは、テストがこの値を縮めるため。
+var readBodyTimeout = 10 * time.Second
+
 // Step は、POST /v1/chat/completions への 1 回の呼び出しに対する応答を 1 つ記述する。
 type Step struct {
 	// Content は、assistant メッセージの本文。ToolCalls があり、Content が空文字列なら、
@@ -102,6 +107,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// SetReadDeadline が効かない ResponseWriter (この package の使い方では起きない) では、無視して従来どおり
+	// 進む (期限を設けられないだけで、ハンドラ自体は壊れない)。
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(readBodyTimeout))
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

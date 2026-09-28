@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sseFrame は、テストが読んだ 1 件の SSE イベント (event 行 + data 行)。
@@ -304,6 +306,43 @@ func TestRequestsAreCaptured(t *testing.T) {
 	}
 	if body["model"] != "claude-fake" {
 		t.Fatalf("captured body = %+v", body)
+	}
+}
+
+// TestSlowBodyTimesOut は、本文を送り切らずに接続だけ繋ぎ続ける (slow-body) 接続で、ハンドラの goroutine が
+// 無期限にブロックされない (攻撃者視点レビューの finding 2 の再現・回帰確認) ことを確かめる。
+func TestSlowBodyTimesOut(t *testing.T) {
+	old := readBodyTimeout
+	readBodyTimeout = 100 * time.Millisecond
+	defer func() { readBodyTimeout = old }()
+
+	s := httptest.NewServer(NewServer(Step{Text: "x"}))
+	defer s.Close()
+
+	addr := strings.TrimPrefix(s.URL, "http://")
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Content-Length を大きく宣言しつつ、本文の一部だけを送り、残りは送らない。
+	req := "POST /v1/messages HTTP/1.1\r\nHost: " + addr +
+		"\r\nContent-Type: application/json\r\nContent-Length: 100000000\r\n\r\n" + `{"model":"x"`
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		buf := make([]byte, 1)
+		conn.Read(buf) // readBodyTimeout を過ぎて接続が閉じられれば、エラー (EOF 等) で戻る
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("slow-body 接続が readBodyTimeout を過ぎてもハングし続けた (read timeout が効いていない)")
 	}
 }
 
