@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"net"
 	"os"
@@ -262,6 +263,31 @@ func fakeClaude(args []string) int {
 			return 1
 		}
 		return 0
+	case "termecho":
+		// goro serve の端末ビュー (WebSocket 経由の pty 中継) の結合テスト用: 自分を raw モードにして
+		// (kernel の ECHO と重ならないようにする)、"ready" を出し、以後は stdin で読んだバイト列を、
+		// 一切加工せずそのまま stdout に書き返す (中継が生バイトのまま届く・返ることを、byte-exact で
+		// 確かめるため)。0x04 (Ctrl-D・EOT) を受け取ったら、そこまでを書き返して自分から終了する
+		// (WS を切っても pty master は閉じないので、これが無いとエージェントが終わる手段が無い)。
+		if st, _ := saveTermios(0); st != nil {
+			raw := rawOf(st.t)
+			ioctl(0, syscall.TCSETS, unsafe.Pointer(&raw))
+		}
+		fmt.Println("ready")
+		buf := make([]byte, 4096)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				if idx := bytes.IndexByte(buf[:n], 0x04); idx >= 0 {
+					os.Stdout.Write(buf[:idx])
+					return 0
+				}
+				os.Stdout.Write(buf[:n])
+			}
+			if err != nil {
+				return 0
+			}
+		}
 	case "exit":
 		if len(args) == 2 {
 			if n, err := strconv.Atoi(args[1]); err == nil {

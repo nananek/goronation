@@ -333,6 +333,73 @@ func pickAgent(o runOptions, store *session.Store) (agentProfile, *session.Sessi
 	return recorded, sess, nil
 }
 
+// resolveRepoTarget は、--repo (repo が空でなければ、新しいセッションを作る) か --session (existing を
+// 再開する) の、run dir・clone・HOME を用意する (goro run と goro serve が共有する。--login はここを
+// 通らない: doRun 自身が別に扱う)。作った・再開した旨の案内は、呼び手が (repo が空でなかったかを見て)
+// 自分で出す (goro run と goro serve で文言が違うため、ここでは出さない)。
+func resolveRepoTarget(ctx context.Context, store *session.Store, dirs agentDirs, agent agentProfile, repo, name, email string, existing *session.Session) (runTarget, string, error) {
+	sess := existing
+	if repo != "" {
+		s, err := store.Create(ctx, session.CreateOptions{Repo: repo, Name: name, Email: email, Agent: agent.name})
+		if err != nil {
+			return runTarget{}, "", fmt.Errorf("セッションを作れない: %w", err)
+		}
+		sess = s
+	}
+	// HOME は repo ごと: セッションが記録した repo のキーの HOME (同じ repo のセッションは、同じ HOME。別の repo の HOME は、この檻に入らない)。
+	key, err := store.HomeKey(sess)
+	switch {
+	case err != nil:
+		return runTarget{}, "", fmt.Errorf("セッションを使えない: %s", strings.TrimPrefix(err.Error(), "session: "))
+	case key == "":
+		return runTarget{}, "", fmt.Errorf("このセッションは、HOME を repo ごとに分ける前に作った (使えない)。新しく作る: goro run%s --repo PATH", agentFlagFor(agent))
+	}
+	home := dirs.homeFor(key)
+	if err := ensureHome(agent, home, true); err != nil {
+		return runTarget{}, "", fmt.Errorf("HOME を作れない: %w", err)
+	}
+	if err := os.MkdirAll(sess.Run, 0o700); err != nil {
+		return runTarget{}, "", fmt.Errorf("run dir を作れない: %w", err)
+	}
+	return runTarget{id: sess.ID, work: sess.Clone, runDir: sess.Run}, home, nil
+}
+
+// prepareAgentLaunch は、--repo・--session・--login のどれでも共通する下ごしらえ: session.Store・
+// エージェントの選択 (--session なら記録のエージェントで動かす)・エージェントの実行ファイルの解決・
+// goro 自身の実行ファイルの解決・エージェントの状態ディレクトリの用意、をまとめる (goro run と
+// goro serve が共有する)。
+func prepareAgentLaunch(stateDir, sessionID, agentFlag, bin string) (host bwrap.Host, store *session.Store, agent agentProfile, existing *session.Session, agentExe, self string, dirs agentDirs, err error) {
+	host = bwrap.CurrentHost()
+	store, err = session.NewStore(stateDir, host)
+	if err != nil {
+		return
+	}
+	// エージェントは、実行ファイルと HOME を決める前に知る (--session は、記録のエージェントで動かす)。
+	agent, existing, err = pickAgent(runOptions{session: sessionID, agent: agentFlag}, store)
+	if err != nil {
+		return
+	}
+	agentExe, err = resolveAgentExe(agent, bin, os.Getenv(agent.exeEnv()), exec.LookPath)
+	if err != nil {
+		return
+	}
+	self, err = os.Executable()
+	if err == nil {
+		self, err = resolveExe(self)
+	}
+	if err != nil {
+		err = fmt.Errorf("goro 自身の実行ファイルを決められない: %w", err)
+		return
+	}
+	dirs = agent.dirs(stateDir)
+	// 認証情報の置き場は、エージェントごとに 1 つ (全 repo・--login の檻で共有する)。中身は、ホストは読まない。
+	if err = ensureDir(dirs.auth); err != nil {
+		err = fmt.Errorf("認証情報のディレクトリを作れない: %w", err)
+		return
+	}
+	return
+}
+
 func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
 		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
@@ -346,31 +413,9 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	if err := checkSockPath(sockPathFor(stateDir, o)); err != nil {
 		return fail("%v", err)
 	}
-	host := bwrap.CurrentHost()
-	store, err := session.NewStore(stateDir, host)
+	host, store, agent, existing, agentExe, self, dirs, err := prepareAgentLaunch(stateDir, o.session, o.agent, o.bin)
 	if err != nil {
 		return fail("%v", err)
-	}
-	// エージェントは、実行ファイルと HOME を決める前に知る (--session は、記録のエージェントで動かす)。
-	agent, existing, err := pickAgent(o, store)
-	if err != nil {
-		return fail("%v", err)
-	}
-	agentExe, err := resolveAgentExe(agent, o.bin, os.Getenv(agent.exeEnv()), exec.LookPath)
-	if err != nil {
-		return fail("%v", err)
-	}
-	self, err := os.Executable()
-	if err == nil {
-		self, err = resolveExe(self)
-	}
-	if err != nil {
-		return fail("goro 自身の実行ファイルを決められない: %v", err)
-	}
-	dirs := agent.dirs(stateDir)
-	// 認証情報の置き場は、エージェントごとに 1 つ (全 repo・--login の檻で共有する)。中身は、ホストは読まない。
-	if err := ensureDir(dirs.auth); err != nil {
-		return fail("認証情報のディレクトリを作れない: %v", err)
 	}
 
 	var tgt runTarget
@@ -388,30 +433,14 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 			return fail("ログイン用の HOME を作れない: %v", err)
 		}
 	default:
-		sess := existing
-		if o.repo != "" {
-			sess, err = store.Create(ctx, session.CreateOptions{Repo: o.repo, Name: o.name, Email: o.email, Agent: agent.name})
-			if err != nil {
-				return fail("セッションを作れない: %v", err)
-			}
-			fmt.Fprintf(stderr, "goro run: セッション %s を作った\n", sess.ID)
+		isNew := o.repo != ""
+		tgt, home, err = resolveRepoTarget(ctx, store, dirs, agent, o.repo, o.name, o.email, existing)
+		if err != nil {
+			return fail("%v", err)
 		}
-		// HOME は repo ごと: セッションが記録した repo のキーの HOME (同じ repo のセッションは、同じ HOME。別の repo の HOME は、この檻に入らない)。
-		key, err := store.HomeKey(sess)
-		switch {
-		case err != nil:
-			return fail("セッションを使えない: %s", strings.TrimPrefix(err.Error(), "session: "))
-		case key == "":
-			return fail("このセッションは、HOME を repo ごとに分ける前に作った (使えない)。新しく作る: goro run%s --repo PATH", agentFlagFor(agent))
+		if isNew {
+			fmt.Fprintf(stderr, "goro run: セッション %s を作った\n", tgt.id)
 		}
-		home = dirs.homeFor(key)
-		if err := ensureHome(agent, home, true); err != nil {
-			return fail("HOME を作れない: %v", err)
-		}
-		if err := os.MkdirAll(sess.Run, 0o700); err != nil {
-			return fail("run dir を作れない: %v", err)
-		}
-		tgt = runTarget{id: sess.ID, work: sess.Clone, runDir: sess.Run}
 	}
 
 	if o.login {
