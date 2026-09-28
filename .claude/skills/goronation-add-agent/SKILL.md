@@ -1,22 +1,22 @@
 ---
-name: goro-add-agent
-description: goro run に、新しいエージェント (claude・opencode の次) を足す手順と、これまでに踏んだ落とし穴。「エージェントを足す」「新しい --agent」「profile を書く」「codex や copilot を檻で動かす」などのときに使う。
+name: goronation-add-agent
+description: goronation run に、新しいエージェント (claude・opencode の次) を足す手順と、これまでに踏んだ落とし穴。「エージェントを足す」「新しい --agent」「profile を書く」「codex や copilot を檻で動かす」などのときに使う。
 ---
 
-# goro run に、新しいエージェントを足す
+# goronation run に、新しいエージェントを足す
 
 ## 原則
 
-- **最初のエージェントを特別扱いしない**。エージェントごとの違いは、`cmd/goro/agent.go` の profile 表のデータだけ (「claude なら A・opencode なら B」の分岐をコードに書かない)。名前から導出するもの (`GORO_<NAME>`・檻の中の path・状態のディレクトリ) も、表に書かない。
-- 状態は `<state>/agents/<名前>/{auth,homes,login-home,login-work,login-run}` (`auth` = 認証情報だけ・全 repo で共有、`homes/<repo のキー>` = repo ごとの HOME)。**フラグを足さない** (`--bin` と `GORO_<NAME>` で足りる)。設計の正は Issue #1 と `cmd/goro/doc.go`。
+- **最初のエージェントを特別扱いしない**。エージェントごとの違いは、`cmd/goronation/agent.go` の profile 表のデータだけ (「claude なら A・opencode なら B」の分岐をコードに書かない)。名前から導出するもの (`GORONATION_<NAME>`・檻の中の path・状態のディレクトリ) も、表に書かない。
+- 状態は `<state>/agents/<名前>/{auth,homes,login-home,login-work,login-run}` (`auth` = 認証情報だけ・全 repo で共有、`homes/<repo のキー>` = repo ごとの HOME)。**フラグを足さない** (`--bin` と `GORONATION_<NAME>` で足りる)。設計の正は Issue #1 と `cmd/goronation/doc.go`。
 
 ## 手順
 
 1. **使い捨ての spike** (コミットしない。scratchpad で行う)。`--bin` で任意の実行ファイルを檻で動かし、`--allow` を 1 つずつ足して、次を実測する。**`--state-dir` は、使い捨ての短い path にする**: `--agent` は表の中の名前しか取れないので、spike は「既存の名前 + `--bin`」の形になる。既定の状態のままだと、その名前の認証情報 (`auth/`) と repo の HOME (`homes/`) が、まだ信頼していない実行ファイルの檻に見える。
-   - **原則: エージェントの TUI を解釈・模倣しない**。ログインと操作は、エージェント自身の画面で行い、goro は端末に直結する (画面の手順を goro や skill に写すと、版が変わって嘘になる。opencode 2 系で、実際に食い違った)。
+   - **原則: エージェントの TUI を解釈・模倣しない**。ログインと操作は、エージェント自身の画面で行い、goronation は端末に直結する (画面の手順を goronation や skill に写すと、版が変わって嘘になる。opencode 2 系で、実際に食い違った)。
    - 起動・ログイン・1 往復に要る宛先 (既定の許可は、これだけにする。拒否された宛先は、要るかを確かめてから足す)。
    - 通信を止める環境変数。**名前の実在 (binary の文字列) と、効くか (`egress.log` の拒否が消えるか) は別**。存在しても効かないものが、既にあった。変数ごとに測るか、測っていないと書く。
-   - HOME のどこに書くか / `HTTPS_PROXY` を尊重するか (檻の中のプロセス同士の loopback 通信が、proxy に流れて拒否されないか。goro init が、loopback を `NO_PROXY` で外す) / ログインが檻の中で完結するか (ホストのブラウザの localhost に戻る方式は、檻に届かない)。
+   - HOME のどこに書くか / `HTTPS_PROXY` を尊重するか (檻の中のプロセス同士の loopback 通信が、proxy に流れて拒否されないか。goronation init が、loopback を `NO_PROXY` で外す) / ログインが檻の中で完結するか (ホストのブラウザの localhost に戻る方式は、檻に届かない)。
    - **認証情報の書き方と置き場** (共有のしかたが決まる): その場で書くか (同じ inode)・一時ファイル + rename か (inotify で観測)。置き場を環境変数で移せるか (binary の文字列を探し、移せたら、読み・書き・更新のロックが、そこに閉じるかを測る = `creds.env`)。移せず、その場で書くなら、HOME からの symlink (`creds.linkDir`・`files`)。rename で書くものに symlink は使えない (HOME だけの普通のファイルに変わり、共有から外れる)。refresh token が回転すると、認証情報のコピーは、片方の更新で、もう片方が切れる (共有を 1 か所にする理由)。実サーバーの回転は、実物の資格情報が要るので、未確認と書く。
    - **種 (`seed`) の最小**: repo ごとの新しい HOME で、初回の設定を飛ばすのに要る最小のファイル。アカウントの表示情報のように、起動のたびに認証情報から作り直されるものは、種にも共有にも入れない (別のアカウントで実測する)。
    - **初回の落とし穴**: ログインの直後、次の起動が onboarding からやり直しにならないか (何のキーが判定するか)。claude で踏んだ (`.claude.json` の `hasCompletedOnboarding`)。
