@@ -5,20 +5,20 @@ import (
 	"net/url"
 )
 
-// Config は、RP (Relying Party。goro serve 自身) の設定。起動時に一度作り、以後は変えない。
+// Config は、RP (Relying Party。goronation serve 自身) の設定。起動時に一度作り、以後は変えない。
 type Config struct {
 	// RPID は、WebAuthn の RP ID (Origin のホスト名と、完全に一致すること。サブドメインへの拡張は対応しない)。
 	RPID string
 	// RPName は、登録画面に出す、人間向けの名前 (省略可)。
 	RPName string
-	// Origin は、ブラウザから見た、この goro serve の origin ("https://host[:port]"。末尾のスラッシュ無し)。
-	// TLS 終端は goro serve 自身ではなく、リバースプロキシ (tailscale serve を想定) が行う前提 (goro-serve-plan
+	// Origin は、ブラウザから見た、この goronation serve の origin ("https://host[:port]"。末尾のスラッシュ無し)。
+	// TLS 終端は goronation serve 自身ではなく、リバースプロキシ (tailscale serve を想定) が行う前提 (goronation-serve-plan
 	// §4-1)。https を必須にする (WebAuthn の secure context の要件)。例外は http://localhost・http://127.0.0.1
 	// (開発用。仕様が secure context とみなす)。
 	Origin string
 }
 
-// Validate は、cfg が起動時に使える形かを確かめる (goro serve の起動時に呼ぶ。通らなければ起動しない)。
+// Validate は、cfg が起動時に使える形かを確かめる (goronation serve の起動時に呼ぶ。通らなければ起動しない)。
 func (cfg Config) Validate() error {
 	if cfg.RPID == "" {
 		return fmt.Errorf("webauthn: RPID が空")

@@ -5,15 +5,15 @@ package main
 import "embed"
 
 // xtermVendor は、ビルド済みの xterm.js 6.0.0・@xterm/addon-fit 0.11.0 (どちらも MIT。vendor/xterm/ に
-// LICENSE も置いてある) を、goro の単一バイナリに埋め込む (ADR 0005・goro-serve-plan §0-3 の決定)。
+// LICENSE も置いてある) を、goronation の単一バイナリに埋め込む (ADR 0005・goronation-serve-plan §0-3 の決定)。
 // npm・バンドラは使わない。危険な機能 (OSC 52 の書き込み・リンクの自動起動) につながる addon
-// (addon-web-links 等) は、意図的に含めていない。goro web が、利用者が実際に見るもの (登録・ログイン
-// 画面・セッション一覧・端末ビュー) を全部持つ (goro-web-plan §4 の訂正)。
+// (addon-web-links 等) は、意図的に含めていない。goronation web が、利用者が実際に見るもの (登録・ログイン
+// 画面・セッション一覧・端末ビュー) を全部持つ (goronation-web-plan §4 の訂正)。
 //
 //go:embed vendor/xterm/xterm.js vendor/xterm/xterm.css vendor/xterm/addon-fit.js
 var xtermVendor embed.FS
 
-// indexHTML・appJS は、goro web の登録・ログイン画面。ビルド時の依存を増やさないよう、素の HTML・JS を
+// indexHTML・appJS は、goronation web の登録・ログイン画面。ビルド時の依存を増やさないよう、素の HTML・JS を
 // 文字列で埋め込む (npm・バンドラは使わない)。インライン <script> は使わない (web.go の
 // Content-Security-Policy が禁じる)。
 const indexHTML = `<!doctype html>
@@ -21,13 +21,13 @@ const indexHTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>goro web</title>
+<title>goronation web</title>
 </head>
 <body>
-<h1>goro web</h1>
+<h1>goronation web</h1>
 <section id="register">
 <h2>登録 (最初の 1 回だけ)</h2>
-<p><code>goro web token</code> で発行したトークンを貼る。</p>
+<p><code>goronation web token</code> で発行したトークンを貼る。</p>
 <input id="token" type="text" placeholder="ブートストラップトークン" autocomplete="off">
 <button id="register-btn">passkey を登録する</button>
 </section>
@@ -126,17 +126,17 @@ document.getElementById('login-btn').addEventListener('click', login);
 `
 
 // sessionsHTML・sessionsJS は、requireSession で保護された、セッション一覧・repo のファイルブラウザの
-// ページ (goro-web-plan §4-1)。一覧表示・選択・(選んだら) セッション開始/再開、だけの最小限
+// ページ (goronation-web-plan §4-1)。一覧表示・選択・(選んだら) セッション開始/再開、だけの最小限
 // (usable-first)。
 const sessionsHTML = `<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>goro web — セッション</title>
+<title>goronation web — セッション</title>
 </head>
 <body>
-<h1>goro web</h1>
+<h1>goronation web</h1>
 <section id="sessions">
 <h2>セッション</h2>
 <ul id="session-list"></ul>
@@ -242,7 +242,7 @@ const terminalHTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>goro web — 端末</title>
+<title>goronation web — 端末</title>
 <link rel="stylesheet" href="/static/vendor/xterm.css">
 <style>
   html, body { margin: 0; height: 100%; background: #000; }

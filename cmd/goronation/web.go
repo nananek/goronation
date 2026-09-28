@@ -23,22 +23,22 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-// webUsage は、goro web -h の使い方。web (常駐の HTTP サーバー) と token (ブートストラップトークンの
+// webUsage は、goronation web -h の使い方。web (常駐の HTTP サーバー) と token (ブートストラップトークンの
 // 発行) の 2 つで、動く場所が違う (token は、サーバーを起こさず、状態ファイルに書くだけ)。
-const webUsage = `使い方: goro web --listen ADDR --rp-id HOST --origin URL [--state-dir DIR] [--repos-dir DIR]
-        goro web token [--ttl DURATION] [--state-dir DIR]
+const webUsage = `使い方: goronation web --listen ADDR --rp-id HOST --origin URL [--state-dir DIR] [--repos-dir DIR]
+        goronation web token [--ttl DURATION] [--state-dir DIR]
 
 web: WebAuthn (passkey) でログインしたブラウザだけがアクセスできる、常駐の HTTP サーバーを起こす。
      登録・ログイン・セッション一覧・repo のファイルブラウザ・端末ビュー (xterm.js) の画面を、全部
-     ここが持つ。実際のエージェント (檻) は goro serve (UDS 専用) が起動・保持し、goro web は認証済みの
-     WebSocket 接続を、対応する goro serve の UDS へ、中身を解釈しない素通しで中継する (必要なら
-     goro serve を子プロセスとして起動する)。TLS 終端は、tailscale serve のようなリバースプロキシに
-     任せる前提で、goro web 自身は既定で loopback にしか listen しない。
+     ここが持つ。実際のエージェント (檻) は goronation serve (UDS 専用) が起動・保持し、goronation web は認証済みの
+     WebSocket 接続を、対応する goronation serve の UDS へ、中身を解釈しない素通しで中継する (必要なら
+     goronation serve を子プロセスとして起動する)。TLS 終端は、tailscale serve のようなリバースプロキシに
+     任せる前提で、goronation web 自身は既定で loopback にしか listen しない。
 
   --listen ADDR    待ち受ける loopback の TCP (IP リテラル:ポート。127.0.0.1:8443 など)
   --rp-id HOST     WebAuthn の RP ID (--origin のホスト名と、完全に一致すること)
   --origin URL     ブラウザから見た origin ("https://host[:port]"。開発用に http://localhost も可)
-  --state-dir DIR  状態を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
+  --state-dir DIR  状態を置く場所 (既定は $XDG_STATE_HOME/goronation か ~/.local/state/goronation)
   --repos-dir DIR  新しいセッションを始められる repo を置く、1 つのディレクトリ (直下の git repo を
                    列挙する。指定しなければ、ファイルブラウザ機能自体が使えない: 既存のセッションの
                    一覧・再開だけができる。複数の置き場所は設定できない)
@@ -51,13 +51,13 @@ token: 最初の 1 回だけの登録に使う、ブートストラップトー�
   --state-dir DIR 状態を置く場所 (web と同じ既定)
 `
 
-// defaultBootstrapTTL は、goro web token の --ttl の既定値。
+// defaultBootstrapTTL は、goronation web token の --ttl の既定値。
 const defaultBootstrapTTL = 15 * time.Minute
 
 // sessionCookieName は、ログイン後のセッション token を運ぶ cookie の名前。
-const sessionCookieName = "goro_session"
+const sessionCookieName = "goronation_session"
 
-// maxRequestBody は、goro web が読む要求本体の上限 (WebAuthn の応答・API の要求は、せいぜい数 KiB)。
+// maxRequestBody は、goronation web が読む要求本体の上限 (WebAuthn の応答・API の要求は、せいぜい数 KiB)。
 const maxRequestBody = 64 << 10
 
 // webReadTimeout・webWriteTimeout・webIdleTimeout は、*http.Server の全体の締め切り (egress のような、
@@ -71,14 +71,14 @@ const (
 	webIdleTimeout  = 60 * time.Second
 )
 
-// maxWebConns は、goro web が同時に受理する接続数の上限 (limitedListener が絞る)。1 ユーザー・少数の
+// maxWebConns は、goronation web が同時に受理する接続数の上限 (limitedListener が絞る)。1 ユーザー・少数の
 // ブラウザ/タブを想定した個人用ツールなので、余裕を持たせつつ、無制限にはしない。
 const maxWebConns = 64
 
 // webShutdownTimeout は、SIGTERM 等を受けてからの graceful shutdown (http.Server.Shutdown) に許す猶予。
 const webShutdownTimeout = 5 * time.Second
 
-// runWeb は goro web の本体。web と token へ振り分ける。
+// runWeb は goronation web の本体。web と token へ振り分ける。
 func runWeb(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "token" {
 		return runWebToken(args[1:], stdout, stderr)
@@ -96,10 +96,10 @@ func webFlags(name string, args []string, stderr io.Writer) (*flag.FlagSet, *str
 
 func runWebServer(args []string, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "goro web: "+format+"\n", a...)
+		fmt.Fprintf(stderr, "goronation web: "+format+"\n", a...)
 		return exitUsage
 	}
-	flags, stateDirFlag := webFlags("goro web", args, stderr)
+	flags, stateDirFlag := webFlags("goronation web", args, stderr)
 	listen := flags.String("listen", "", "")
 	rpID := flags.String("rp-id", "", "")
 	origin := flags.String("origin", "", "")
@@ -120,7 +120,7 @@ func runWebServer(args []string, stderr io.Writer) int {
 	if err != nil || !ap.Addr().IsLoopback() {
 		return fail("--listen は loopback の IP リテラル:ポートだけ (127.0.0.1:8443 など): %q", *listen)
 	}
-	cfg := iwebauthn.Config{RPID: *rpID, RPName: "goro", Origin: *origin}
+	cfg := iwebauthn.Config{RPID: *rpID, RPName: "goronation", Origin: *origin}
 	if err := cfg.Validate(); err != nil {
 		return fail("%v", err)
 	}
@@ -145,7 +145,7 @@ func runWebServer(args []string, stderr io.Writer) int {
 		self, err = resolveExe(self)
 	}
 	if err != nil {
-		return fail("goro 自身の実行ファイルを決められない: %v", err)
+		return fail("goronation 自身の実行ファイルを決められない: %v", err)
 	}
 	sessStore, err := session.NewStore(stateDir, bwrap.CurrentHost())
 	if err != nil {
@@ -169,9 +169,9 @@ func runWebServer(args []string, stderr io.Writer) int {
 		defer cancel()
 		srv.Shutdown(shutdownCtx)
 	}()
-	fmt.Fprintf(stderr, "goro web: %s で待ち受けている (rp-id=%s origin=%s)\n", l.Addr(), sanitize(*rpID), sanitize(*origin))
+	fmt.Fprintf(stderr, "goronation web: %s で待ち受けている (rp-id=%s origin=%s)\n", l.Addr(), sanitize(*rpID), sanitize(*origin))
 	if err := srv.Serve(newLimitedListener(l, maxWebConns)); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fmt.Fprintf(stderr, "goro web: 終了: %v\n", err)
+		fmt.Fprintf(stderr, "goronation web: 終了: %v\n", err)
 		return 1
 	}
 	return 0
@@ -238,7 +238,7 @@ func (c *limitedConn) Close() error {
 	return c.Conn.Close()
 }
 
-// newWebHTTPServer は、goro web が実際に使う *http.Server を組み立てる (runWebServer と、結合テスト
+// newWebHTTPServer は、goronation web が実際に使う *http.Server を組み立てる (runWebServer と、結合テスト
 // (実際に生の TCP を張って確かめるもの) の、両方がこれを呼ぶ。同じ設定を、別々に書いて食い違わせない
 // ため)。
 func newWebHTTPServer(handler http.Handler) *http.Server {
@@ -255,10 +255,10 @@ func newWebHTTPServer(handler http.Handler) *http.Server {
 
 func runWebToken(args []string, stdout, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "goro web token: "+format+"\n", a...)
+		fmt.Fprintf(stderr, "goronation web token: "+format+"\n", a...)
 		return exitUsage
 	}
-	flags, stateDirFlag := webFlags("goro web token", args, stderr)
+	flags, stateDirFlag := webFlags("goronation web token", args, stderr)
 	ttl := flags.Duration("ttl", defaultBootstrapTTL, "")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -282,15 +282,15 @@ func runWebToken(args []string, stdout, stderr io.Writer) int {
 	}
 	tok, err := iwebauthn.IssueBootstrapToken(context.Background(), store, *ttl)
 	if err != nil {
-		fmt.Fprintf(stderr, "goro web token: 発行できない: %v\n", err)
+		fmt.Fprintf(stderr, "goronation web token: 発行できない: %v\n", err)
 		return 1
 	}
 	fmt.Fprintln(stdout, tok)
-	fmt.Fprintf(stderr, "goro web token: %s の間、有効。goro web の画面で、登録のときにこれを貼る\n", ttl.String())
+	fmt.Fprintf(stderr, "goronation web token: %s の間、有効。goronation web の画面で、登録のときにこれを貼る\n", ttl.String())
 	return 0
 }
 
-// newWebMux は、goro web の HTTP のハンドラをまとめる。
+// newWebMux は、goronation web の HTTP のハンドラをまとめる。
 func newWebMux(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, sessStore *session.Store, reposDir, stateDir, self string) http.Handler {
 	s := &webServer{cfg: cfg, store: store, secure: hasHTTPSScheme(origin), sessions: sessStore, reposDir: reposDir, stateDir: stateDir, self: self}
 	mux := http.NewServeMux()
@@ -324,7 +324,7 @@ type webServer struct {
 	sessions *session.Store
 	reposDir string // --repos-dir (絶対 path。空なら未設定)
 	stateDir string
-	self     string // goro 自身の実行ファイル (symlink を辿った実体。goro serve を起こすときに使う)
+	self     string // goronation 自身の実行ファイル (symlink を辿った実体。goronation serve を起こすときに使う)
 }
 
 func hasHTTPSScheme(origin string) bool { return len(origin) >= 8 && origin[:8] == "https://" }
