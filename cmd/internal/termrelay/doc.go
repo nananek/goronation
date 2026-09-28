@@ -1,11 +1,11 @@
-// Package termrelay は、goro serve の端末ビュー用に絞った WebSocket 接続を実装する。
+// Package termrelay は、goronation serve の端末ビュー用に絞った WebSocket 接続を実装する。
 //
 // ADR 0005 の依存ゼロの方針の例外 (github.com/coder/websocket) を、この package とその配下
 // (termrelaytest) だけに閉じ込める。バイナリフレームは pty の生バイト列 (両方向。中身は解釈しない)、
 // テキストフレームは resize の JSON だけ、という固定の使い分けにする (それ以外のテキストフレームは
-// protocol error で閉じる)。認証は、この package の責務ではない: goro serve は UDS 専用で、繋いで
-// くるのは goro web (WebAuthn のセッション cookie を検証済み) の reverse proxy だけという前提 (UDS に
-// 繋げること自体が信頼の境界。goro-web-plan の決定)。
+// protocol error で閉じる)。認証は、この package の責務ではない: goronation serve は UDS 専用で、繋いで
+// くるのは goronation web (WebAuthn のセッション cookie を検証済み) の reverse proxy だけという前提 (UDS に
+// 繋げること自体が信頼の境界。goronation-web-plan の決定)。
 //
 // # 使い方
 //

@@ -14,8 +14,8 @@
 
 **端末ビューの WebSocket 終端 (ハンドシェイク・フレーミング) に限り**、信頼できる既存の Go ライブラリ (`github.com/coder/websocket`) を使ってよい、という、依存ゼロの方針の例外を認める (ADR 0004 と同じ枠組み)。
 
-- 例外の範囲は、WebSocket のメッセージ送受信そのものだけ。pty master の生成・bwrap への受け渡し (`cageConfig.PTY`・`cageSpec`)・セッション管理・resize の意味づけなどは、これまでどおり標準ライブラリだけで、`cmd/goro` に書く。
-- 対象は、既存の `cmd` module の下の新しいパッケージ `cmd/internal/termrelay` にする (ADR 0004 の `cmd/internal/webauthn` と同じ理由: `cmd/goro` は単一バイナリで静的にリンクするので、module を分けても `cmd` の `go.sum` が依存の checksum を持つことは避けられない。守れるのは「他の module が依存ゼロのままであること」で、`cmd` の中に閉じれば足りる)。
+- 例外の範囲は、WebSocket のメッセージ送受信そのものだけ。pty master の生成・bwrap への受け渡し (`cageConfig.PTY`・`cageSpec`)・セッション管理・resize の意味づけなどは、これまでどおり標準ライブラリだけで、`cmd/goronation` に書く。
+- 対象は、既存の `cmd` module の下の新しいパッケージ `cmd/internal/termrelay` にする (ADR 0004 の `cmd/internal/webauthn` と同じ理由: `cmd/goronation` は単一バイナリで静的にリンクするので、module を分けても `cmd` の `go.sum` が依存の checksum を持つことは避けられない。守れるのは「他の module が依存ゼロのままであること」で、`cmd` の中に閉じれば足りる)。
 - `tools/archtest` に `websocket-only-dep` 規則を追加した。`github.com/coder/websocket` を import してよいのは `cmd/internal/termrelay/**` だけ。
 
 ### ライブラリの選定 (確定)
@@ -33,7 +33,7 @@
 
 - `cmd` module の `go.sum` に、`fxamacker/cbor/v2`・`x448/float16` に続いて `github.com/coder/websocket` が載る。他の module は引き続き依存ゼロ。
 - `tools/archtest` の `websocket-only-dep` が、依存の広がりを CI (`make check`) で機械的に検査する。
-- WebSocket の認証は、この依存の範囲外: `cmd/internal/termrelay` はハンドシェイク・フレーミングだけを担い、接続を受理する前の認証 (`requireSession`) は `cmd/goro/serve.go` 側の既存のミドルウェアをそのまま使う (新しい認証ロジックを増やさない)。
+- WebSocket の認証は、この依存の範囲外: `cmd/internal/termrelay` はハンドシェイク・フレーミングだけを担い、接続を受理する前の認証 (`requireSession`) は `cmd/goronation/serve.go` 側の既存のミドルウェアをそのまま使う (新しい認証ロジックを増やさない)。
 
 ## 代替案
 

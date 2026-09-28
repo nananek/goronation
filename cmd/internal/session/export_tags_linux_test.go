@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestFetchDoesNotFollowTags は、Fetch を実行しても、refs/heads/goro/<id>/ の外に ref ができないことを確認する。
+// TestFetchDoesNotFollowTags は、Fetch を実行しても、refs/heads/goronation/<id>/ の外に ref ができないことを確認する。
 // 檻が付けたタグは、名前を檻が決めたもので (ブランチの名前の検査を通らない)、git fetch の自動追従で、利用者の repo の refs/tags/ に入る。
 func TestFetchDoesNotFollowTags(t *testing.T) {
 	st, _, sess := exportFixture(t)
@@ -34,10 +34,10 @@ git tag 'evil;$(touch$IFS/tmp/pwn)'
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("取り込みのコマンドが失敗した: %v\n%s\n%s", err, b.Fetch, out)
 	}
-	prefix := "refs/heads/goro/" + sess.ID + "/"
+	prefix := "refs/heads/goronation/" + sess.ID + "/"
 	for _, ref := range strings.Fields(hostGit(t, user, "for-each-ref", "--format=%(refname)")) {
 		if !strings.HasPrefix(ref, prefix) {
-			t.Errorf("goro/<id>/ の外に ref ができた: %s", ref)
+			t.Errorf("goronation/<id>/ の外に ref ができた: %s", ref)
 		}
 	}
 }

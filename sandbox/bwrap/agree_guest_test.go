@@ -51,7 +51,7 @@ func agreeGuest(t *testing.T, b *Backend, s sandbox.Spec, what string) bool {
 func TestContractAgreesWithBwrapGuestPaths(t *testing.T) {
 	b := New(adapterHost)
 	guests := []string{
-		"/x", "/", "/proc", "/proc/sys", "/procx", "/dev", "/dev/shm", "/devx", "/usr", "/usr/local/bin/goro", "/usr2", "/lib", "/lib/x", "/lib64", "/lib64/y", "/lib32",
+		"/x", "/", "/proc", "/proc/sys", "/procx", "/dev", "/dev/shm", "/devx", "/usr", "/usr/local/bin/goronation", "/usr2", "/lib", "/lib/x", "/lib64", "/lib64/y", "/lib32",
 		"/bin", "/bin/sh", "/sbin", "/sbin/z", "/tmp", "/tmp/x", "/etc/ssl/certs", "/opt/x", "/work", "/work/a", "rel", "", "/a/../b", "/a\nb", "/x/", "//x",
 	}
 	n := 0

@@ -15,8 +15,8 @@ import (
 
 // 名義の既定。
 const (
-	DefaultName  = "goro"
-	DefaultEmail = "goro@localhost.invalid"
+	DefaultName  = "goronation"
+	DefaultEmail = "goronation@localhost.invalid"
 )
 
 // CreateOptions は、Create の引数。
@@ -107,7 +107,7 @@ func (s *Store) Create(ctx context.Context, o CreateOptions) (sess *Session, err
 // SetPushOrigin は、clone (セッションの Clone、私用の private clone のディレクトリ) に、"origin" という
 // 名前の remote を url に設定する (無ければ足す。すでにあれば向き先を変える。何度呼んでも同じ結果になる)。
 //
-// Create は、clone した直後に origin を外す (このファイルの上の方)。goro run --push は、それとは別に、
+// Create は、clone した直後に origin を外す (このファイルの上の方)。goronation run --push は、それとは別に、
 // --push が有効な起動のたび (再開を含む) に、この関数で origin を url に揃え直す: エージェントが、素の
 // git fetch/pull/push origin ... を打つだけで届くようにするため (呼び手が別途設定する url.<...>.insteadOf
 // で、実際の通信は、その経路の先の egress に付け替わる。url 自体を書き換えるだけで、新しい通信経路が

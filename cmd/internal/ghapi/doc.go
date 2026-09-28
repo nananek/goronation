@@ -1,4 +1,4 @@
-// Package ghapi は、goro pr ready (ホスト側) が使う、GitHub GraphQL API への最小の呼び出しを実装する。
+// Package ghapi は、goronation pr ready (ホスト側) が使う、GitHub GraphQL API への最小の呼び出しを実装する。
 //
 // 任意の GraphQL クエリは実装しない: PR の状態 (draft・head の checks) を読む 1 つのクエリと、
 // ready for review にする 1 つの mutation だけを、固定の文字列として持つ。

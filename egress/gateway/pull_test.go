@@ -91,7 +91,7 @@ func TestServePullCreatesDraft(t *testing.T) {
 	src := &staticSource{name: CredentialName, token: testToken, ok: true}
 	h := pullHandler(t, srv.URL, src)
 
-	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x","base":"main","draft":false}`)
+	body := []byte(`{"title":"t","head":"goronation/` + testSession + `/x","base":"main","draft":false}`)
 	w := doRequest(t, h, "POST", pullTarget, body, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)
@@ -123,7 +123,7 @@ func TestServePullDefaultBranch(t *testing.T) {
 	src := &staticSource{name: CredentialName, token: testToken, ok: true}
 	h := pullHandler(t, srv.URL, src)
 
-	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x"}`)
+	body := []byte(`{"title":"t","head":"goronation/` + testSession + `/x"}`)
 	w := doRequest(t, h, "POST", pullTarget, body, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body)
@@ -146,11 +146,11 @@ func TestServePullRejectsOutOfPolicy(t *testing.T) {
 	h := pullHandler(t, srv.URL, src)
 
 	cases := map[string]int{
-		`{"title":"t","head":"main","base":"main"}`:                                        403,
-		`{"title":"t","head":"goro/other-session/x","base":"main"}`:                        403,
-		`{"head":"goro/` + testSession + `/x","base":"main"}`:                              400,
-		`{"title":"` + strings.Repeat("a", 300) + `","head":"goro/` + testSession + `/x"}`: 400,
-		`{"Title":"t","head":"goro/` + testSession + `/x"}`:                                400,
+		`{"title":"t","head":"main","base":"main"}`:                                              403,
+		`{"title":"t","head":"goronation/other-session/x","base":"main"}`:                        403,
+		`{"head":"goronation/` + testSession + `/x","base":"main"}`:                              400,
+		`{"title":"` + strings.Repeat("a", 300) + `","head":"goronation/` + testSession + `/x"}`: 400,
+		`{"Title":"t","head":"goronation/` + testSession + `/x"}`:                                400,
 	}
 	for body, want := range cases {
 		w := doRequest(t, h, "POST", pullTarget, []byte(body), nil)
@@ -194,7 +194,7 @@ func TestServePullUpstreamStatusChecked(t *testing.T) {
 	src := &staticSource{name: CredentialName, token: testToken, ok: true}
 	h := pullHandler(t, srv.URL, src)
 
-	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x","base":"main"}`)
+	body := []byte(`{"title":"t","head":"goronation/` + testSession + `/x","base":"main"}`)
 	w := doRequest(t, h, "POST", pullTarget, body, nil)
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status=%d body=%s (500 なのに、本文の形が正しいからと 201 にしていないか)", w.Code, w.Body)
@@ -210,7 +210,7 @@ func TestServePullOtherRepoRejected(t *testing.T) {
 	h := pullHandler(t, srv.URL, src)
 
 	target := github.PathPrefix + "repos/x/y/pulls"
-	w := doRequest(t, h, "POST", target, []byte(`{"title":"t","head":"goro/`+testSession+`/x","base":"main"}`), nil)
+	w := doRequest(t, h, "POST", target, []byte(`{"title":"t","head":"goronation/`+testSession+`/x","base":"main"}`), nil)
 	if w.Code != 403 {
 		t.Fatalf("status=%d", w.Code)
 	}
@@ -229,7 +229,7 @@ func TestServePullQuota(t *testing.T) {
 	cfg.APIBaseURL, cfg.Credentials, cfg.PRQuota = srv.URL, src, 2
 	h := newHandler(t, cfg)
 
-	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x","base":"main"}`)
+	body := []byte(`{"title":"t","head":"goronation/` + testSession + `/x","base":"main"}`)
 	for i := 0; i < 2; i++ {
 		w := doRequest(t, h, "POST", pullTarget, body, nil)
 		if w.Code != http.StatusCreated {
@@ -255,7 +255,7 @@ func TestServePullUpstreamRejects(t *testing.T) {
 	src := &staticSource{name: CredentialName, token: testToken, ok: true}
 	h := pullHandler(t, srv.URL, src)
 
-	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x","base":"main"}`)
+	body := []byte(`{"title":"t","head":"goronation/` + testSession + `/x","base":"main"}`)
 	w := doRequest(t, h, "POST", pullTarget, body, nil)
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status=%d", w.Code)
@@ -271,7 +271,7 @@ func TestServePullBadUpstreamResponse(t *testing.T) {
 	src := &staticSource{name: CredentialName, token: testToken, ok: true}
 	h := pullHandler(t, srv.URL, src)
 
-	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x","base":"main"}`)
+	body := []byte(`{"title":"t","head":"goronation/` + testSession + `/x","base":"main"}`)
 	w := doRequest(t, h, "POST", pullTarget, body, nil)
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status=%d", w.Code)
@@ -291,7 +291,7 @@ func TestServePullResponseSizeCapped(t *testing.T) {
 	src := &staticSource{name: CredentialName, token: testToken, ok: true}
 	h := pullHandler(t, srv.URL, src)
 
-	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x","base":"main"}`)
+	body := []byte(`{"title":"t","head":"goronation/` + testSession + `/x","base":"main"}`)
 	w := doRequest(t, h, "POST", pullTarget, body, nil)
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status=%d body=%s (上限を超えて読み切り、余分な本文が正しい PR の応答として通っていないか)", w.Code, w.Body)
@@ -306,7 +306,7 @@ func TestServePullCredentialMissing(t *testing.T) {
 	src := &staticSource{}
 	h := pullHandler(t, srv.URL, src)
 
-	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x","base":"main"}`)
+	body := []byte(`{"title":"t","head":"goronation/` + testSession + `/x","base":"main"}`)
 	w := doRequest(t, h, "POST", pullTarget, body, nil)
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status=%d", w.Code)
@@ -325,7 +325,7 @@ func TestServePullDefaultBranchFailure(t *testing.T) {
 	src := &staticSource{name: CredentialName, token: testToken, ok: true}
 	h := pullHandler(t, srv.URL, src)
 
-	body := []byte(`{"title":"t","head":"goro/` + testSession + `/x"}`)
+	body := []byte(`{"title":"t","head":"goronation/` + testSession + `/x"}`)
 	w := doRequest(t, h, "POST", pullTarget, body, nil)
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status=%d", w.Code)

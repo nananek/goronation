@@ -17,7 +17,7 @@ import (
 // このファイルは、「標準入出力が端末でなくても、制御端末を継承していれば、檻はホストの端末に届く」ことの確認。
 // TIOCSTI は、呼んだプロセスの制御端末 (/dev/tty) に効く。bwrap は --new-session が無いと setsid しないので、
 // 檻は、Start を呼んだプロセスの制御端末を、そのまま持つ (--dev /dev の /dev/tty は、ホストの /dev/tty)。
-// Start の TIOCSTI の確認が、標準入出力だけを見ると、`goro run > log 2>&1 < /dev/null` の形で素通りする。
+// Start の TIOCSTI の確認が、標準入出力だけを見ると、`goronation run > log 2>&1 < /dev/null` の形で素通りする。
 //
 // テストバイナリ自身が、init() で、環境変数 tiocstiRoleEnv に応じて、ホスト側 (制御端末を持つ Start の呼び手) と、
 // 檻の中 (/dev/tty を開いて TIOCSTI を試す) の役を演じる (TestMain は変えない)。

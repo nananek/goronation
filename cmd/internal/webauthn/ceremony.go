@@ -25,7 +25,7 @@ const SessionTTL = 30 * 24 * time.Hour
 
 // bootstrapUserID は、この passkey が結び付く WebAuthn の user.id (RFC の要求で opaque なバイト列が要るが、
 // 1 ユーザー固定のシステムなので、区別する必要が無く、固定値でよい。個人情報は入れない)。
-var bootstrapUserID = []byte("goro-admin")
+var bootstrapUserID = []byte("goronation-admin")
 
 // ErrNotRegistered は、まだ credential が登録されていないときの error (AuthenticateBegin)。
 var ErrNotRegistered = errors.New("webauthn: まだ登録されていない")
@@ -120,7 +120,7 @@ type sessionClaims struct {
 var b64 = base64.RawURLEncoding
 
 // IssueBootstrapToken は、新しいブートストラップトークンを作り、状態に保存して (SessionSecret も無ければ
-// ここで作る)、ブラウザの URL に貼り付けられる文字列で返す。goro serve token が使う。すでに登録済みでも、
+// ここで作る)、ブラウザの URL に貼り付けられる文字列で返す。goronation serve token が使う。すでに登録済みでも、
 // 呼べる (トークン自体は作れるが、RegisterBegin が ErrAlreadyRegistered で断る)。
 func IssueBootstrapToken(ctx context.Context, st *Store, ttl time.Duration) (string, error) {
 	tok, err := randomBytes(32)
@@ -162,7 +162,7 @@ func RegisterBegin(ctx context.Context, cfg Config, st *Store, bootstrapToken st
 	}
 	opts := &CreationOptions{
 		RP:        rpEntity{ID: cfg.RPID, Name: cfg.RPName},
-		User:      userEntity{ID: b64.EncodeToString(bootstrapUserID), Name: "admin", DisplayName: "goro"},
+		User:      userEntity{ID: b64.EncodeToString(bootstrapUserID), Name: "admin", DisplayName: "goronation"},
 		Challenge: b64.EncodeToString(challenge),
 		PubKeyCredParams: []credParam{
 			{Type: "public-key", Alg: coseAlgES256},
@@ -384,7 +384,7 @@ func VerifySession(ctx context.Context, st *Store, token string) error {
 //
 // 呼び手の認証は、この関数の責務ではない: 呼び手 (HTTP ハンドラ) が、すでに VerifySession 等で
 // 呼び出し元の資格を確認済みであることを前提とする。無条件に外部からの要求で呼ぶと、無関係な
-// 第三者が正規利用者のセッションを強制失効させられる (goro serve のハンドラは、有効なセッション
+// 第三者が正規利用者のセッションを強制失効させられる (goronation serve のハンドラは、有効なセッション
 // cookie を提示できたときだけこれを呼ぶ)。
 func Logout(ctx context.Context, st *Store) error {
 	state, err := st.load(ctx)

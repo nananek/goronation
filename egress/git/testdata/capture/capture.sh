@@ -27,37 +27,37 @@ U=http://127.0.0.1:$PORT/o
 cd "$W/w"
 gitc init -q c && cd c && gitc remote add origin $U/r.git
 echo one > f && gitc add f && gitc commit -qm one
-tag create;      gitc push origin HEAD:refs/heads/goro/$S/one 2>&1 | sed 's/^/   /'
+tag create;      gitc push origin HEAD:refs/heads/goronation/$S/one 2>&1 | sed 's/^/   /'
 echo two >> f && gitc commit -qam two
-tag update;      gitc push origin HEAD:refs/heads/goro/$S/one 2>&1 | sed 's/^/   /'
-tag progress;    echo three >> f && gitc commit -qam three && gitc push --progress origin HEAD:refs/heads/goro/$S/one 2>&1 | sed 's/^/   /'
-tag multi;       gitc push origin HEAD:refs/heads/goro/$S/a HEAD:refs/heads/goro/$S/b 2>&1 | sed 's/^/   /'
-tag atomic;      echo four >> f && gitc commit -qam four && gitc push --atomic origin HEAD:refs/heads/goro/$S/a HEAD:refs/heads/goro/$S/b 2>&1 | sed 's/^/   /'
-tag copy;        gitc push origin HEAD:refs/heads/goro/$S/copy 2>&1 | sed 's/^/   /'
-tag force;       gitc reset -q --hard HEAD~1 && echo four2 >> f && gitc commit -qam four2 && gitc push --force origin HEAD:refs/heads/goro/$S/a 2>&1 | sed 's/^/   /'
-tag delete;      gitc push origin :refs/heads/goro/$S/copy 2>&1 | sed 's/^/   /'
+tag update;      gitc push origin HEAD:refs/heads/goronation/$S/one 2>&1 | sed 's/^/   /'
+tag progress;    echo three >> f && gitc commit -qam three && gitc push --progress origin HEAD:refs/heads/goronation/$S/one 2>&1 | sed 's/^/   /'
+tag multi;       gitc push origin HEAD:refs/heads/goronation/$S/a HEAD:refs/heads/goronation/$S/b 2>&1 | sed 's/^/   /'
+tag atomic;      echo four >> f && gitc commit -qam four && gitc push --atomic origin HEAD:refs/heads/goronation/$S/a HEAD:refs/heads/goronation/$S/b 2>&1 | sed 's/^/   /'
+tag copy;        gitc push origin HEAD:refs/heads/goronation/$S/copy 2>&1 | sed 's/^/   /'
+tag force;       gitc reset -q --hard HEAD~1 && echo four2 >> f && gitc commit -qam four2 && gitc push --force origin HEAD:refs/heads/goronation/$S/a 2>&1 | sed 's/^/   /'
+tag delete;      gitc push origin :refs/heads/goronation/$S/copy 2>&1 | sed 's/^/   /'
 tag tag;         gitc tag -a -m t1 t1 && gitc push origin refs/tags/t1 2>&1 | sed 's/^/   /'
 tag lighttag;    gitc tag t2 && gitc push origin refs/tags/t2 2>&1 | sed 's/^/   /'
 tag main;        gitc push origin HEAD:refs/heads/main 2>&1 | sed 's/^/   /'
-tag pushopt;     gitc push -o ci.skip -o k=v origin HEAD:refs/heads/goro/$S/opt 2>&1 | sed 's/^/   /'
-tag unicode;     gitc push origin HEAD:refs/heads/goro/$S/日本語 2>&1 | sed 's/^/   /'
-tag nested;      gitc push origin HEAD:refs/heads/goro/$S/feat/x/y 2>&1 | sed 's/^/   /'
-tag mixed;       gitc push origin HEAD:refs/heads/goro/$S/ok2 HEAD:refs/heads/other 2>&1 | sed 's/^/   /'
+tag pushopt;     gitc push -o ci.skip -o k=v origin HEAD:refs/heads/goronation/$S/opt 2>&1 | sed 's/^/   /'
+tag unicode;     gitc push origin HEAD:refs/heads/goronation/$S/日本語 2>&1 | sed 's/^/   /'
+tag nested;      gitc push origin HEAD:refs/heads/goronation/$S/feat/x/y 2>&1 | sed 's/^/   /'
+tag mixed;       gitc push origin HEAD:refs/heads/goronation/$S/ok2 HEAD:refs/heads/other 2>&1 | sed 's/^/   /'
 # 署名つき push (gpg の鍵を、使い捨ての GNUPGHOME に作る)
 gitc_gpg() { gitc -c user.signingkey=cap "$@"; }
 env -i PATH="$PATH" HOME="$W/home" GNUPGHOME="$GH" gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key cap@example.invalid default default never >/dev/null 2>&1 || echo "   (gpg の鍵を作れない)"
-tag signed;      gitc_gpg push --signed=yes origin HEAD:refs/heads/goro/$S/signed 2>&1 | sed 's/^/   /' || true
+tag signed;      gitc_gpg push --signed=yes origin HEAD:refs/heads/goronation/$S/signed 2>&1 | sed 's/^/   /' || true
 # shallow: 浅い clone から push
 cd "$W/w" && gitc clone -q --depth 1 file://$W/srv/o/r.git sh 2>&1 | sed 's/^/   /'
 cd sh && gitc remote set-url origin $U/r.git && echo shallow >> f && gitc commit -qam shallow
-tag shallow;     gitc push origin HEAD:refs/heads/goro/$S/shallow 2>&1 | sed 's/^/   /'
+tag shallow;     gitc push origin HEAD:refs/heads/goronation/$S/shallow 2>&1 | sed 's/^/   /'
 # 大きい push (postBuffer を超える → Transfer-Encoding: chunked)
 cd "$W/w/c" && head -c 3000000 /dev/urandom > big.bin && gitc add big.bin && gitc commit -qm big
-tag big;         gitc push origin HEAD:refs/heads/goro/$S/big 2>&1 | sed 's/^/   /'
+tag big;         gitc push origin HEAD:refs/heads/goronation/$S/big 2>&1 | sed 's/^/   /'
 # sha256 のリポジトリ
 cd "$W/w" && gitc init -q --object-format=sha256 c256 && cd c256 && gitc remote add origin $U/r256.git
 echo s > f && gitc add f && gitc commit -qm s
-tag sha256;      gitc push origin HEAD:refs/heads/goro/$S/s 2>&1 | sed 's/^/   /'
+tag sha256;      gitc push origin HEAD:refs/heads/goronation/$S/s 2>&1 | sed 's/^/   /'
 # fetch (upload-pack) の POST の見出しも採取する (経路と Content-Type の確認用)
 tag fetch;       cd "$W/w" && gitc clone -q $U/r.git fetched 2>&1 | sed 's/^/   /'
 echo; ls -l "$W/captures"

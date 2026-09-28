@@ -28,7 +28,7 @@ const (
 	maxResponseBytes = 256 << 10
 )
 
-// Config は、Handler の設定。1 つの Handler は、1 つの Push (repo とセッション) だけを扱う (goro run 1 回に対応)。
+// Config は、Handler の設定。1 つの Handler は、1 つの Push (repo とセッション) だけを扱う (goronation run 1 回に対応)。
 type Config struct {
 	// Push は、檻から push・fetch を許す、唯一の repo とセッション。git.NewPolicy で作ったものだけを受け付ける
 	// (構造体リテラルで作った、検査を経ていない Policy は、New が断る。攻撃者視点レビュー L2)。

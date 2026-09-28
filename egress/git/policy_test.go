@@ -30,10 +30,10 @@ func TestCheckRef(t *testing.T) {
 		}
 	}
 	bad := []string{
-		"", "refs/heads/main", "refs/heads/develop", "refs/tags/t1", "refs/tags/goro/" + sess + "/x", "refs/heads/goro/other/x",
-		"refs/heads/goro/" + sess, "refs/heads/goro/" + sess + "x/y", "refs/heads/goro/" + sess[:len(sess)-1] + "/x",
-		"refs/heads/goro//x", "refs/remotes/origin/x", "refs/for/main", "HEAD", "refs/heads/GORO/" + sess + "/x", "REFS/heads/goro/" + sess + "/x",
-		"refs/heads/goro/" + sess + "/../../main", "refs/heads/../goro/" + sess + "/x", " " + pfx + "x", pfx + "x ",
+		"", "refs/heads/main", "refs/heads/develop", "refs/tags/t1", "refs/tags/goronation/" + sess + "/x", "refs/heads/goronation/other/x",
+		"refs/heads/goronation/" + sess, "refs/heads/goronation/" + sess + "x/y", "refs/heads/goronation/" + sess[:len(sess)-1] + "/x",
+		"refs/heads/goronation//x", "refs/remotes/origin/x", "refs/for/main", "HEAD", "refs/heads/GORONATION/" + sess + "/x", "REFS/heads/goronation/" + sess + "/x",
+		"refs/heads/goronation/" + sess + "/../../main", "refs/heads/../goronation/" + sess + "/x", " " + pfx + "x", pfx + "x ",
 		pfx, pfx + "/x", pfx + "x/", pfx + "a//b", pfx + ".x", pfx + "x.", pfx + "a..b", pfx + "a/../b", pfx + "a/./b", pfx + "x.lock", pfx + "a.lock/b",
 		pfx + "a b", pfx + "a:b", pfx + "a~b", pfx + "a^b", pfx + "a?b", pfx + "a*b", pfx + "a[b", pfx + `a\b`, pfx + "a@{b", pfx + "@", pfx + "a%2fb",
 		pfx + "a\nb", pfx + "a\x00b", pfx + "a\x7fb", pfx + "\x1b[31m", pfx + "日本語", pfx + "a\xe2\x80\x8bb",
@@ -187,7 +187,7 @@ func TestCheckBranchName(t *testing.T) {
 }
 
 // TestCheckRefMatchesModel は、CheckRef と、別の書き方 (正規表現) の判定が、任意の名前で一致することを、fuzz の種だけで確かめる。
-var refModel = regexp.MustCompile(`^refs/heads/goro/` + regexp.QuoteMeta(sess) + `/([A-Za-z0-9_-][A-Za-z0-9._-]*[A-Za-z0-9_-]|[A-Za-z0-9_-])(/([A-Za-z0-9_-][A-Za-z0-9._-]*[A-Za-z0-9_-]|[A-Za-z0-9_-]))*$`)
+var refModel = regexp.MustCompile(`^refs/heads/goronation/` + regexp.QuoteMeta(sess) + `/([A-Za-z0-9_-][A-Za-z0-9._-]*[A-Za-z0-9_-]|[A-Za-z0-9_-])(/([A-Za-z0-9_-][A-Za-z0-9._-]*[A-Za-z0-9_-]|[A-Za-z0-9_-]))*$`)
 
 // FuzzCheckRef は、CheckRef が通した ref が、独立した規則 (正規表現・長さ・.. と .lock の不在) を満たし、逆も成り立つことを確かめる。
 func FuzzCheckRef(f *testing.F) {

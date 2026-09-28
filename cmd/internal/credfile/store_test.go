@@ -134,7 +134,7 @@ func TestSaveModeIgnoresUmask(t *testing.T) {
 	for _, umask := range []int{0, 0o022, 0o077, 0o277} { // 0o277 は、owner の書き込みも消す: 0600 を保証するのは、fchmod
 		base := t.TempDir() // umask を変える前に作る (変えた後だと、この dir 自体が 0500 になる)
 		old := syscall.Umask(umask)
-		state := filepath.Join(base, "state", "goro") // 無い親も、作る (0700)
+		state := filepath.Join(base, "state", "goronation") // 無い親も、作る (0700)
 		st, _ := New(state)
 		err := st.Save("github", credential.New(tok))
 		syscall.Umask(old)

@@ -6,7 +6,7 @@ import (
 	"github.com/nananek/goronation/egress/git"
 )
 
-// PathPrefix は、檻の goro pr create が、PR を作るために送る先の path の接頭辞。
+// PathPrefix は、檻の goronation pr create が、PR を作るために送る先の path の接頭辞。
 const PathPrefix = "/github-api/"
 
 // ParsePullRoute は、要求の method と request-target (origin-form) を検査し、PR を作る repo を返す。

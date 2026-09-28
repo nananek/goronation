@@ -184,7 +184,7 @@ func TestFixtures(t *testing.T) {
 		}},
 		// unsafe は、実行可能メモリ (syscall.Mmap / Mprotect) に書いた機械語を、関数として呼べる (funcval を自作する)。
 		// .s も .c も linkname も表の関数の呼び出しも要らない。os/exec と同じ場所にだけ許す。別名・blank・dot の
-		// import も検出する。sandbox/ok.go と cmd/goro/ok.go は許可の対照。control.go は、名前が unsafe の
+		// import も検出する。sandbox/ok.go と cmd/goronation/ok.go は許可の対照。control.go は、名前が unsafe の
 		// 別の package (example.com/unsafe) の対照。
 		{"unsafe", 7, []string{
 			"core/alias.go:3: unsafe-import",
@@ -195,7 +195,7 @@ func TestFixtures(t *testing.T) {
 		// debug/gosym は、実行中のバイナリの pclntab から、関数 (表の syscall.Syscall など) のアドレスを引ける。
 		// reflect.NewAt と、unsafe.Pointer を返す・受け取るメソッド (UnsafePointer・UnsafeAddr・SetPointer) を
 		// 組み合わせると、unsafe を import せずに、アドレスで関数を呼べる。os/exec と同じ場所にだけ許す。
-		// 別名・blank・dot の import も検出する。sandbox と cmd/goro は許可の対照。control.go は対照 (debug/elf)。
+		// 別名・blank・dot の import も検出する。sandbox と cmd/goronation は許可の対照。control.go は対照 (debug/elf)。
 		{"gosym-import", 7, []string{
 			"core/alias.go:3: gosym-import",
 			"core/blank.go:3: gosym-import",
@@ -206,7 +206,7 @@ func TestFixtures(t *testing.T) {
 		// unsafe を import せずに unsafe.Pointer を得て、任意のアドレスへ書き込める入口。os/exec と同じ場所にだけ許す。
 		// メソッドは型情報が無いので、レシーバの型によらず、名前だけで検出する。
 		// homonym.go は、reflect と無関係な同名のメソッドも検出する (誤検出。fail-closed 側で許容する) ことの確認。
-		// control.go は対照 (reflect の unsafe を得ない API、名前が似ているだけのもの)。sandbox と cmd/goro は許可の対照。
+		// control.go は対照 (reflect の unsafe を得ない API、名前が似ているだけのもの)。sandbox と cmd/goronation は許可の対照。
 		{"reflect-unsafe", 8, []string{
 			"core/alias.go:5: reflect-unsafe",
 			"core/dot.go:3: reflect-unsafe",

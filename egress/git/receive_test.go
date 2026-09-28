@@ -17,7 +17,7 @@ import (
 
 const (
 	sess = "20260927-041500-a1b2c3"
-	pfx  = "refs/heads/goro/" + sess + "/"
+	pfx  = "refs/heads/goronation/" + sess + "/"
 
 	capsFull  = " report-status-v2 side-band-64k quiet object-format=sha1 agent=git/2.47.3"
 	oid1      = "ed917376351e2f55b638e7c8cf43d36819b9105c"
@@ -156,7 +156,7 @@ func TestParseCommandsCaptured(t *testing.T) {
 		"main":     {caps: full, pack: true, cmds: cmds(create(oid5, "refs/heads/main"))},
 		"nested":   {caps: full, pack: true, cmds: cmds(create(oid5, pfx+"feat/x/y"))},
 		"mixed":    {caps: full, pack: true, cmds: cmds(create(oid5, pfx+"ok2"), create(oid5, "refs/heads/other"))},
-		"big":      {caps: full, pack: true, cmds: cmds(create("ffa30151bc2b1a42de50fea267c86eee42d2c82d", pfx+"big"))},
+		"big":      {caps: full, pack: true, cmds: cmds(create("5e2b0f9e71a300716da181ba0544cd63775b6b6f", pfx+"big"))},
 		// 大きい push の前に、git が、0000 だけの本文を POST する (認証の探り)。
 		"big-probe": {},
 		"pushopt":   {code: CodePushOptions},

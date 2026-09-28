@@ -340,7 +340,7 @@ func killAll(pids []int) {
 
 // checkParentDeath は、檻を起動した親が SIGKILL で死ぬと、檻 (と、その中のプロセス) も死ぬことを確かめる。
 func checkParentDeath(c *C) {
-	marker := fmt.Sprintf("goro-conformance-parent-%d-%d", os.Getpid(), time.Now().UnixNano())
+	marker := fmt.Sprintf("goronation-conformance-parent-%d-%d", os.Getpid(), time.Now().UnixNano())
 	cmd, out := c.reexec("parent", nil, roleMarker+"="+marker)
 	// 檻の中の probe が動く (起動器の準備が終わっている) まで待つ。準備の前に親を殺すと、起動器が「親の死」を設定する前で、検査にならない。
 	ready := make(chan bool, 1)
@@ -412,7 +412,7 @@ func checkExitStatus(c *C) {
 
 // checkSignal は、Signal(SIGTERM) で、檻のコマンドが止まり、Wait が戻ることを確かめる。
 func checkSignal(c *C) {
-	lv := c.live(c.spec("-hold", "goro-conformance-signal"))
+	lv := c.live(c.spec("-hold", "goronation-conformance-signal"))
 	lv.next("ready")
 	if err := lv.cage.Signal(syscall.SIGTERM); err != nil {
 		c.t.Fatalf("Signal: %v", err)
@@ -616,7 +616,7 @@ func capPathRemap(c *C) (bool, string) {
 
 // capKillsDescendants は、檻のコマンドが終わったとき、setsid した子孫が、全員終わるかを返す。
 func capKillsDescendants(c *C) (bool, string) {
-	marker := fmt.Sprintf("goro-conformance-desc-%d-%d", os.Getpid(), time.Now().UnixNano())
+	marker := fmt.Sprintf("goronation-conformance-desc-%d-%d", os.Getpid(), time.Now().UnixNano())
 	res := c.run(c.spec("-spawn", marker))
 	if res.waitErr != nil {
 		c.t.Fatalf("子孫を起こす probe が失敗した: %v\n%s%s", res.waitErr, res.stdout, res.stderr)

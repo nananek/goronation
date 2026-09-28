@@ -1,4 +1,4 @@
-// Package termrelaytest は、cmd/goro の結合テストが、termrelay (ADR 0005 の例外) を直接 import せずに
+// Package termrelaytest は、cmd/goronation の結合テストが、termrelay (ADR 0005 の例外) を直接 import せずに
 // 済むよう、WebSocket クライアント側 (ブラウザの代わり) の薄いヘルパーを提供する。
 //
 // cmd/internal/webauthn の webauthntest と同じ理由・同じ形: この package だけが coder/websocket を
@@ -24,7 +24,7 @@ type Conn struct {
 type DialOptions struct {
 	// Header は、handshake の要求に添えるヘッダ (Cookie・Origin など)。
 	Header http.Header
-	// HTTPClient は、handshake に使う http.Client (nil なら既定)。goro serve (UDS 専用) に、
+	// HTTPClient は、handshake に使う http.Client (nil なら既定)。goronation serve (UDS 専用) に、
 	// TCP を経由せず直接繋ぐテストのために、DialContext をカスタムした Client を渡せるようにする。
 	HTTPClient *http.Client
 }

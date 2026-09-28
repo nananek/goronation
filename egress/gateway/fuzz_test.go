@@ -71,7 +71,7 @@ func FuzzServeGitAuthorizedOnly(f *testing.F) {
 // FuzzServePullAuthorizedOnly は、任意の method・target・本文で、許可した repo (o/r) 以外への PR 作成が、
 // 1 件も上流に届かないことを確かめる。
 func FuzzServePullAuthorizedOnly(f *testing.F) {
-	okBody := `{"title":"t","head":"goro/` + testSession + `/x","base":"main"}`
+	okBody := `{"title":"t","head":"goronation/` + testSession + `/x","base":"main"}`
 	for _, s := range []struct{ method, target, body string }{
 		{"POST", github.PathPrefix + "repos/o/r/pulls", okBody},
 		{"POST", github.PathPrefix + "repos/x/y/pulls", okBody},

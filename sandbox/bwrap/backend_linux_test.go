@@ -53,9 +53,9 @@ func TestBackendStartRejectsBeforeLaunch(t *testing.T) {
 		// 契約の検証を通っても、bwrap 固有の検証で断るもの (種類は、同じ ErrRejected)。
 		"GuestPath が /proc の中": {Exec: "/opt/x/x", Read: []sandbox.Mount{{HostPath: "/usr/bin", GuestPath: "/proc/x"}}}, // HostPath は実在する (Resolve は通る)
 		// bwrap の検証には無い、契約の規則 (契約の共通検証を通らなければ、断る)。
-		"Egress の親が Read に無い":  {Exec: "/opt/x/x", Egress: "/run/goro/proxy.sock"},
+		"Egress の親が Read に無い":  {Exec: "/opt/x/x", Egress: "/run/goronation/proxy.sock"},
 		"loopback でない待ち受け":     {Exec: "/opt/x/x", Loopback: []string{"0.0.0.0:3128"}},
-		"Egress の親が Write のとき": {Exec: "/opt/x/x", Write: []sandbox.Mount{{HostPath: "/data/run", GuestPath: "/run/goro"}}, Egress: "/run/goro/proxy.sock"},
+		"Egress の親が Write のとき": {Exec: "/opt/x/x", Write: []sandbox.Mount{{HostPath: "/data/run", GuestPath: "/run/goronation"}}, Egress: "/run/goronation/proxy.sock"},
 	} {
 		c, err := b.Start(context.Background(), s)
 		if c != nil || !errors.Is(err, sandbox.ErrRejected) {

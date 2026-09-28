@@ -1,6 +1,6 @@
 // Package credfile は、資格情報 (トークン) を、ホストのファイル <state>/credentials/<名前> に保存し、読む credential.Source の実装で、ホストの中でだけ使う。
 //
-// 檻には、このディレクトリを見せない (goro run が、檻に bind するのは、clone・run dir・エージェントの HOME だけ)。値は、ここで読んだ Secret として
+// 檻には、このディレクトリを見せない (goronation run が、檻に bind するのは、clone・run dir・エージェントの HOME だけ)。値は、ここで読んだ Secret として
 // 呼び手へ渡り、error・ログには出ない。保証しない: 同じ利用者 (と root) の他のプロセスからの保護・ディスク上の暗号化。標準ライブラリと hostfs だけを使い、プロセスを起動しない。
 //
 // # 使い方

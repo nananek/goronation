@@ -1,4 +1,4 @@
-// Package gateway は、egress の git smart-HTTP と PR 作成のエンドポイントで、檻の git・goro pr create の要求を、
+// Package gateway は、egress の git smart-HTTP と PR 作成のエンドポイントで、檻の git・goronation pr create の要求を、
 // egress/git・egress/github の検査に通してから、ホストの資格情報を付けて GitHub へ中継する http.Handler を提供する。
 //
 // 経路・repo・本文の検査 (git.Policy.AuthorizedRoute・github.ParsePull) を必ず通した Route・Pull だけを中継する。
@@ -27,5 +27,5 @@
 //   - Authorization の形式 (git は Basic の x-access-token・API は Bearer) を、GitHub の実機で確かめていない。
 //   - 読む側の締め切り (ヘッダ・本文の絶対締め切り・同時接続数) は、この層が持つ (MaxBodyBytes は、
 //     呼び手が MaxPackBytes と揃えること・自動では同期しない)。書く側・upload-pack (fetch) の本文検査は、まだ無い。
-//   - 1 つの listener での CONNECT との共存は egress.ServeBoth が行うが、goro run への配線は、この package の外 (PR ③)。
+//   - 1 つの listener での CONNECT との共存は egress.ServeBoth が行うが、goronation run への配線は、この package の外 (PR ③)。
 package gateway
