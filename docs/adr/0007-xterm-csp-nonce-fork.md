@@ -1,6 +1,6 @@
 # 0007. xterm.js を CSP nonce 対応のためフォークし、upstream の新版を nvchecker で追跡する
 
-- 状態: 採用
+- 状態: 採用 (2026-09-29 追記: パッチ対象の箇所数を 2 箇所から 3 箇所に訂正。下記参照)
 - 日付: 2026-09-29
 - 関連: Issue #46、upstream [xtermjs/xterm.js#4445](https://github.com/xtermjs/xterm.js/issues/4445)
   (CSP nonce 対応の feature request)、ADR 0004・0005 (依存の例外の先例)、
@@ -8,9 +8,9 @@
 
 ## 状況
 
-- Issue #46: 端末ビューの CSP (`style-src 'self'`、`'unsafe-inline'` なし) の下で、xterm.js の
-  `DomRenderer` が実行時に動的生成する `<style>` 要素 (テーマ色・セル寸法) がブロックされる。
-  CSP を緩める案は Issue #46 で既に却下済み。
+- Issue #46: 端末ビューの CSP (`style-src 'self'`、`'unsafe-inline'` なし) の下で、xterm.js が
+  実行時に動的生成する `<style>` 要素 (`DomRenderer` のテーマ色・セル寸法、`Viewport` のスクロール
+  バーのスライダー配色) がブロックされる。CSP を緩める案は Issue #46 で既に却下済み。
 - **上流に nonce 対応版は存在しない。** 上流 Issue #4445 (2023-03-23 open) が今も未解決。一度は
   別解 (Constructed StyleSheets、PR #4611) があったが revert され、vendor 済みの 6.0.0 でも
   `unsafe-inline` が要る。CSP を維持したまま解決するには、goronation 自身が xterm.js
@@ -19,12 +19,13 @@
 ## 決定
 
 1. **xterm.js 6.0.0 (commit `f447274`) にローカルパッチを当てて vendor する。**
-   `DomRenderer.ts` の `<style>` 生成箇所 2 つに、新設した Terminal オプション `cspNonce`
-   (既定 `null`) を `element.nonce` (IDL プロパティ) へ適用する処理を足す。未指定時は upstream と
-   同一の挙動にし、既存 CSP のまま動作が変わらないことを担保する。自前ビルドした UMD バンドルを
-   vendor し、**Node.js への依存は vendor 差し替え作業だけに限り、goronation 本体の Go ビルドには
-   持ち込まない**。Go の `go.sum` には触れないため、ADR 0004・0005 と異なり依存ゼロ方針そのものの
-   例外ではない。手順の詳細は `PATCH.md` に一元化する (ADR 0003)。
+   `DomRenderer.ts`・`Viewport.ts` の `<style>` 生成箇所 3 つ (upstream がライブに動的生成する
+   `<style>` の全て) に、新設した Terminal オプション `cspNonce` (既定 `null`) を `element.nonce`
+   (IDL プロパティ) へ適用する処理を足す。未指定時は upstream と同一の挙動にし、既存 CSP のまま
+   動作が変わらないことを担保する。自前ビルドした UMD バンドルを vendor し、**Node.js への依存は
+   vendor 差し替え作業だけに限り、goronation 本体の Go ビルドには持ち込まない**。Go の `go.sum`
+   には触れないため、ADR 0004・0005 と異なり依存ゼロ方針そのものの例外ではない。手順の詳細は
+   `PATCH.md` に一元化する (ADR 0003)。
 2. **upstream の新版を nvchecker + 週次 GitHub Actions
    (`.github/workflows/xterm-version-check.yml`) で追跡し、検知したら Issue を自動作成する。**
    Issue に「upstream #4445 が解決していないか確認し、解決していればこの fork/パッチを廃止して
@@ -50,3 +51,10 @@
   コストが見合うと判断し、TypeScript ソースへのパッチを採った。
 - **nvchecker を使わず自前スクリプトで npm registry API を叩く**: 実装は小さいが、リトライ等を
   自前で持つことになる。実績あるツールの方が保守コストが低いと判断した。
+
+## 訂正 (2026-09-29 追記)
+
+当初のパッチ (初版) は `DomRenderer.ts` の2箇所だけが対象で、この ADR も「2箇所で全て」として
+いた。独立レビューが実機ブラウザで、`Viewport.ts` のスクロールバーのスライダー配色にも同じ
+パターンのライブな `<style>` 生成があり、そこだけ CSP でブロックされる (透明になる) ことを確認
+した。「決定」節を訂正して `Viewport.ts` にもパッチを拡張済み (詳細は `PATCH.md`)。

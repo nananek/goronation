@@ -1,3 +1,38 @@
+diff --git a/src/browser/Viewport.ts b/src/browser/Viewport.ts
+index 1a9f222..03befe4 100644
+--- a/src/browser/Viewport.ts
++++ b/src/browser/Viewport.ts
+@@ -77,6 +77,7 @@ export class Viewport extends Disposable {
+     this._register(toDisposable(() => this._scrollableElement.getDomNode().remove()));
+ 
+     this._styleElement = coreBrowserService.mainDocument.createElement('style');
++    this._setStyleElementNonce(this._styleElement);
+     screenElement.appendChild(this._styleElement);
+     this._register(toDisposable(() => this._styleElement.remove()));
+     this._register(Event.runAndSubscribe(themeService.onChangeColors, () => {
+@@ -105,6 +106,22 @@ export class Viewport extends Disposable {
+     this._register(this._scrollableElement.onScroll(e => this._handleScroll(e)));
+   }
+ 
++  /**
++   * goronation-local addition, not upstream: applies the `cspNonce` option (if set) to a
++   * dynamically created `<style>` element via the `nonce` IDL property. Setting the `nonce`
++   * *attribute* instead does not work reliably across browsers for elements created after page
++   * load (per the HTML spec, `nonce` is intentionally hidden from attribute reflection once set).
++   * Mirrors `DomRenderer._setStyleElementNonce`; kept as a separate copy here (rather than a
++   * shared helper) to keep this patch a minimal, mechanically re-appliable diff against upstream.
++   * See cmd/goronation/vendor/xterm/PATCH.md and https://github.com/xtermjs/xterm.js/issues/4445
++   */
++  private _setStyleElementNonce(element: HTMLStyleElement): void {
++    const nonce = this._optionsService.rawOptions.cspNonce;
++    if (nonce) {
++      element.nonce = nonce;
++    }
++  }
++
+   public scrollLines(disp: number): void {
+     const pos = this._scrollableElement.getScrollPosition();
+     this._scrollableElement.setScrollPosition({
 diff --git a/src/browser/renderer/dom/DomRenderer.ts b/src/browser/renderer/dom/DomRenderer.ts
 index 1c27179..274603a 100644
 --- a/src/browser/renderer/dom/DomRenderer.ts
