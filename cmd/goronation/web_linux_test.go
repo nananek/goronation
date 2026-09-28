@@ -299,14 +299,140 @@ func TestWebTerminalPageHasNoInlineStyle(t *testing.T) {
 	}
 }
 
+// cspNonceFromHeader は、Content-Security-Policy ヘッダーの値から 'nonce-<値>' の <値> を取り出す
+// (無ければ空文字)。
+func cspNonceFromHeader(csp string) string {
+	const marker = "'nonce-"
+	i := strings.Index(csp, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := csp[i+len(marker):]
+	j := strings.IndexByte(rest, '\'')
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
+
+// cspNonceFromMeta は、端末ビューの HTML 本文から <meta name="csp-nonce" content="<値>"> の <値> を
+// 取り出す (無ければ空文字)。
+func cspNonceFromMeta(body string) string {
+	const marker = `<meta name="csp-nonce" content="`
+	i := strings.Index(body, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := body[i+len(marker):]
+	j := strings.IndexByte(rest, '"')
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
+
+// TestWebTerminalPageCSPNonceMatchesMeta は、PR② (terminal-page-csp-nonce) の中心の回帰テスト。
+// handleTerminalPage が発行する nonce が、CSP ヘッダー (style-src 'self' 'nonce-<値>') と、応答本文の
+// <meta name="csp-nonce" content="<値>"> (terminal.js がここから読んで xterm.js の cspNonce オプション
+// に渡す) とで、一致すること・空でないことを確かめる。
+func TestWebTerminalPageCSPNonceMatchesMeta(t *testing.T) {
+	srv, store, rpID, origin := newTestServer(t)
+	client := loggedInClient(t, srv, store, rpID, origin)
+
+	resp := doJSON(t, client, "GET", srv.URL+"/s/20260101-000000-aaaaaa", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("認証済みの /s/{id} = %d, want 200", resp.StatusCode)
+	}
+
+	headerNonce := cspNonceFromHeader(resp.Header.Get("Content-Security-Policy"))
+	if headerNonce == "" {
+		t.Fatalf("Content-Security-Policy に 'nonce-<値>' が無い: %q", resp.Header.Get("Content-Security-Policy"))
+	}
+
+	body := new(bytes.Buffer)
+	if _, err := body.ReadFrom(resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	metaNonce := cspNonceFromMeta(body.String())
+	if metaNonce == "" {
+		t.Fatalf("応答本文に <meta name=\"csp-nonce\" content=\"...\"> が無い")
+	}
+
+	if headerNonce != metaNonce {
+		t.Errorf("CSP ヘッダーの nonce (%q) と <meta> の nonce (%q) が一致しない", headerNonce, metaNonce)
+	}
+}
+
+// TestWebTerminalPageCSPNoncePerRequest は、nonce がリクエストごとに新しく発行され、使い回されない
+// ことを確かめる (使い回すと、漏れた 1 つの nonce が以後のリクエストにも効いてしまう)。
+func TestWebTerminalPageCSPNoncePerRequest(t *testing.T) {
+	srv, store, rpID, origin := newTestServer(t)
+	client := loggedInClient(t, srv, store, rpID, origin)
+
+	var nonces []string
+	for i := 0; i < 2; i++ {
+		resp := doJSON(t, client, "GET", srv.URL+"/s/20260101-000000-aaaaaa", nil)
+		nonce := cspNonceFromHeader(resp.Header.Get("Content-Security-Policy"))
+		resp.Body.Close()
+		if nonce == "" {
+			t.Fatalf("%d 回目: nonce が空", i)
+		}
+		nonces = append(nonces, nonce)
+	}
+	if nonces[0] == nonces[1] {
+		t.Errorf("2 回のリクエストで同じ nonce (%q) が返った。リクエストごとに新しく発行されていない", nonces[0])
+	}
+}
+
+// TestWebOtherRoutesHaveNoNonce は、nonce 付き CSP が /s/{id} だけの上書きであり、他のルートの既定の
+// CSP (securityHeaders) に漏れ出していないことを確かめる。
+func TestWebOtherRoutesHaveNoNonce(t *testing.T) {
+	srv, store, rpID, origin := newTestServer(t)
+	client := loggedInClient(t, srv, store, rpID, origin)
+
+	for _, path := range []string{"/", "/sessions", "/static/terminal.js"} {
+		resp := doJSON(t, client, "GET", srv.URL+path, nil)
+		csp := resp.Header.Get("Content-Security-Policy")
+		resp.Body.Close()
+		if strings.Contains(csp, "nonce-") {
+			t.Errorf("%s の Content-Security-Policy に nonce が漏れている (/s/{id} 限定のはず): %q", path, csp)
+		}
+	}
+}
+
+// TestWebTerminalJSReadsCspNonceMeta は、terminal.js が <meta name="csp-nonce"> を読み、xterm.js の
+// Terminal オプション cspNonce へ渡す配線 (PR②) の回帰テスト。実際のブラウザでの DOM 反映は確認でき
+// ないため、配信された terminal.js の本文に、meta タグの読み取りと cspNonce への受け渡しのコードが
+// 含まれていることを確かめる。
+func TestWebTerminalJSReadsCspNonceMeta(t *testing.T) {
+	srv, _, _, _ := newTestServer(t)
+	client := &http.Client{}
+
+	resp := doJSON(t, client, "GET", srv.URL+"/static/terminal.js", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/static/terminal.js = %d, want 200", resp.StatusCode)
+	}
+	body := new(bytes.Buffer)
+	if _, err := body.ReadFrom(resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body.String(), `meta[name="csp-nonce"]`) {
+		t.Error("terminal.js が <meta name=\"csp-nonce\"> を読んでいない")
+	}
+	if !strings.Contains(body.String(), "cspNonce:") {
+		t.Error("terminal.js が Terminal オプションに cspNonce を渡していない")
+	}
+}
+
 // TestWebVendorXtermSupportsCspNonceOption は、Issue #46 (CSP 下で xterm.js の動的 <style> がブロック
 // される) 対応の一部 (PR①、cmd/goronation/vendor/xterm/PATCH.md) の回帰テスト。vendor 済み xterm.js が
 // `cspNonce` Terminal オプションと、それを <style> 要素に適用する内部メソッドを含んでいることを、配信
 // された本文から確かめる (ブラウザを起動しての実際の DOM 検証はできないため、パッチが取り除かれて
 // pristine な公式ビルドに巻き戻ってしまう退行を文字列の存在で検知する)。
-// nonce を実際にサーバーが生成して Terminal に渡す配線 (PR②) はまだ無いため、cspNonce 未指定時に
-// 既存の CSP (style-src 'self') のまま動作が変わらないことは、TestWebTerminalPageHasNoInlineStyle と
-// TestWebSecurityHeaders (CSP ヘッダーが変わっていないこと) が既存どおり通ることで担保する。
+// nonce を実際にサーバーが生成して Terminal に渡す配線 (PR②、TestWebTerminalPageCSPNonceMatchesMeta・
+// TestWebTerminalJSReadsCspNonceMeta) とは別の観点 (vendor 済み xterm.js 自体の対応) を見る。
 func TestWebVendorXtermSupportsCspNonceOption(t *testing.T) {
 	srv, _, _, _ := newTestServer(t)
 	client := &http.Client{}

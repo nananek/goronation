@@ -3,7 +3,10 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 )
@@ -78,7 +81,28 @@ func (s *webServer) handleRepoStart(w http.ResponseWriter, r *http.Request) {
 // handleTerminalPage は、requireSession で保護された、端末ビューのページ (/s/{id})。中の terminal.js
 // が、自分の path から WebSocket の接続先 (/s/{id}/ws) を組み立てる。id 自体の存在確認はしない
 // (存在しない・終わったセッションなら、WebSocket 側が閉じて、terminal.js が案内を出す)。
+//
+// xterm.js が実行時に動的生成する <style> (ADR 0007 のローカルパッチで対応済み) のために、この
+// ルートの応答に限り、リクエストごとに新しい CSP nonce を発行する。securityHeaders が先に設定した
+// 既定の Content-Security-Policy を、Write 前にここで上書きする (net/http は WriteHeader/Write 前
+// ならヘッダーを何度でも書き換えられる)。他のルートは既定のまま変えない。
 func (s *webServer) handleTerminalPage(w http.ResponseWriter, r *http.Request) {
+	nonce, err := newCSPNonce()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "nonce を生成できない")
+		return
+	}
+	w.Header().Set("Content-Security-Policy", baseContentSecurityPolicy+" 'nonce-"+nonce+"'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	io.WriteString(w, terminalHTML)
+	terminalHTMLTmpl.Execute(w, terminalPageData{Nonce: nonce})
+}
+
+// newCSPNonce は、CSP nonce (RFC の要求どおり、リクエストごとに新しく生成する、予測不能な値) を作る。
+// 16 バイトの crypto/rand を base64 (nonce の慣例) にエンコードする。
+func newCSPNonce() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("crypto/rand から nonce を読めない: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
 }
