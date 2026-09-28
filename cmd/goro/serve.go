@@ -371,13 +371,25 @@ func (s *server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// handleLogout は、cookie を消すだけでなく、サーバー側でも世代番号を進めて、発行済みの全セッション
-// token (このブラウザ以外が持っているものも含む) を失効させる。盗まれた cookie が logout 後も有効期限
-// いっぱい通ってしまう、という攻撃者視点レビューの指摘への対応。
+// handleLogout は、cookie を消すだけでなく、呼び手が有効なセッション cookie を提示できたときだけ、
+// サーバー側でも世代番号を進めて、発行済みの全セッション token (このブラウザ以外が持っているものも
+// 含む) を失効させる。盗まれた cookie が logout 後も有効期限いっぱい通ってしまう、という攻撃者視点
+// レビューの指摘への対応 (iwebauthn.Logout を追加した最初の版)。
+//
+// 有効なセッションの提示を要求するのは、それ自体も攻撃者視点レビューの指摘: iwebauthn.Logout は
+// 呼び手を一切確認しないため、これを無条件で呼ぶと、セッション cookie を一切持たない第三者が
+// POST /logout を叩くだけで、無関係な正規利用者の稼働中セッションを強制失効させられる (盗む必要
+// すら無い、より安価な迷惑行為/DoS の経路になっていた)。有効性を確認できない要求は、何も失効させず
+// (cookie を消すだけの no-op)、成立した要求と見分けが付かない同じ 200 応答を返す (状態の違いを
+// 応答で漏らさない)。
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if err := iwebauthn.Logout(r.Context(), s.store); err != nil {
-		writeError(w, http.StatusInternalServerError, "ログアウトできない")
-		return
+	if c, err := r.Cookie(sessionCookieName); err == nil {
+		if err := iwebauthn.VerifySession(r.Context(), s.store, c.Value); err == nil {
+			if err := iwebauthn.Logout(r.Context(), s.store); err != nil {
+				writeError(w, http.StatusInternalServerError, "ログアウトできない")
+				return
+			}
+		}
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, Secure: s.secure,

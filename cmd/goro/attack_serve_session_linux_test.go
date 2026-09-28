@@ -204,3 +204,107 @@ func TestAttackRegisterBeginRegistrationOracle(t *testing.T) {
 	defer resp.Body.Close()
 	t.Logf("登録済み + 不正トークン = %d (409 なら、トークン無しでも登録済みかどうかが分かる)", resp.StatusCode)
 }
+
+// TestUnauthenticatedThirdPartyCanForceLogoutActiveSession は、セッション cookie を一切持たない
+// 第三者が POST /logout を叩いても、他人の稼働中セッションを強制失効させられないことを確かめる。
+//
+// L2 の修正 (Logout が SessionEpoch を進め、発行済みの全セッション token を一括で失効させる) を
+// 最初に入れたとき、handleLogout が requireSession 相当の検証をせず、iwebauthn.Logout(ctx, store)
+// 自身も呼び手を一切確認しない設計だったため、盗む必要すら無く、認証情報を一切持たない誰かが
+// POST /logout を無制限に繰り返すだけで、正規利用者を任意のタイミングで強制ログアウトさせられる、
+// という新しい (B1 の接続保持型 DoS よりもさらに安価な) 穴になっていた。攻撃者視点レビューの指摘で
+// 見つかり、handleLogout が有効なセッションを提示できた場合だけ iwebauthn.Logout を呼ぶように
+// 直した。
+func TestUnauthenticatedThirdPartyCanForceLogoutActiveSession(t *testing.T) {
+	srvURL, loginResp, victimClient := attackRegisterAndLogin(t)
+	loginResp.Body.Close()
+
+	// 被害者 (victimClient) が、ログイン直後にまだ何もしていない時点で、whoami が通ることを確認する
+	// (前提の確認)。
+	resp := doJSON(t, victimClient, "GET", srvURL+"/api/whoami", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("前提が崩れている: ログイン直後の whoami = %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 攻撃者: セッション cookie を一切持たない、別の http.Client (cookie jar 無し) で、
+	// POST /logout を叩く。
+	attacker := &http.Client{}
+	attackResp := doJSON(t, attacker, "POST", srvURL+"/logout", nil)
+	attackResp.Body.Close()
+	if attackResp.StatusCode != http.StatusOK {
+		t.Errorf("認証情報を一切持たない第三者の POST /logout への応答 = %d, want 200 (状態の違いを応答で漏らさない)", attackResp.StatusCode)
+	}
+
+	// 被害者の (盗まれてすらいない、本人の手元にある) セッション cookie が、まだ有効かを確認する。
+	resp2 := doJSON(t, victimClient, "GET", srvURL+"/api/whoami", nil)
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("認証情報を一切持たない第三者が POST /logout を叩くだけで、被害者の正規のアクティブセッションが強制失効させられた (whoami = %d, want 200)", resp2.StatusCode)
+	}
+}
+
+// TestLogoutInvalidatesOtherLegitimateSessions は、同じユーザーが複数タブ/デバイスでログインしている
+// とき、片方の logout がもう片方の (正当な) セッションも失効させることを確かめる (記録用。1 ユーザー・
+// 1 credential 前提の設計では、セッション単位ではなく世代単位で一括失効するのは意図どおりの挙動と判断
+// した。バグではない)。
+func TestLogoutInvalidatesOtherLegitimateSessions(t *testing.T) {
+	srv, store, rpID, origin := newTestServer(t)
+	tok, err := iwebauthn.IssueBootstrapToken(t.Context(), store, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred, err := webauthntest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	beginBody, _ := json.Marshal(map[string]string{"token": tok})
+	jarA, _ := cookiejar.New(nil)
+	clientA := &http.Client{Jar: jarA}
+	resp := doJSON(t, clientA, "POST", srv.URL+"/webauthn/register/begin", beginBody)
+	begin := decodeJSON[optionsAndState](t, resp)
+	attResp, err := cred.Register(rpID, origin, begin.Options.Challenge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishBody, _ := json.Marshal(map[string]any{"state": begin.State, "credential": attResp})
+	resp = doJSON(t, clientA, "POST", srv.URL+"/webauthn/register/finish", finishBody)
+	resp.Body.Close()
+
+	loginAs := func(client *http.Client) {
+		r := doJSON(t, client, "POST", srv.URL+"/webauthn/login/begin", nil)
+		lb := decodeJSON[optionsAndState](t, r)
+		assResp, err := cred.Authenticate(rpID, origin, lb.Options.Challenge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lfBody, _ := json.Marshal(map[string]any{"state": lb.State, "credential": assResp})
+		r2 := doJSON(t, client, "POST", srv.URL+"/webauthn/login/finish", lfBody)
+		r2.Body.Close()
+	}
+	// タブ A・タブ B (同じユーザー、別々のセッション token) で、それぞれログインする。
+	loginAs(clientA)
+	jarB, _ := cookiejar.New(nil)
+	clientB := &http.Client{Jar: jarB}
+	loginAs(clientB)
+
+	// どちらも whoami が通る。
+	for name, c := range map[string]*http.Client{"A": clientA, "B": clientB} {
+		r := doJSON(t, c, "GET", srv.URL+"/api/whoami", nil)
+		if r.StatusCode != http.StatusOK {
+			t.Fatalf("タブ %s のログイン直後の whoami = %d", name, r.StatusCode)
+		}
+		r.Body.Close()
+	}
+	// タブ A が logout する。
+	r := doJSON(t, clientA, "POST", srv.URL+"/logout", nil)
+	r.Body.Close()
+
+	// タブ B (別デバイス相当) のセッションも失効しているはず (世代単位の一括失効。1 ユーザー前提の
+	// 設計では、意図どおりと考えられる)。
+	r = doJSON(t, clientB, "GET", srv.URL+"/api/whoami", nil)
+	defer r.Body.Close()
+	if r.StatusCode == http.StatusOK {
+		t.Error("タブ A の logout 後も、タブ B のセッションが有効なまま (世代が個別に管理されている?)")
+	}
+}

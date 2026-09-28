@@ -381,6 +381,11 @@ func VerifySession(ctx context.Context, st *Store, token string) error {
 
 // Logout は、発行済みの全てのセッション token を一括で失効させる (世代番号を進める)。まだ登録も
 // ログインもしていない状態 (SessionSecret が無い) で呼んでも、エラーにはしない (失効させるものが無いだけ)。
+//
+// 呼び手の認証は、この関数の責務ではない: 呼び手 (HTTP ハンドラ) が、すでに VerifySession 等で
+// 呼び出し元の資格を確認済みであることを前提とする。無条件に外部からの要求で呼ぶと、無関係な
+// 第三者が正規利用者のセッションを強制失効させられる (goro serve のハンドラは、有効なセッション
+// cookie を提示できたときだけこれを呼ぶ)。
 func Logout(ctx context.Context, st *Store) error {
 	state, err := st.load(ctx)
 	if err != nil {
