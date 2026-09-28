@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/nananek/goronation/cmd/framecapture/connectproxy"
+	"github.com/nananek/goronation/cmd/framecapture/internal/connectproxy"
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 

@@ -37,7 +37,7 @@ type Server struct {
 	IdleTimeout   time.Duration
 
 	// Logf は、nil でなければ、accept・deny・dial 失敗のたびに 1 行呼ばれる (監査ログではなく、
-	// デバッグ用の軽い フック)。
+	// デバッグ用の軽いフック)。
 	Logf func(format string, args ...any)
 
 	// dial は、テストだけが差し替える (既定は実際に TCP で繋ぐ)。

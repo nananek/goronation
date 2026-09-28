@@ -19,7 +19,7 @@ const usage = `使い方: framecapture <opencode|claude> [オプション] -- �
 
 M0 スパイク S1 (PR②: frame-capture-harness)。bwrap 檻の中で実物の claude/opencode を、このプロセス
 自身が起動する fake provider サーバー (tools/fakeproviders) に向けて動かし、実際のフレームを --out
-(既定は標準出力) に採取する。fake サーバーへの到達は、cmd/framecapture/connectproxy (このハーネス
+(既定は標準出力) に採取する。fake サーバーへの到達は、cmd/framecapture/internal/connectproxy (このハーネス
 専用の、最小限の CONNECT プロキシ) 経由。egress.Server は使わない (loopback への dial を SSRF 対策で
 拒む設計のため。詳細は doc s1-pr2-design)。
 

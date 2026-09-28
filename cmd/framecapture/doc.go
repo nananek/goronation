@@ -6,7 +6,7 @@
 // cmd/goronation とは別バイナリ (I1・設計ルール1: bwrap を起動する os/exec は cmd/** にしか置けない。
 // cmd/goronation 本体は変更しない)。Linux 専用 (bwrap 依存)。
 //
-// fake サーバーへの到達には、cmd/framecapture/connectproxy (このハーネス専用の、最小限の CONNECT
+// fake サーバーへの到達には、cmd/framecapture/internal/connectproxy (このハーネス専用の、最小限の CONNECT
 // プロキシ) を使う。egress.Server は使わない: egress.Server は、loopback・private な宛先への dial を
 // SSRF 対策として無条件に拒む設計で、fake サーバーをホストの loopback に置くこのハーネスの用途とは
 // 相容れないため (詳細は doc key s1-pr2-design)。connectproxy は、egress.Server のような汎用の
