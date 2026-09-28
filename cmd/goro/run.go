@@ -410,7 +410,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 		return fail("%v", err)
 	}
 	// egress の UDS の path が長すぎるときは、何も作る前に断る (clone を作った後では、孤児のセッションが残る)。
-	if err := checkSockPath(sockPathFor(stateDir, o)); err != nil {
+	if err := checkSockPath(sockPathFor(stateDir, o), "egress"); err != nil {
 		return fail("%v", err)
 	}
 	host, store, agent, existing, agentExe, self, dirs, err := prepareAgentLaunch(stateDir, o.session, o.agent, o.bin)

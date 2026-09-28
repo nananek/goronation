@@ -2,9 +2,10 @@
 //
 // ADR 0005 の依存ゼロの方針の例外 (github.com/coder/websocket) を、この package とその配下
 // (termrelaytest) だけに閉じ込める。バイナリフレームは pty の生バイト列 (両方向。中身は解釈しない)、
-// テキストフレームはブラウザから届く resize の JSON だけ、という固定の使い分けにする (それ以外の
-// テキストフレームは protocol error で閉じる)。接続を受理する前の認証 (WebAuthn のセッション cookie)
-// は、この package の責務ではない: 呼び手 (cmd/goro の requireSession) が、Accept を呼ぶ前に済ませる。
+// テキストフレームは resize の JSON だけ、という固定の使い分けにする (それ以外のテキストフレームは
+// protocol error で閉じる)。認証は、この package の責務ではない: goro serve は UDS 専用で、繋いで
+// くるのは goro web (WebAuthn のセッション cookie を検証済み) の reverse proxy だけという前提 (UDS に
+// 繋げること自体が信頼の境界。goro-web-plan の決定)。
 //
 // # 使い方
 //
@@ -18,7 +19,6 @@
 //     (境界・意味づけはしない。1 回の Read が 1 回の onData 呼び出しになる)。
 //   - text-is-resize: テキストフレームは `{"cols":N,"rows":N}` の JSON だけを受理する。壊れた JSON・
 //     不正な値 (0 以下・上限超え)・それ以外の形は、protocol error で接続を閉じて error を返す。
-//   - same-origin: Origin の検証は、ライブラリの既定 (要求の Host と一致する Origin だけを許す) に
-//     任せる。goro serve の Config.Origin は、起動時に Host と一致するよう検証済みなので、追加の
-//     OriginPatterns は要らない (cmd/goro の Config.Validate を参照)。
+//   - no-origin-check: Origin の検証はしない (`InsecureSkipVerify`)。HTTP の Origin ヘッダは、UDS
+//     越しの接続の信頼性とは無関係 (Accept の doc comment を参照)。
 package termrelay

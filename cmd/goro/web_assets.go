@@ -7,26 +7,27 @@ import "embed"
 // xtermVendor は、ビルド済みの xterm.js 6.0.0・@xterm/addon-fit 0.11.0 (どちらも MIT。vendor/xterm/ に
 // LICENSE も置いてある) を、goro の単一バイナリに埋め込む (ADR 0005・goro-serve-plan §0-3 の決定)。
 // npm・バンドラは使わない。危険な機能 (OSC 52 の書き込み・リンクの自動起動) につながる addon
-// (addon-web-links 等) は、意図的に含めていない。
+// (addon-web-links 等) は、意図的に含めていない。goro web が、利用者が実際に見るもの (登録・ログイン
+// 画面・セッション一覧・端末ビュー) を全部持つ (goro-web-plan §4 の訂正)。
 //
 //go:embed vendor/xterm/xterm.js vendor/xterm/xterm.css vendor/xterm/addon-fit.js
 var xtermVendor embed.FS
 
-// indexHTML・appJS は、goro serve の最小限のフロントエンド (登録・ログインの骨組みだけ。端末ビュー・
-// チャット UI は、まだ無い)。ビルド時の依存を増やさないよう、素の HTML・JS を文字列で埋め込む (npm・
-// バンドラは使わない)。インライン <script> は使わない (serve.go の Content-Security-Policy が禁じる)。
+// indexHTML・appJS は、goro web の登録・ログイン画面。ビルド時の依存を増やさないよう、素の HTML・JS を
+// 文字列で埋め込む (npm・バンドラは使わない)。インライン <script> は使わない (web.go の
+// Content-Security-Policy が禁じる)。
 const indexHTML = `<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>goro serve</title>
+<title>goro web</title>
 </head>
 <body>
-<h1>goro serve</h1>
+<h1>goro web</h1>
 <section id="register">
 <h2>登録 (最初の 1 回だけ)</h2>
-<p><code>goro serve token</code> で発行したトークンを貼る。</p>
+<p><code>goro web token</code> で発行したトークンを貼る。</p>
 <input id="token" type="text" placeholder="ブートストラップトークン" autocomplete="off">
 <button id="register-btn">passkey を登録する</button>
 </section>
@@ -115,7 +116,7 @@ async function login() {
       },
     });
     setStatus('ログインできました。');
-    location.href = '/terminal';
+    location.href = '/sessions';
   } catch (e) {
     setStatus('ログインに失敗しました: ' + e.message);
   }
@@ -124,15 +125,124 @@ document.getElementById('register-btn').addEventListener('click', register);
 document.getElementById('login-btn').addEventListener('click', login);
 `
 
-// terminalHTML は、端末ビューのページ (requireSession で保護される)。xterm.js 本体・addon-fit は
-// vendor から (/static/vendor/*)、中継の配線は terminal.js (自前) から読む。インライン <script> は
-// 使わない (CSP)。
+// sessionsHTML・sessionsJS は、requireSession で保護された、セッション一覧・repo のファイルブラウザの
+// ページ (goro-web-plan §4-1)。一覧表示・選択・(選んだら) セッション開始/再開、だけの最小限
+// (usable-first)。
+const sessionsHTML = `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>goro web — セッション</title>
+</head>
+<body>
+<h1>goro web</h1>
+<section id="sessions">
+<h2>セッション</h2>
+<ul id="session-list"></ul>
+</section>
+<section id="repos">
+<h2>新しく始める</h2>
+<ul id="repo-list"></ul>
+</section>
+<p id="status"></p>
+<script src="/static/sessions.js"></script>
+</body>
+</html>
+`
+
+const sessionsJS = `
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+async function getJSON(url) {
+  const resp = await fetch(url);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error((data && data.error) || ('要求が失敗した (' + resp.status + ')'));
+  }
+  return data;
+}
+async function postJSON(url, body) {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error((data && data.error) || ('要求が失敗した (' + resp.status + ')'));
+  }
+  return data;
+}
+async function loadSessions() {
+  const list = document.getElementById('session-list');
+  list.textContent = '';
+  const sessions = await getJSON('/api/sessions');
+  if (!sessions || sessions.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = 'セッションは無い';
+    list.appendChild(li);
+    return;
+  }
+  for (const s of sessions) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = '/s/' + encodeURIComponent(s.id);
+    a.textContent = s.id + '  ' + (s.repo || '-') + '  ' + (s.agent || '-') + '  ' + s.created;
+    li.appendChild(a);
+    list.appendChild(li);
+  }
+}
+async function loadRepos() {
+  const list = document.getElementById('repo-list');
+  list.textContent = '';
+  let repos;
+  try {
+    repos = await getJSON('/api/repos');
+  } catch (e) {
+    const li = document.createElement('li');
+    li.textContent = 'repo の一覧を取得できません: ' + e.message;
+    list.appendChild(li);
+    return;
+  }
+  if (!repos || repos.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = 'repo が無い';
+    list.appendChild(li);
+    return;
+  }
+  for (const name of repos) {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.textContent = name;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        const r = await postJSON('/api/repos/start', {repo: name});
+        location.href = '/s/' + encodeURIComponent(r.id);
+      } catch (e) {
+        setStatus('開始に失敗しました: ' + e.message);
+        btn.disabled = false;
+      }
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+loadSessions().catch((e) => setStatus('セッション一覧を取得できません: ' + e.message));
+loadRepos();
+`
+
+// terminalHTML は、端末ビューのページ (requireSession で保護される。/s/<session-id> で出す)。xterm.js
+// 本体・addon-fit は vendor から (/static/vendor/*)、中継の配線は terminal.js (自前) から読む。
+// インライン <script> は使わない (CSP)。
 const terminalHTML = `<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>goro serve — 端末</title>
+<title>goro web — 端末</title>
 <link rel="stylesheet" href="/static/vendor/xterm.css">
 <style>
   html, body { margin: 0; height: 100%; background: #000; }
@@ -151,7 +261,9 @@ const terminalHTML = `<!doctype html>
 // terminalJS は、端末ビューの中継 (自前。xterm.js 本体・addon-fit は vendor)。危険な機能
 // (addon-web-links によるリンクの自動起動・OSC 52 のクリップボード書き込み) は、どちらも配線しない
 // (Issue #1 の要求)。xterm.js の中身 (エスケープシーケンスの解釈) には手を入れず、入出力の生バイト列を
-// そのまま WebSocket と往復させるだけ。
+// そのまま WebSocket と往復させるだけ。WebSocket の接続先は、今のページの path (/s/<session-id>) から
+// 組み立てる (/s/<session-id>/ws。ページを複数の session ID で共有できるよう、session ID を JS に
+// 埋め込まない)。
 const terminalJS = `
 const term = new Terminal({cursorBlink: true, scrollback: 5000});
 const fit = new FitAddon.FitAddon();
@@ -160,7 +272,8 @@ term.open(document.getElementById('term'));
 fit.fit();
 
 const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const ws = new WebSocket(proto + '//' + location.host + '/ws/terminal');
+const wsPath = location.pathname.replace(/\/$/, '') + '/ws';
+const ws = new WebSocket(proto + '//' + location.host + wsPath);
 ws.binaryType = 'arraybuffer';
 
 const enc = new TextEncoder();
@@ -181,7 +294,7 @@ ws.addEventListener('close', () => {
   term.write('\r\n\x1b[31m[接続が切れました。ページを再読み込みすると繋がり直します]\x1b[0m\r\n');
 });
 ws.addEventListener('error', () => {
-  term.write('\r\n\x1b[31m[端末ビューに接続できません (--repo/--session なしで起動した可能性があります)]\x1b[0m\r\n');
+  term.write('\r\n\x1b[31m[端末ビューに接続できません]\x1b[0m\r\n');
 });
 
 window.addEventListener('resize', () => fit.fit());

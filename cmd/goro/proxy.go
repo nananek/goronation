@@ -151,10 +151,10 @@ type hostProxy struct {
 // 経ている)、UDS も監査ログも作らずに返す。push が nil なら、これまでどおり CONNECT だけ (srv.Serve)。
 func startProxy(runDir string, allow []string, push *pushConfig) (p *hostProxy, err error) {
 	sock := filepath.Join(runDir, proxySockName)
-	if err := checkSockPath(sock); err != nil {
+	if err := checkSockPath(sock, "egress"); err != nil {
 		return nil, err
 	}
-	lock, err := lockDir(runDir)
+	lock, err := lockDir(runDir, "同じセッション (--login なら、同じエージェントのログイン) を、別の goro run が使っている。終わってから、もう一度実行する")
 	if err != nil {
 		return nil, err
 	}
@@ -242,16 +242,18 @@ func (p *hostProxy) Close() (dropped int64, serveErr error) {
 	return dropped, serveErr
 }
 
-// checkSockPath は、UDS の path が、上限に収まることを確かめる。
-func checkSockPath(sock string) error {
+// checkSockPath は、UDS の path が、上限に収まることを確かめる。what は、エラー文言に出す、何の UDS
+// かの短い説明 (例: "egress"・"端末ビュー")。
+func checkSockPath(sock, what string) error {
 	if n := len(sock); n > maxSockPath {
-		return fmt.Errorf("egress の UDS の path が長すぎる (%d バイト。上限 %d): %s\n--state-dir を短い path にする", n, maxSockPath, sock)
+		return fmt.Errorf("%s の UDS の path が長すぎる (%d バイト。上限 %d): %s\n--state-dir を短い path にする", what, n, maxSockPath, sock)
 	}
 	return nil
 }
 
-// lockDir は、dir の lock ファイルの排他ロックを、待たずに取る。取れなければ (同じ dir を使う goro run が動いている) error。
-func lockDir(dir string) (*os.File, error) {
+// lockDir は、dir の lock ファイルの排他ロックを、待たずに取る。取れなければ (busyMsg。すでに何かが
+// 同じ dir を使っている) error。呼び手ごとに、何が競合しているかの文言が違うので、busyMsg で渡す。
+func lockDir(dir, busyMsg string) (*os.File, error) {
 	f, err := os.OpenFile(filepath.Join(dir, lockName), os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("ロックを開けない: %w", err)
@@ -259,7 +261,7 @@ func lockDir(dir string) (*os.File, error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, errors.New("同じセッション (--login なら、同じエージェントのログイン) を、別の goro run が使っている。終わってから、もう一度実行する")
+			return nil, errors.New(busyMsg)
 		}
 		return nil, fmt.Errorf("ロックを取れない: %w", err)
 	}
