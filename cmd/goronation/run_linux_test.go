@@ -312,7 +312,7 @@ func TestCageSpecGolden(t *testing.T) {
 		"--setenv", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "/auth",
 		"--",
 		"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--no-forward-tty", "--",
-		"/opt/claude/claude", "--resume", "x y",
+		"/opt/claude/claude", "--strict-mcp-config", "--resume", "x y",
 	}
 	if !slices.Equal(argv, want) {
 		t.Errorf("argv が golden と違う:\n got: %q\nwant: %q", argv, want)
@@ -360,7 +360,7 @@ func TestCageSpecGoldenPTY(t *testing.T) {
 		"--setenv", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "/auth",
 		"--",
 		"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--no-forward-tty", "--set-ctty", "--",
-		"/opt/claude/claude", "--resume", "x y",
+		"/opt/claude/claude", "--strict-mcp-config", "--resume", "x y",
 	}
 	if !slices.Equal(argv, want) {
 		t.Errorf("argv が golden と違う:\n got: %q\nwant: %q", argv, want)
@@ -395,7 +395,7 @@ func TestCageSpecDiffersFromSharedHomeOnlyInHomeAndAuth(t *testing.T) {
 		"--setenv", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1",
 		"--",
 		"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--no-forward-tty", "--",
-		"/opt/claude/claude", "--resume", "x y",
+		"/opt/claude/claude", "--strict-mcp-config", "--resume", "x y",
 	}
 	argv, err := cageSpec(testCage()).Argv()
 	if err != nil {

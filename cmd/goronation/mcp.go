@@ -11,15 +11,22 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
 // goronation mcp は、檻の中で動く MCP (Model Context Protocol) のサーバー。エージェント (claude・opencode) に
-// goronation run --push の使い方を、起動のたびに説明しなくて済むように、create_pr・push_context の 2 つの tool を
-// 出す (check_status のような、egress の新しい読み取り専用の経路が要るものは、ここには入れない。別の変更)。
+// goronation run --push の使い方を、起動のたびに説明しなくて済むように create_pr・push_context を出し、組み込みの
+// bash/Bash tool が managed 設定で deny された後の、唯一の実行経路として run_command を出す (check_status のような、
+// egress の新しい読み取り専用の経路が要るものは、ここには入れない。別の変更)。
 // pr ready (draft を外す) は出さない: それは、より強い権限を持つ、将来の別の主体のための経路として空けてある。
+// run_command は、push の有無に関わらず要る (bash/Bash の deny 自体が push の有無を問わないため)。mcpServersFor が
+// goronation 自身を常に登録するのは、このため。
 //
 // 標準入出力は、MCP の stdio transport の規約どおり: 標準入力から、改行区切りの JSON-RPC 2.0 を読み、標準
 // 出力には、その応答だけを書く (ログ・診断は標準エラーへ。標準出力に他のものを混ぜると、エージェント側の
@@ -51,13 +58,12 @@ type mcpInjector func(servers []mcpServerDef) (args []string, env []bwrap.EnvVar
 // mcpServerName は、goronation 自身を MCP サーバーとして登録するときの名前。
 const mcpServerName = "goronation"
 
-// mcpServersFor は、--push が有効なときだけ、goronation 自身 (goronation mcp、引数は "mcp" だけ) を注入する MCP サーバー
-// の一覧にする (push が無いと、create_pr も push_context も動かないので、出しても使えない)。ファイルへ保存
-// する状態は無く、--push が有効な起動のたび (resume を含む) に、この関数から作り直すので、常に今の形になる。
-func mcpServersFor(push string) []mcpServerDef {
-	if push == "" {
-		return nil
-	}
+// mcpServersFor は、goronation 自身 (goronation mcp、引数は "mcp" だけ) を注入する MCP サーバーの一覧にする。
+// 常に 1 つ登録する (push の有無に関わらず): run_command が、bash/Bash を managed 設定で deny した後の、唯一の
+// 実行経路になるため。push 専用の tool (create_pr・push_context) は、--push が無いときに呼ばれても、mcp.go の
+// mcpCreatePR・mcpPushContext が error を返すだけ。ファイルへ保存する状態は無く、起動のたび (resume を含む) に、
+// この関数から作り直すので、常に今の形になる。
+func mcpServersFor() []mcpServerDef {
 	return []mcpServerDef{{Name: mcpServerName, Command: jailGoro, Args: []string{"mcp"}}}
 }
 
@@ -246,10 +252,28 @@ type mcpToolDef struct {
 	InputSchema any    `json:"inputSchema"`
 }
 
-// mcpTools は、goronation mcp が出す tool の一覧: create_pr・push_context だけ (pr ready は出さない。ファイル
-// 先頭の doc comment を参照)。
+// mcpTools は、goronation mcp が出す tool の一覧: create_pr・push_context・run_command (pr ready は出さない。
+// ファイル先頭の doc comment を参照)。
 func mcpTools() []mcpToolDef {
 	return []mcpToolDef{
+		{
+			Name: "run_command",
+			Description: "シェルコマンド (/bin/sh -c) を実行する。組み込みの bash/Bash tool の代わり (このエージェントでは、" +
+				"managed 設定で deny されている)。標準出力・標準エラーを合わせたものと、終了コードを返す。実行は、" +
+				"goronation mcp 自身の直接の子プロセスとして行う (別の名前空間には分離しない)。呼び出しは、監査ログに残る。",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"command": map[string]any{"type": "string", "description": "実行するコマンド (シェルの 1 行)"},
+					"timeout_seconds": map[string]any{
+						"type": "number",
+						"description": fmt.Sprintf("省略時は %d 秒。上限は %d 秒 (超えると打ち切る)",
+							int(runCommandDefaultTimeout.Seconds()), int(runCommandMaxTimeout.Seconds())),
+					},
+				},
+				"required": []string{"command"},
+			},
+		},
 		{
 			Name: "create_pr",
 			Description: "今のブランチから、draft の PR を作る (goronation run --push owner/repo で起動しているときだけ動く)。" +
@@ -301,6 +325,8 @@ func callMCPTool(name string, args json.RawMessage) (result mcpToolCallResult, o
 		return mcpCreatePR(args), true
 	case "push_context":
 		return mcpPushContext(args), true
+	case "run_command":
+		return mcpRunCommand(args), true
 	}
 	return mcpToolCallResult{}, false
 }
@@ -352,4 +378,149 @@ func mcpPushContext(args json.RawMessage) mcpToolCallResult {
 		return mcpErrorResult(err)
 	}
 	return mcpToolCallResult{Content: mcpText(string(b))}
+}
+
+// runCommandDefaultTimeout・runCommandMaxTimeout は、run_command の実行時間の既定値と上限 (timeout_seconds に
+// 上限より大きい値を指定しても、上限で打ち切る)。
+const (
+	runCommandDefaultTimeout = 120 * time.Second
+	runCommandMaxTimeout     = 600 * time.Second
+)
+
+// maxRunCommandOutputBytes は、run_command の応答に含める、標準出力・標準エラーを合わせた出力の上限 (それを
+// 超える分は捨てる。誘導されたコマンドの出力で、MCP の応答を際限なく大きくしないため)。
+const maxRunCommandOutputBytes = 256 * 1024
+
+// mcpRunCommand は run_command tool。bash/Bash が managed 設定で deny された、このエージェントの、唯一の実行
+// 経路になる (Phase 1: goronation mcp 自身の直接の子として実行するだけで、入れ子の檻による名前空間の分離は、
+// まだ無い。別の PR (Phase 2) で、より狭い bwrap の中に移す)。呼び出しは、すべて logRunCommand が監査ログに残す。
+func mcpRunCommand(args json.RawMessage) mcpToolCallResult {
+	var p struct {
+		Command        string  `json:"command"`
+		TimeoutSeconds float64 `json:"timeout_seconds"`
+	}
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &p); err != nil {
+			return mcpErrorResult(fmt.Errorf("arguments を読めない: %v", err))
+		}
+	}
+	if strings.TrimSpace(p.Command) == "" {
+		return mcpErrorResult(errors.New("command が要る"))
+	}
+	timeout := runCommandDefaultTimeout
+	if p.TimeoutSeconds > 0 {
+		timeout = time.Duration(p.TimeoutSeconds * float64(time.Second))
+	}
+	if timeout > runCommandMaxTimeout {
+		timeout = runCommandMaxTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	start := time.Now()
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", p.Command)
+	out := &capturedOutput{max: maxRunCommandOutputBytes}
+	cmd.Stdout, cmd.Stderr = out, out
+	// command が子プロセスを作る (パイプ・sleep など) と、タイムアウトで殺すのが起動した /bin/sh だけでは、
+	// 孫プロセスが標準出力・標準エラーの書き込み端を持ったまま生き残り、Wait がそれらの exit まで (この関数の
+	// timeout を超えて) 戻らない。新しい process group で起動し、Cancel (ctx の締切で呼ばれる) で group ごと
+	// 殺す。WaitDelay は、それでも応答しないもの (シグナルを無視する孫プロセスなど) がいたときの保険。
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 5 * time.Second
+	runErr := cmd.Run()
+	elapsed := time.Since(start)
+	timedOut := ctx.Err() == context.DeadlineExceeded
+
+	exitCode := -1
+	if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+	logRunCommand(p.Command, exitCode, elapsed, timedOut)
+
+	switch {
+	case timedOut:
+		return mcpToolCallResult{Content: mcpText(fmt.Sprintf("タイムアウト (%s) で打ち切った\n%s", timeout, out.String())), IsError: true}
+	case cmd.ProcessState == nil: // 起動自体に失敗した (シェル自体が無い、など。command 自体の失敗は、正常な終了コードで返す)
+		return mcpErrorResult(fmt.Errorf("実行できない: %v", runErr))
+	default:
+		return mcpToolCallResult{Content: mcpText(fmt.Sprintf("終了コード: %d\n%s", exitCode, out.String())), IsError: exitCode != 0}
+	}
+}
+
+// capturedOutput は、標準出力・標準エラーを合わせて受け、最大 max バイトまで保つ io.Writer (それ以降は、数だけ
+// 数えて捨てる)。Write は常に成功を返す: コマンドの実行自体を、出力の量で失敗させない。
+type capturedOutput struct {
+	max     int
+	buf     bytes.Buffer
+	dropped int64
+}
+
+func (c *capturedOutput) Write(p []byte) (int, error) {
+	if room := c.max - c.buf.Len(); room > 0 {
+		n := room
+		if n > len(p) {
+			n = len(p)
+		}
+		c.buf.Write(p[:n])
+		c.dropped += int64(len(p) - n)
+	} else {
+		c.dropped += int64(len(p))
+	}
+	return len(p), nil
+}
+
+func (c *capturedOutput) String() string {
+	s := c.buf.String()
+	if c.dropped > 0 {
+		s += fmt.Sprintf("\n... (出力の残り %d バイトを切り捨てた)", c.dropped)
+	}
+	return s
+}
+
+// runCommandLogEntry は、runCommandLogPath に追記する 1 行 (JSON) の形。
+type runCommandLogEntry struct {
+	Time     string  `json:"time"`
+	Command  string  `json:"command"`
+	ExitCode int     `json:"exit_code"`
+	Seconds  float64 `json:"seconds"`
+	TimedOut bool    `json:"timed_out,omitempty"`
+}
+
+// runCommandLogPath は、run_command 1 回分の監査ログを追記する path: 今の HOME (repo ごと。ホストからは、
+// state dir の下の、repo ごとの HOME の中として見える) の下の隠しディレクトリ。HOME が絶対 path でなければ
+// (テストなど)、空を返す (呼び手は、書き込みを諦める)。
+func runCommandLogPath() string {
+	home := os.Getenv("HOME")
+	if !filepath.IsAbs(home) {
+		return ""
+	}
+	return filepath.Join(home, ".goronation", "run-command.log")
+}
+
+// logRunCommand は、run_command 1 回分を、runCommandLogPath に追記する。書けなくても、tool の応答には影響しない
+// (監査は付随の効果で、実行そのものを妨げない)。
+func logRunCommand(command string, exitCode int, elapsed time.Duration, timedOut bool) {
+	path := runCommandLogPath()
+	if path == "" {
+		return
+	}
+	b, err := json.Marshal(runCommandLogEntry{
+		Time: time.Now().UTC().Format(time.RFC3339Nano), Command: command, ExitCode: exitCode,
+		Seconds: elapsed.Seconds(), TimedOut: timedOut,
+	})
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(append(b, '\n'))
 }

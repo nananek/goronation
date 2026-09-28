@@ -3,6 +3,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -56,9 +59,13 @@ type cageConfig struct {
 	// PushRefPrefix は、PushRepo が指定されたときの、許可された ref の接頭辞 (git.Policy.Prefix の値。
 	// "refs/heads/goronation/<セッション>/")。
 	PushRefPrefix string
-	// MCPServers は、Agent に登録する MCP サーバー (mcp.go の mcpServersFor が作る。--push が無効なら空)。
+	// MCPServers は、Agent に登録する MCP サーバー (mcp.go の mcpServersFor が作る)。
 	// Agent.mcp が nil のエージェントには、何も注入しない。
 	MCPServers []mcpServerDef
+	// ManagedConfig は、Agent.managedConfig の各ファイルを、writeManagedConfig がホストに書いた場所 (組は、
+	// cageSpec が ro で bind する)。呼び手 (run.go の doRun・serve_terminal.go) が、檻を起こす前に、
+	// writeManagedConfig(Agent, 起動ごとの run dir) で作る。Agent.managedConfig が空なら、空のまま。
+	ManagedConfig []managedConfigBind
 	// PTY は、Stdin・Stdout・Stderr が、goronation run 専用の pty の slave であることを示す (呼び手 (runCage) が、
 	// ホストの実端末に直結できるときだけ true にする)。true なら、bwrap を --new-session (NewSession) で起動し
 	// (TIOCSTI の確認を要らなくする)、goronation init に --set-ctty を渡す: goronation init が、エージェントを起動すると
@@ -86,6 +93,11 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		c.bind(c.AuthDir, jailAuth, true),
 		c.bind(c.Work, jailWork, true),
 	)
+	// managed 設定 (bash/Bash の deny) を、他のどの設定でも緩められない階層に ro で見せる。c.ManagedConfig が空
+	// (writeManagedConfig を呼んでいない・Agent.managedConfig が無い) なら、何も足さない。
+	for _, mc := range c.ManagedConfig {
+		binds = append(binds, c.bind(mc.Host, mc.Jail, false))
+	}
 	// --no-forward-tty: 端末のシグナルは、エージェントが直接受ける (PTY のときは、専用の pty の、PTY でないときは
 	// ホストの実端末の、フォアグラウンドの process group として)。init が転送すると、二重に届く (Ctrl-C が 2 回になる)。
 	cmd := []string{jailGoro, "init", "--listen", jailProxyAddr, "--upstream", jailRun + "/" + proxySockName, "--no-forward-tty"}
@@ -101,6 +113,10 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		mcpArgs, mcpEnv = c.Agent.mcp(c.MCPServers)
 	}
 	cmd = append(cmd, mcpArgs...)
+	// strictMCPArgs (claude の --strict-mcp-config) は、MCPServers の有無に関わらず、エージェントに静的に足す:
+	// プロジェクト側の .mcp.json が足す MCP サーバーを無視させる、managedConfig と対になる防御 (プロジェクトの
+	// 内容には依らない)。
+	cmd = append(cmd, c.Agent.strictMCPArgs...)
 	env := append(cageEnv(c.Agent, c.Term, c.TZ, c.PushRepo, c.PushRefPrefix), mcpEnv...)
 	return bwrap.Spec{
 		Host: c.Host,
@@ -125,6 +141,38 @@ func cageSpec(c cageConfig) bwrap.Spec {
 // (clone・エージェントの HOME・run dir・利用者が置いたエージェントの実行ファイルなど、goronation run が決めた path だけ。機密の path は bwrap が拒否する)。
 func (c cageConfig) bind(src, dst string, rw bool) bwrap.Bind {
 	return bwrap.Bind{Src: src, Dst: dst, RW: rw, InHome: strings.HasPrefix(src, c.Host.Home+"/")}
+}
+
+// managedConfigDirName は、run dir の下に、writeManagedConfig が管理設定ファイルを書くディレクトリの名前。
+const managedConfigDirName = "managed-config"
+
+// managedConfigBind は、writeManagedConfig が書いた 1 ファイルの、ホストの path (書いた場所) と、檻の中の path
+// (agentProfile.managedConfig の jailPath)。cageConfig.ManagedConfig に積み、cageSpec が ro で bind する。
+type managedConfigBind struct {
+	Host string
+	Jail string
+}
+
+// writeManagedConfig は、agent.managedConfig の各ファイルを、runDir/managedConfigDirName の下に書く (agent に
+// managedConfig が無ければ、何もせず nil を返す)。中身は、agentProfile に静的に持つ JSON で、repo の中身にも
+// 利用者の入力にも依らない (呼ぶたびに同じ)。runDir は、呼び手が用意済み (0700。goronation run の tgt.runDir)。
+func writeManagedConfig(agent agentProfile, runDir string) ([]managedConfigBind, error) {
+	if len(agent.managedConfig) == 0 {
+		return nil, nil
+	}
+	dir := filepath.Join(runDir, managedConfigDirName)
+	if err := ensureDir(dir); err != nil {
+		return nil, err
+	}
+	binds := make([]managedConfigBind, 0, len(agent.managedConfig))
+	for i, f := range agent.managedConfig {
+		host := filepath.Join(dir, fmt.Sprintf("%d.json", i))
+		if err := os.WriteFile(host, f.content, 0o600); err != nil {
+			return nil, err
+		}
+		binds = append(binds, managedConfigBind{Host: host, Jail: f.jailPath})
+	}
+	return binds, nil
 }
 
 // termRE は、檻に渡す TERM の形。

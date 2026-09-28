@@ -67,7 +67,8 @@ var testAgentProfile = agentProfile{
 //	auth login [場面...]  opencode の --login のときの起動 (auth login)。HOME にログインの目印を作り、続きに場面があれば、それを動かす
 //	                      (なければ、引数と環境を出す)
 //	info                  引数・作業ディレクトリ・HOME・環境変数の名前・/work の中身を出す
-//	probe OP...           OP (stat:PATH・write:PATH・dial:ADDR・mnt:PATH) を試して、結果を出す。mnt は、PATH の mount が ro か rw か
+//	probe OP...           OP (stat:PATH・write:PATH・dial:ADDR・mnt:PATH・read:PATH) を試して、結果を出す。mnt は、PATH の mount が ro か rw か。
+//	                      read は、中身 (改行の無い 1 行) を返す
 //	connect TARGET...     HTTPS_PROXY へ、TARGET の CONNECT を送り、応答の状態コードを出す
 //	screen                エージェントの画面に見える出力 (エスケープ・項目名・エラー文・不正な UTF-8・NUL) を、標準出力と標準エラーに出し、
 //	                      終了コード 3 で終わる (goronation が、出力を読まず・解釈せず、そのまま通すことの確認)
@@ -93,11 +94,20 @@ var testAgentProfile = agentProfile{
 //	winsize               ready を出し、標準入力 (端末) の大きさを winsize=幅x高さ で出す。SIGWINCH を 1 回受けたら、
 //	                      もう一度出して終わる (pty 中継の、開始時の大きさの反映と、resize の伝わりの確認用)
 func fakeClaude(args []string) int {
-	// --push owner/repo のとき、claude には --mcp-config <JSON> が、場面の引数より前に入る (goronation run 側。
-	// cmd/goronation/mcp.go の claudeMCPInject)。実物の claude は、これを自分の flag として消費する。偽のエージェントも
-	// 同じに振る舞う (でないと、--push と組み合わせる場面のテストが "--mcp-config" 自体を場面の名前と誤認する)。
-	if len(args) >= 2 && args[0] == "--mcp-config" {
-		args = args[2:]
+	// claude には、常に --strict-mcp-config が、--mcp-config <JSON> (--push owner/repo のときだけ。goronation run 側。
+	// cmd/goronation/mcp.go の claudeMCPInject) があればその後ろに、場面の引数より前に入る (agent.go の
+	// claudeProfile.strictMCPArgs・cage.go の cageSpec)。実物の claude は、これらを自分の flag として消費する。
+	// 偽のエージェントも同じに振る舞う (でないと、場面のテストが、これらの flag 自体を場面の名前と誤認する)。
+	for len(args) > 0 {
+		if args[0] == "--mcp-config" && len(args) >= 2 {
+			args = args[2:]
+			continue
+		}
+		if args[0] == "--strict-mcp-config" {
+			args = args[1:]
+			continue
+		}
+		break
 	}
 	if len(args) == 0 {
 		fmt.Println("scenario=none")
@@ -407,7 +417,7 @@ func fakeInfo(args []string) int {
 	return 0
 }
 
-// fakeProbe は、操作 1 つを試して、"ok" か、"err: 理由" を返す。
+// fakeProbe は、操作 1 つを試して、"ok" か、"err: 理由" を返す (read は、中身の 1 行を返す)。
 func fakeProbe(op string) string {
 	kind, arg, _ := strings.Cut(op, ":")
 	var err error
@@ -420,6 +430,12 @@ func fakeProbe(op string) string {
 		}
 	case "mnt":
 		return mountOptions(arg)
+	case "read":
+		b, rerr := os.ReadFile(arg)
+		if rerr != nil {
+			return "err: " + rerr.Error()
+		}
+		return strings.TrimRight(string(b), "\n") // 改行入りだと、arrow の行区切りと混ざる (呼び手は、改行の無い中身だけを渡す)
 	case "dial":
 		var c net.Conn
 		if c, err = net.DialTimeout("tcp", arg, 3*time.Second); err == nil {

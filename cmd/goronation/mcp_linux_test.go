@@ -8,19 +8,21 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
-func TestMCPServersForGatedOnPush(t *testing.T) {
-	if got := mcpServersFor(""); got != nil {
-		t.Errorf("mcpServersFor(\"\") = %v, want nil (--push が無ければ登録しない)", got)
-	}
-	got := mcpServersFor("o/r")
+// TestMCPServersForAlwaysRegistered は、mcpServersFor が、push の有無に関わらず、常に goronation 自身を
+// 登録することを確かめる (run_command が、bash/Bash を deny した後の唯一の実行経路になるため)。
+func TestMCPServersForAlwaysRegistered(t *testing.T) {
+	got := mcpServersFor()
 	want := []mcpServerDef{{Name: "goronation", Command: jailGoro, Args: []string{"mcp"}}}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("mcpServersFor(\"o/r\") = %+v, want %+v", got, want)
+		t.Errorf("mcpServersFor() = %+v, want %+v", got, want)
 	}
 }
 
@@ -66,11 +68,13 @@ func TestOpencodeMCPInject(t *testing.T) {
 	}
 }
 
-// TestCageSpecInjectsMCPForClaude は、--push が有効なとき、claude の argv に --mcp-config が、
-// エージェントの実体の直後・利用者の引数 (--resume など) より前に入ることを確かめる。
+// TestCageSpecInjectsMCPForClaude は、MCPServers があるとき、claude の argv に --mcp-config と
+// --strict-mcp-config が、エージェントの実体の直後・利用者の引数 (--resume など) より前に入ることを確かめる。
+// --strict-mcp-config は、mcpServersFor が push の有無に関わらず常に MCPServers を作るので (mcp.go)、実際の
+// 起動では常に付く。
 func TestCageSpecInjectsMCPForClaude(t *testing.T) {
 	c := testCage()
-	c.MCPServers = mcpServersFor("o/r")
+	c.MCPServers = mcpServersFor()
 	argv, err := cageSpec(c).Argv()
 	if err != nil {
 		t.Fatal(err)
@@ -92,30 +96,35 @@ func TestCageSpecInjectsMCPForClaude(t *testing.T) {
 	if !strings.Contains(argv[i+2], `"goronation"`) || !strings.Contains(argv[i+2], "/opt/goronation/goronation") {
 		t.Errorf("--mcp-config の値がおかしい: %q", argv[i+2])
 	}
-	if argv[i+3] != "--resume" { // testCage().Args = {"--resume", "x y"}
-		t.Errorf("利用者の引数が、--mcp-config の後ろに続いていない: %q", argv[i+3:])
+	if argv[i+3] != "--strict-mcp-config" {
+		t.Fatalf("--mcp-config の直後 = %q, want --strict-mcp-config: argv = %q", argv[i+3], argv)
+	}
+	if argv[i+4] != "--resume" { // testCage().Args = {"--resume", "x y"}
+		t.Errorf("利用者の引数が、--strict-mcp-config の後ろに続いていない: %q", argv[i+4:])
 	}
 }
 
-// TestCageSpecNoMCPWithoutPush は、--push が無効 (MCPServers が空) なら、claude の argv に --mcp-config が
-// 一切出ないことを確かめる (これまでの golden (TestCageSpecGolden) と同じ形のまま)。
-func TestCageSpecNoMCPWithoutPush(t *testing.T) {
+// TestCageSpecNoMCPConfigWhenServersEmpty は、MCPServers が空 (cageSpec だけを、単体で呼んだとき) なら、
+// claude の argv に --mcp-config が一切出ないことを確かめる (これまでの golden (TestCageSpecGolden) と同じ形の
+// まま)。--strict-mcp-config は、Agent.strictMCPArgs が静的に持つので、MCPServers の有無に関わらず出る
+// (TestCageSpecGolden で確かめる)。
+func TestCageSpecNoMCPConfigWhenServersEmpty(t *testing.T) {
 	argv, err := cageSpec(testCage()).Argv()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, a := range argv {
 		if a == "--mcp-config" {
-			t.Fatalf("--push なしなのに --mcp-config が argv にある: %q", argv)
+			t.Fatalf("MCPServers が空なのに --mcp-config が argv にある: %q", argv)
 		}
 	}
 }
 
-// TestCageSpecInjectsMCPForOpenCode は、--push が有効なとき、opencode の環境変数に
+// TestCageSpecInjectsMCPForOpenCode は、MCPServers があるとき、opencode の環境変数に
 // OPENCODE_CONFIG_CONTENT が足されることを確かめる (opencode は引数でなく環境変数)。
 func TestCageSpecInjectsMCPForOpenCode(t *testing.T) {
 	c := testOpenCodeCage()
-	c.MCPServers = mcpServersFor("o/r")
+	c.MCPServers = mcpServersFor()
 	spec := cageSpec(c)
 	found := false
 	for _, e := range spec.Env {
@@ -225,16 +234,16 @@ func TestRunMCPToolsList(t *testing.T) {
 		t.Fatalf("result が無い: %+v", resp)
 	}
 	tools, ok := result["tools"].([]any)
-	if !ok || len(tools) != 2 {
-		t.Fatalf("tools = %+v, want 2 件", result["tools"])
+	if !ok || len(tools) != 3 {
+		t.Fatalf("tools = %+v, want 3 件", result["tools"])
 	}
 	names := map[string]bool{}
 	for _, tl := range tools {
 		m := tl.(map[string]any)
 		names[m["name"].(string)] = true
 	}
-	if !names["create_pr"] || !names["push_context"] {
-		t.Errorf("tools の名前 = %v, want create_pr・push_context", names)
+	if !names["create_pr"] || !names["push_context"] || !names["run_command"] {
+		t.Errorf("tools の名前 = %v, want create_pr・push_context・run_command", names)
 	}
 	if names["pr_ready"] {
 		t.Error("pr_ready を出してはいけない (将来の、より強い権限の主体向けに空けてある)")
@@ -330,6 +339,157 @@ func TestRunMCPToolsCallPushContextWithoutPush(t *testing.T) {
 	}
 	if result["isError"] != true {
 		t.Errorf("isError = %v, want true (GORONATION_PUSH_REPO が無い)", result["isError"])
+	}
+}
+
+// TestRunMCPToolsCallRunCommand は、run_command が、command を /bin/sh -c で実行し、標準出力・終了コードを
+// 返し、監査ログ (HOME の下) に 1 行残すことを確かめる (bash/Bash が deny された後の、唯一の実行経路)。
+func TestRunMCPToolsCallRunCommand(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	resp := mcpRoundTrip(t, `{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"echo hello"}}}`)
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("result が無い: %+v", resp)
+	}
+	if result["isError"] == true {
+		t.Fatalf("isError = true: %+v", result)
+	}
+	text := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "終了コード: 0") || !strings.Contains(text, "hello") {
+		t.Errorf("text = %q", text)
+	}
+
+	logPath := filepath.Join(home, ".goronation", "run-command.log")
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("監査ログを読めない: %v", err)
+	}
+	var entry runCommandLogEntry
+	if err := json.Unmarshal(bytes.TrimSpace(b), &entry); err != nil {
+		t.Fatalf("監査ログが JSON でない: %v (%q)", err, b)
+	}
+	if entry.Command != "echo hello" || entry.ExitCode != 0 || entry.TimedOut {
+		t.Errorf("監査ログ = %+v", entry)
+	}
+}
+
+// TestRunMCPToolsCallRunCommandNonZeroExit は、command が失敗する (終了コードが 0 でない) と、isError が true に
+// なることを確かめる (create_pr などの tool 自体の失敗と同じ扱い: プロトコルのエラーにはしない)。
+func TestRunMCPToolsCallRunCommandNonZeroExit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resp := mcpRoundTrip(t, `{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"exit 7"}}}`)
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("result が無い: %+v", resp)
+	}
+	if result["isError"] != true {
+		t.Errorf("isError = %v, want true", result["isError"])
+	}
+	text := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "終了コード: 7") {
+		t.Errorf("text = %q", text)
+	}
+}
+
+// TestRunMCPToolsCallRunCommandMissingCommandIsToolError は、command が無い・空文字なら、tool の失敗 (isError)
+// になり、プロトコルのエラーにはならないことを確かめる (create_pr の title と同じ扱い)。
+func TestRunMCPToolsCallRunCommandMissingCommandIsToolError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resp := mcpRoundTrip(t, `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"run_command","arguments":{}}}`)
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("プロトコルのエラーではなく、tool の結果 (isError) であるべき: %+v", resp)
+	}
+	if result["isError"] != true {
+		t.Errorf("isError = %v, want true", result["isError"])
+	}
+}
+
+// TestRunMCPToolsCallRunCommandTimeout は、timeout_seconds を超えたコマンドが打ち切られ、isError になり、
+// 監査ログに timed_out=true が残ることを確かめる。command には、/bin/sh -c の直接の子ではない孫プロセス
+// (sh -c "sleep 30" の sleep) を作らせる: これを殺さず、直接の子 (sh) だけを殺すと、sleep が標準出力の書き込み端を
+// 持ったまま生き残り、Wait が sleep の自然な終了 (30 秒後) まで戻らない (実際に踏んだ回帰: 修正前は、このテスト自体が
+// 約 30 秒かかっていた)。elapsed の上限で、そのことを確かめる。
+func TestRunMCPToolsCallRunCommandTimeout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	start := time.Now()
+	resp := mcpRoundTrip(t, `{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"sleep 30","timeout_seconds":0.2}}}`)
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("タイムアウト後、応答に %s かかった (孫プロセスを殺せていない疑い。want ≲ 1s)", elapsed)
+	}
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("result が無い: %+v", resp)
+	}
+	if result["isError"] != true {
+		t.Errorf("isError = %v, want true (タイムアウト)", result["isError"])
+	}
+	text := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "タイムアウト") {
+		t.Errorf("text = %q", text)
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".goronation", "run-command.log"))
+	if err != nil {
+		t.Fatalf("監査ログを読めない: %v", err)
+	}
+	var entry runCommandLogEntry
+	if err := json.Unmarshal(bytes.TrimSpace(b), &entry); err != nil {
+		t.Fatalf("監査ログが JSON でない: %v (%q)", err, b)
+	}
+	if !entry.TimedOut {
+		t.Errorf("監査ログの timed_out = %v, want true: %+v", entry.TimedOut, entry)
+	}
+}
+
+// TestCapturedOutputTruncates は、capturedOutput が、max バイトを超えた分を捨て、切り捨てた旨を String() に
+// 添えることを確かめる (誘導されたコマンドの出力で、MCP の応答を際限なく大きくしないため)。
+func TestCapturedOutputTruncates(t *testing.T) {
+	c := &capturedOutput{max: 5}
+	n, err := c.Write([]byte("abcdefgh"))
+	if err != nil || n != 8 { // Write は、切り捨てても常に全部書けたことにする (呼び手 (exec) を失敗させない)
+		t.Fatalf("Write = %d, %v", n, err)
+	}
+	got := c.String()
+	if !strings.HasPrefix(got, "abcde") || !strings.Contains(got, "3 バイトを切り捨てた") {
+		t.Errorf("String() = %q", got)
+	}
+}
+
+// TestWriteManagedConfig は、claude・opencode それぞれの managedConfig が、runDir/managed-config/ の下に、
+// jailPath と対になった host の path として書かれ、中身がそのまま (改変なく) 書かれることを確かめる。
+func TestWriteManagedConfig(t *testing.T) {
+	for _, agent := range []agentProfile{claudeProfile, opencodeProfile} {
+		t.Run(agent.name, func(t *testing.T) {
+			runDir := t.TempDir()
+			binds, err := writeManagedConfig(agent, runDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(binds) != len(agent.managedConfig) {
+				t.Fatalf("binds = %d 件, want %d", len(binds), len(agent.managedConfig))
+			}
+			for i, want := range agent.managedConfig {
+				if binds[i].Jail != want.jailPath {
+					t.Errorf("binds[%d].Jail = %q, want %q", i, binds[i].Jail, want.jailPath)
+				}
+				if !strings.HasPrefix(binds[i].Host, runDir) {
+					t.Errorf("binds[%d].Host = %q は runDir %q の下ではない", i, binds[i].Host, runDir)
+				}
+				got, err := os.ReadFile(binds[i].Host)
+				if err != nil {
+					t.Fatalf("binds[%d].Host を読めない: %v", i, err)
+				}
+				if string(got) != string(want.content) {
+					t.Errorf("binds[%d] の中身 = %q, want %q", i, got, want.content)
+				}
+			}
+		})
+	}
+	if binds, err := writeManagedConfig(testAgentProfile, t.TempDir()); err != nil || binds != nil {
+		t.Errorf("managedConfig の無いエージェントは、何も書かない: binds = %v, err = %v", binds, err)
 	}
 }
 

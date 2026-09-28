@@ -54,6 +54,20 @@ type agentProfile struct {
 	// mcp は、goronation run --push のとき、goronation mcp (mcp.go) を、このエージェントに MCP サーバーとして登録する方法 (起動時の
 	// 引数・環境変数への変換)。nil なら登録しない。呼び手 (cage.go) は、エージェントの種類で分岐せず、これを呼ぶだけ。
 	mcp mcpInjector
+	// managedConfig は、起動のたびに、他のどの設定 (プロジェクト側の opencode.json・.mcp.json を含む) でも緩められない
+	// 階層に置く設定ファイル (bash/Bash を deny するだけの、静的な中身)。無ければ空 (このエージェントには、その階層が無い)。
+	// cage.go の writeManagedConfig が、起動のたびにホストへ書き、cageSpec が ro で bind する。
+	managedConfig []managedConfigFile
+	// strictMCPArgs は、managedConfig 以外の MCP サーバー設定 (プロジェクト側の .mcp.json など) を無視させる、
+	// エージェントへの追加引数 (claude の --strict-mcp-config)。cageSpec が、エージェントへの引数に常に足す。無ければ空。
+	strictMCPArgs []string
+}
+
+// managedConfigFile は、agentProfile.managedConfig の 1 件: 檻の中の絶対 path と、静的な中身 (JSON。repo の内容にも
+// 利用者の入力にも依らない)。claude の /etc/claude-code/managed-settings.json 相当・opencode の /etc/opencode/opencode.json 相当。
+type managedConfigFile struct {
+	jailPath string
+	content  []byte
 }
 
 // homeFile は、repo ごとの HOME を作るときに置くファイル 1 つ。
@@ -132,6 +146,15 @@ var claudeProfile = agentProfile{
 	loginUsage: "対話起動する (初回の設定とログインは、claude 自身の画面で行う。最後まで通らないと、次の起動がやり直しになる)",
 	exitHint:   "/exit",
 	mcp:        claudeMCPInject,
+	// managed-settings.json は、5 層の設定の中で最上位 (CLI フラグを含め、下位のどの設定でも緩められないと公式に
+	// 文書化されている)。組み込みの Bash tool を deny する: repo 側の設定 (.claude/settings.json など) で緩められない。
+	// --strict-mcp-config は、--mcp-config で渡したサーバー (goronation 自身) だけを使わせ、プロジェクト側の .mcp.json が
+	// 足す MCP サーバー (未知の stdio サーバーの子プロセスを含む) を無視させる。
+	managedConfig: []managedConfigFile{{
+		jailPath: "/etc/claude-code/managed-settings.json",
+		content:  []byte(`{"permissions":{"deny":["Bash"]}}` + "\n"),
+	}},
+	strictMCPArgs: []string{"--strict-mcp-config"},
 }
 
 // opencodeProfile は、opencode (OpenCode Zen を使う) の profile。実測 (opencode 1.18.32・檻の中) に基づく。
@@ -168,6 +191,13 @@ var opencodeProfile = agentProfile{
 		"github.com:443":         "ホストに rg を入れる (pacman -S ripgrep)",
 	},
 	mcp: opencodeMCPInject,
+	// /etc/opencode/opencode.json は、admin-controlled な managed 階層 (文書上、他の全てを上書きすると書かれている)。
+	// permission.bash を deny する: repo 側の opencode.json (project 設定) で緩められない (実機での検証は、
+	// mcp-sandbox-plan の C. を参照。このホストに実物の opencode バイナリが無く、このリポジトリではまだできていない)。
+	managedConfig: []managedConfigFile{{
+		jailPath: "/etc/opencode/opencode.json",
+		content:  []byte(`{"$schema":"https://opencode.ai/config.json","permission":{"bash":"deny"}}` + "\n"),
+	}},
 }
 
 // agentsDirName は、エージェントごとの状態を置く、状態ディレクトリの下のディレクトリの名前。

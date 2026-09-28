@@ -195,10 +195,16 @@ func startServeTermSession(ctx context.Context, stateDir, sessionID, agentFlag, 
 	} else {
 		fmt.Fprintf(stderr, "goronation serve: セッション %s を再開した\n", tgt.id)
 	}
+	// managed 設定 (bash/Bash の deny) は、goronation run と同じく、起動のたびに書く (goronation serve の檻も、
+	// repo の内容が信頼できないことに変わりはない)。
+	managedConfig, err := writeManagedConfig(agent, tgt.runDir)
+	if err != nil {
+		return nil, fmt.Errorf("managed 設定を書けない: %w", err)
+	}
 	cfg := cageConfig{
 		Host: host, Agent: agent, AgentExe: agentExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
 		RunDir: tgt.runDir, AgentHome: home, AuthDir: dirs.auth, Work: tgt.work, Term: "xterm-256color", TZ: hostTZ(),
-		Args: agentArgs,
+		Args: agentArgs, MCPServers: mcpServersFor(), ManagedConfig: managedConfig,
 	}
 	return startTermSession(ctx, tgt.id, cfg, allowList(agent, nil))
 }

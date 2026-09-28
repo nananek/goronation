@@ -447,6 +447,12 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 		fmt.Fprintln(stderr, "goronation run: "+agent.loginGuide())
 	}
 
+	// managed 設定 (bash/Bash の deny) を、起動のたびに run dir の下へ書く (--login を含む、すべての起動)。
+	managedConfig, err := writeManagedConfig(agent, tgt.runDir)
+	if err != nil {
+		return fail("managed 設定を書けない: %v", err)
+	}
+
 	// --push: git push・PR 作成の配線 (git.Policy・資格情報) を、檻を起こす前に用意する (作れなければ、檻を
 	// 起動しない)。gateway.Handler 自体は startProxy が作る (監査を、egress の監査ログと同じ書き込み先に
 	// 揃えるため。auditLog は startProxy の中でしか作らない)。
@@ -474,7 +480,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 	code := runCage(ctx, o, agent, sw, tgt, cageConfig{
 		Host: host, Agent: agent, AgentExe: agentExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
 		RunDir: tgt.runDir, AgentHome: home, AuthDir: dirs.auth, Work: tgt.work, Term: os.Getenv("TERM"), TZ: hostTZ(), Args: cageArgs(o, agent),
-		PushRepo: o.push, PushRefPrefix: push.refPrefix(), MCPServers: mcpServersFor(o.push),
+		PushRepo: o.push, PushRefPrefix: push.refPrefix(), MCPServers: mcpServersFor(), ManagedConfig: managedConfig,
 	}, push, &sum, stderr)
 	printRunSummary(stderr, sum)
 	return code

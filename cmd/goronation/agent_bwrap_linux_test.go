@@ -73,7 +73,8 @@ func TestRunOpenCodeCage(t *testing.T) {
 		}
 	}
 
-	// 環境変数と、起動の状態: 許可リストだけ。claude の変数は無く、opencode の 4 つがある。
+	// 環境変数と、起動の状態: 許可リストだけ。claude の変数は無く、opencode の 4 つと、goronation mcp (run_command が
+	// bash/Bash の代わりの実行経路になるので、push の有無に関わらず常に登録する) の OPENCODE_CONFIG_CONTENT がある。
 	info := f.goronation(t, "run", "--agent", "opencode", "--repo", f.repo, "--", "info").mustOK(t)
 	kv, _ := parseOut(info.stdout)
 	if kv["home"] != "/home/goronation" || kv["cwd"] != "/work" || kv["https_proxy"] != "http://127.0.0.1:3128" || kv["args"] != `["info"]` {
@@ -81,7 +82,8 @@ func TestRunOpenCodeCage(t *testing.T) {
 	}
 	allowed := map[string]bool{}
 	for _, n := range []string{"HOME", "PATH", "TERM", "LANG", "TZ", "OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_MODELS_FETCH",
-		"OPENCODE_DISABLE_SHARE", "OPENCODE_DISABLE_LSP_DOWNLOAD", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "PWD"} {
+		"OPENCODE_DISABLE_SHARE", "OPENCODE_DISABLE_LSP_DOWNLOAD", "OPENCODE_CONFIG_CONTENT",
+		"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "PWD"} {
 		allowed[n] = true
 	}
 	names := strings.Split(kv["env"], ",")

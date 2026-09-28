@@ -17,6 +17,13 @@
 //   - signal: 端末のシグナルは、檻の中のエージェントが直接受ける (goronation init は転送しない)。ホストの goronation run は SIGINT・SIGQUIT を無視し、SIGTERM・SIGHUP で檻を止める。no-host-git: ホストは git を実行しない (clone・export も、使い捨ての檻の中)。
 //   - push: --push owner/repo は、その 1 repo・セッションの ref 名前空間 (refs/heads/goronation/<セッション>/) だけに、
 //     git push・fetch・PR 作成を限る (トークンは檻に渡さない。goronation pr ready は gh を使わず GraphQL を直接叩く)。
+//   - exec: 両エージェントの組み込み bash/Bash tool は、起動のたびに、他のどの設定 (repo 側の .claude/settings.json・
+//     .mcp.json・opencode.json を含む) でも緩められない管理設定の階層 (claude: /etc/claude-code/managed-settings.json・
+//     opencode: /etc/opencode/opencode.json) で deny する。claude は、さらに --strict-mcp-config で、プロジェクト側の
+//     .mcp.json が足す MCP サーバーも無視させる。代わりの実行経路は、goronation mcp (push の有無に関わらず、常に
+//     登録する) の run_command tool: 実行したコマンド・終了コード・監査ログは、repo ごとの HOME の下
+//     (.goronation/run-command.log) に残る。Phase 1 の実装で、goronation mcp 自身の直接の子として実行するだけ:
+//     名前空間の分離 (入れ子の bwrap) は、まだ無い (follow-up)。
 //
 // # 限界
 //
@@ -24,6 +31,12 @@
 //   - 檻の HOME は、repo ごとに、同じ repo の全セッションで共有する (履歴・メモリが続く)。同じ repo の別セッションの檻は、共有の /home/goronation の UDS などで通信でき、--allow は同じ repo のセッション間の境界ではない。認証情報 (auth/) は、そのエージェントの全 repo の檻から読み書きでき (信頼できない repo の檻も)、許可した宛先経由で持ち出せ、別のアカウントに差し替えられる。信頼できない repo の檻が auth/ に置いた symlink は、別の repo のセッションが認証情報を書くときに辿られ、その檻の自分のファイル (HOME・clone) を壊せる (opencode の symlink 方式。claude は rename で書くので当たらない。破壊のみで、読みも内容の指定もできない)。repo のキーは実 path で、repo の実体ではない: 同じ path に別の repo を置くと、履歴・メモリ・trust を引き継ぐ。
 //   - 標準入出力の 3 つとも実端末なら、goronation run 専用の pty を用意し、そこだけに中継する (エスケープシーケンスは解釈もフィルタもしない。TIOCSTI は、専用の pty にしか効かず、legacy_tiocsti に頼らない)。3 つのどれかが端末でなければ (redirect・pipe)、これまでどおりホストの標準入出力に直結する (TIOCSTI は legacy_tiocsti の確認で塞ぐ)。termios は、終了後に戻す。
 //   - 起動後の Ctrl-C は、エージェントの中断として効く (goronation 自身は終了しない。終了はエージェントの終了操作か SIGTERM)。seccomp・cap-drop は未実装。repo は、ローカルの path だけ。Linux (bwrap) だけ。檻からホストの localhost には届かず、ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。goronation web は、同時接続数の上限 (64) を keep-alive 無効化で構造的に守るが、body をゆっくり送って都度接続を張り直す変種の可用性 DoS までは防がない (ログイン前の endpoint に届く主体は、無認証でも一時的に service を止められる)。goronation serve は UDS 専用で、HTTP の認証 (WebAuthn・cookie) を持たない: UDS に繋げること自体を信頼の境界にし、繋いできた相手を無条件に信頼する (ファイルシステムの権限 (置き場所のディレクトリが 0700・ソケット自体が 0600) が、実際の防御線)。goronation web と goronation serve は別プロセス・別ライフサイクルで、goronation web は起こした goronation serve の生存を追跡しない (プロセスが落ちても、次に dial するときに自動で起こし直す)。
+//   - opencode の managed 設定 (/etc/opencode/opencode.json) が、project 側の opencode.json の permission.bash を
+//     実際に上書きすることは、公式文書の記述に基づく設計で、実機 (実物の opencode バイナリ) では未検証 (このホストに
+//     無い)。run_command (goronation mcp) は、Phase 1 では、goronation mcp 自身の直接の子として実行するだけで、
+//     名前空間はエージェント本体と同じ: 別プロセス (同じ檻の中の別 MCP サーバーなど) からの到達を、まだ塞がない。
+//     監査ログ (repo ごとの HOME の下) も、その HOME 自体が rw で書けるので、run_command を経由すれば消せる
+//     (改ざん耐性は無い。Phase 1 の既知の限界)。
 //
 // # 関連
 //
