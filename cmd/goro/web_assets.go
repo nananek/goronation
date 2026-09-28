@@ -236,7 +236,7 @@ loadRepos();
 
 // terminalHTML は、端末ビューのページ (requireSession で保護される。/s/<session-id> で出す)。xterm.js
 // 本体・addon-fit は vendor から (/static/vendor/*)、中継の配線は terminal.js (自前) から読む。
-// インライン <script> は使わない (CSP)。
+// インライン <script>・<style> は使わない (CSP)。
 const terminalHTML = `<!doctype html>
 <html lang="ja">
 <head>
@@ -244,10 +244,7 @@ const terminalHTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>goro web — 端末</title>
 <link rel="stylesheet" href="/static/vendor/xterm.css">
-<style>
-  html, body { margin: 0; height: 100%; background: #000; }
-  #term { height: 100%; }
-</style>
+<link rel="stylesheet" href="/static/terminal.css">
 </head>
 <body>
 <div id="term"></div>
@@ -256,6 +253,12 @@ const terminalHTML = `<!doctype html>
 <script src="/static/terminal.js"></script>
 </body>
 </html>
+`
+
+// terminalCSS は、端末ビューのページ用のスタイル (自前。CSP の style-src 'self' に従い、
+// terminalHTML からはインラインでなく /static/terminal.css として読む)。
+const terminalCSS = `html, body { margin: 0; height: 100%; background: #000; }
+#term { height: 100%; }
 `
 
 // terminalJS は、端末ビューの中継 (自前。xterm.js 本体・addon-fit は vendor)。危険な機能

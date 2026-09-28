@@ -258,6 +258,7 @@ func TestWebTerminalPageAndVendorAssets(t *testing.T) {
 	for path, wantType := range map[string]string{
 		"/static/sessions.js":         "text/javascript",
 		"/static/terminal.js":         "text/javascript",
+		"/static/terminal.css":        "text/css",
 		"/static/vendor/xterm.js":     "text/javascript",
 		"/static/vendor/xterm.css":    "text/css",
 		"/static/vendor/addon-fit.js": "text/javascript",
@@ -270,6 +271,31 @@ func TestWebTerminalPageAndVendorAssets(t *testing.T) {
 			t.Errorf("%s の Content-Type = %q, want %q で始まる", path, ct, wantType)
 		}
 		resp.Body.Close()
+	}
+}
+
+// TestWebTerminalPageHasNoInlineStyle は、Issue #39 の回帰テスト。端末ビューのページ (/s/{id}) は
+// CSP (style-src 'self') の下でインライン <style> を使うと描画領域が潰れて画面が真っ黒になる。
+// terminalHTML の応答本文にインライン <style> が含まれないこと (/static/terminal.css を経由して
+// 読んでいること) を、CSP ヘッダーが緩められていないことと合わせて確かめる。
+func TestWebTerminalPageHasNoInlineStyle(t *testing.T) {
+	srv, store, rpID, origin := newTestServer(t)
+	client := loggedInClient(t, srv, store, rpID, origin)
+
+	resp := doJSON(t, client, "GET", srv.URL+"/s/20260101-000000-aaaaaa", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("認証済みの /s/{id} = %d, want 200", resp.StatusCode)
+	}
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "style-src 'self'") {
+		t.Errorf("Content-Security-Policy = %q, want style-src 'self' を含む (緩めていないこと)", csp)
+	}
+	body := new(bytes.Buffer)
+	if _, err := body.ReadFrom(resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(body.String(), "<style") {
+		t.Errorf("端末ビューのページにインライン <style> が残っている (CSP style-src 'self' でブロックされる): %s", body.String())
 	}
 }
 
