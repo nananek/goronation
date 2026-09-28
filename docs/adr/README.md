@@ -11,6 +11,7 @@
 | [0002](0002-branch-workflow.md) | ブランチ運用 (develop を base とし、main は保守者が反映する) | 採用 |
 | [0004](0004-webauthn-dependency-exception.md) | WebAuthn の署名検証・CBOR デコードに限り、依存ゼロの方針の例外を認める | 採用 |
 | [0005](0005-websocket-dependency-exception.md) | 端末ビューの WebSocket 終端に限り、依存ゼロの方針の例外を認める | 採用 |
+| [0006](0006-goro-to-goronation-rename.md) | `goro` バイナリ名を `goronation` に統一する | 採用 |
 
 ## 書き方
 
