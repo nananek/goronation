@@ -15,8 +15,8 @@ import (
 )
 
 // newAttackWebMux は、この攻撃者視点レビューの再現テスト一式が使う、runWebServer と同じ組み立ての
-// http.Handler (goro-web-upstream への分割で、goro serve から goro web に移った DoS 防御 (§4 の決定。
-// UDS 専用になった goro serve 自身は、この防御をもう持たない))。
+// http.Handler (goronation-web-upstream への分割で、goronation serve から goronation web に移った DoS 防御 (§4 の決定。
+// UDS 専用になった goronation serve 自身は、この防御をもう持たない))。
 func newAttackWebMux(t *testing.T, origin string) http.Handler {
 	t.Helper()
 	stateDir := t.TempDir()
@@ -44,9 +44,9 @@ func newAttackWebMux(t *testing.T, origin string) http.Handler {
 // runWebServer (web.go) が実際に構築する *http.Server は、当初 ReadHeaderTimeout だけを設定して
 // おり、ReadTimeout・WriteTimeout・IdleTimeout・同時接続数の上限のいずれも無かった。egress/gateway で
 // 過去に複数回見つかった Slowloris 系の DoS (B1〜B4: PR #29 の attack-review-bc6d03a 以降) と同じ形の
-// 攻撃が、goro serve (初のネットワーク待ち受け daemon だった当時) にもそのまま成立していたことを、
+// 攻撃が、goronation serve (初のネットワーク待ち受け daemon だった当時) にもそのまま成立していたことを、
 // 実際に生の TCP で確かめる (newWebHTTPServer・newLimitedListener で修正済み。この防御は、
-// goro-web-upstream への分割で、ネットワーク待ち受けを引き継いだ goro web (この package の呼び手) が
+// goronation-web-upstream への分割で、ネットワーク待ち受けを引き継いだ goronation web (この package の呼び手) が
 // 持つ)。
 //
 // ヘッダは完全かつ即座に送るが、宣言した Content-Length の本文を全く送らないクライアントに対して、
@@ -86,20 +86,20 @@ func TestWebHTTPBodyStallEnforced(t *testing.T) {
 	case err == io.EOF:
 		return // サーバーが接続を閉じた: 期待どおり
 	case os.IsTimeout(err):
-		t.Fatal("本文を全く送らない POST (ヘッダは完全に送った) が、ReadTimeout を超えても決着しなかった (goro web は初のネットワーク待ち受け daemon であり、認証前のエンドポイントに対する Slowloris 耐性が無い)")
+		t.Fatal("本文を全く送らない POST (ヘッダは完全に送った) が、ReadTimeout を超えても決着しなかった (goronation web は初のネットワーク待ち受け daemon であり、認証前のエンドポイントに対する Slowloris 耐性が無い)")
 	default:
 		t.Fatalf("予期しない error: %v", err)
 	}
 }
 
-// TestWebManyStalledConnectionsAccepted は、goro web の *http.Server (と、その手前の net.Listener)
+// TestWebManyStalledConnectionsAccepted は、goronation web の *http.Server (と、その手前の net.Listener)
 // に、同時接続数の上限に相当する仕組みが無いことを、実際に多数の「ヘッダのみ・本文を送らない」接続を張って
 // 確かめる (情報の記録用。attack-review-0d1f25a の指摘どおり、この結果自体は Blocking ではない)。
 //
 // newLimitedListener は、http.Server.Serve が Accept を呼ぶ回数 (=実際に読み取り処理へ進める接続の数)
 // を絞るだけで、TCP の 3-way handshake 自体 (kernel の accept queue に積まれること) は妨げない。この
 // テストが「300 本とも、生の TCP としては受理される」ことを確認するのは、その kernel レベルの話であり、
-// goro web 自身の同時接続数の上限 (limitedListener が絞る、実際に処理される接続の数) の効果は、
+// goronation web 自身の同時接続数の上限 (limitedListener が絞る、実際に処理される接続の数) の効果は、
 // 別の TestLimitedListenerCapsAccepts で直接確認する。
 func TestWebManyStalledConnectionsAccepted(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -140,7 +140,7 @@ func TestWebManyStalledConnectionsAccepted(t *testing.T) {
 
 // TestLimitedListenerCapsAccepts は、limitedListener (web.go) が、実際に Accept を呼ぶ回数 (=処理へ
 // 進める接続の数) を max に絞り、超えた分は、既存の接続が閉じるまで Accept 自体が進まないことを、
-// net.Listener のレベルで直接確かめる (goro web の同時接続数の上限の、本体の検証)。
+// net.Listener のレベルで直接確かめる (goronation web の同時接続数の上限の、本体の検証)。
 func TestLimitedListenerCapsAccepts(t *testing.T) {
 	raw, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -223,7 +223,7 @@ func TestLimitedListenerCapsAccepts(t *testing.T) {
 // newWebHTTPServer が SetKeepAlivesEnabled(false) を呼ぶようになった今は、1 接続=最大 1 リクエストに
 // 強制される (応答後、サーバー側が接続を閉じ、枠を解放する) ので、この具体的な攻撃 (同一接続への周期的な
 // 延命) は構造的に閉じている。ただし、可用性 DoS の完全な根治ではない: body をゆっくり送る (ReadTimeout
-// いっぱいまで) → 都度接続を張り直す、という、攻撃コストが上がった変種は残る (cmd/goro/doc.go の
+// いっぱいまで) → 都度接続を張り直す、という、攻撃コストが上がった変種は残る (cmd/goronation/doc.go の
 // 「限界」を参照)。
 func TestWebKeepAliveDisabledBoundsConnectionHoldTime(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")

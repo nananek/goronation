@@ -10,7 +10,7 @@ import (
 )
 
 // 結合テスト (bwrap が要る): エージェントの HOME は repo ごとに分かれ、認証情報だけが、エージェントごとの 1 か所 (auth/) から、全 repo の檻に渡る。
-// 偽のエージェント (claude・第 3 の fakeagent) が、HOME (/home/goro) と認証用ディレクトリ (/auth) に、読み書きする。
+// 偽のエージェント (claude・第 3 の fakeagent) が、HOME (/home/goronation) と認証用ディレクトリ (/auth) に、読み書きする。
 
 // newRepo は、f.dir の下に、コミットが 1 つある repo (name) を作る。
 func (f *runFixture) newRepo(t *testing.T, name string) string {
@@ -38,10 +38,10 @@ func (f *runFixture) homeOf(t *testing.T, agent, repo string) string {
 	return f.agentPath(agent, "homes", session.RepoKey(real))
 }
 
-// out は、goro run を args で動かし (成功を要求)、偽のエージェントの "操作 => 結果" の行を返す。
+// out は、goronation run を args で動かし (成功を要求)、偽のエージェントの "操作 => 結果" の行を返す。
 func (f *runFixture) out(t *testing.T, args ...string) map[string]string {
 	t.Helper()
-	_, res := parseOut(f.goro(t, args...).mustOK(t).stdout)
+	_, res := parseOut(f.goronation(t, args...).mustOK(t).stdout)
 	return res
 }
 
@@ -61,7 +61,7 @@ func TestRunHomePerRepo(t *testing.T) {
 	// repo A のセッションが、履歴・メモリ・.claude.json のプロジェクトの項目を書く (claude が、cwd = /work をキーに、HOME に残すもの)。
 	histA := ".claude/projects/-work/a.jsonl"
 	claudeJSONA := `{"projects":{"/work":{"note":"A-PROJECT"}}}`
-	first := f.goro(t, "run", "--repo", f.repo, "--", "hwrite", histA, "A-HISTORY", "mem.txt", "A-MEMORY", ".claude.json", claudeJSONA).mustOK(t)
+	first := f.goronation(t, "run", "--repo", f.repo, "--", "hwrite", histA, "A-HISTORY", "mem.txt", "A-MEMORY", ".claude.json", claudeJSONA).mustOK(t)
 	idA := sessionID(t, first)
 	if _, res := parseOut(first.stdout); res["hwrite:mem.txt"] != "ok" || res["hwrite:"+histA] != "ok" {
 		t.Fatalf("A の HOME に書けない: %v", res)
@@ -85,14 +85,14 @@ func TestRunHomePerRepo(t *testing.T) {
 		t.Errorf("B の HOME の中身 = %q, want .claude.json だけ (種)", got)
 	}
 	res = f.out(t, "run", "--repo", repoB, "--", "probe", "stat:"+homeA, "stat:"+filepath.Join(homeA, "mem.txt"), "stat:"+f.agentPath("claude", "homes"),
-		"stat:"+f.stateDir(), "mnt:/home/goro", "mnt:/auth")
+		"stat:"+f.stateDir(), "mnt:/home/goronation", "mnt:/auth")
 	for _, op := range []string{"stat:" + homeA, "stat:" + filepath.Join(homeA, "mem.txt"), "stat:" + f.agentPath("claude", "homes"), "stat:" + f.stateDir()} {
 		if !strings.HasPrefix(res[op], "err") {
 			t.Errorf("B の檻から、ホストの %s が見える: %q", op, res[op])
 		}
 	}
-	if res["mnt:/home/goro"] != "rw" || res["mnt:/auth"] != "rw" {
-		t.Errorf("HOME・認証用ディレクトリの mount = %q・%q, want rw・rw", res["mnt:/home/goro"], res["mnt:/auth"])
+	if res["mnt:/home/goronation"] != "rw" || res["mnt:/auth"] != "rw" {
+		t.Errorf("HOME・認証用ディレクトリの mount = %q・%q, want rw・rw", res["mnt:/home/goronation"], res["mnt:/auth"])
 	}
 	homeB := f.homeOf(t, "claude", repoB)
 	if homeA == homeB {
@@ -154,7 +154,7 @@ func TestRunCredentialsSharedAcrossRepos(t *testing.T) {
 	}
 
 	// ログインは 1 回: 認証情報が、認証用ディレクトリに残る。ログイン用の HOME (login-home) には、残らない。
-	f.goro(t, "run", "--login", "--", "awrite", "cred.json", "V1").mustOK(t)
+	f.goronation(t, "run", "--login", "--", "awrite", "cred.json", "V1").mustOK(t)
 	if got := readHost(); got != "V1" {
 		t.Fatalf("認証情報が、認証用ディレクトリ (%s) に無い: %q", hostCred, got)
 	}
@@ -181,14 +181,14 @@ func TestRunCredentialsSharedAcrossRepos(t *testing.T) {
 	}
 
 	// (1) 再ログイン: 次に起動する、別の repo の (別の HOME の) セッションから、新しい認証情報が使われる。
-	f.goro(t, "run", "--login", "--", "awrite", "cred.json", "V2").mustOK(t)
+	f.goronation(t, "run", "--login", "--", "awrite", "cred.json", "V2").mustOK(t)
 	if got := f.out(t, "run", "--repo", repoB, "--", "aread", "cred.json")["aread:cred.json"]; got != `"V2"` {
 		t.Errorf("再ログインの後、別の repo の HOME が、古い認証情報 (%s) を使う", got)
 	}
 	// 実行中のセッションにも、再ログインが伝わる (同じディレクトリを見ている): 実行中の B の檻が、V2 → V3 の変化を、再起動なしで見る。
 	running := f.start(t, "run", "--repo", repoB, "--", "await", "cred.json", "V2")
 	running.waitStdout("ready")
-	f.goro(t, "run", "--login", "--", "awrite", "cred.json", "V3").mustOK(t)
+	f.goronation(t, "run", "--login", "--", "awrite", "cred.json", "V3").mustOK(t)
 	running.waitStdout(`changed="V3"`)
 	if code := running.wait(); code != 0 {
 		t.Errorf("実行中の檻の終了コード = %d", code)
@@ -258,7 +258,7 @@ func TestRunLoginHomeIsSeparateAndUnseeded(t *testing.T) {
 // (f) profile に足すだけで動く: 第 3 の profile (fakeagent) の creds・seed のデータだけで、この仕組みが働く。
 func TestRunCredentialsViaSymlink(t *testing.T) {
 	f := newRunFixture(t)
-	f.env = append(f.env, "GORO_FAKEAGENT="+f.exe)
+	f.env = append(f.env, "GORONATION_FAKEAGENT="+f.exe)
 	repoB := f.newRepo(t, "repoB")
 	link := ".local/share/fakeagent/auth.json"
 	fa := func(args ...string) map[string]string {
@@ -319,7 +319,7 @@ func TestRunCredentialsViaSymlink(t *testing.T) {
 // 別の repo の HOME を選ばない)。export は、使える (clone は、そのまま)。
 func TestRunSessionWithoutOrWithBadHomeKey(t *testing.T) {
 	f := newRunFixture(t)
-	r := f.goro(t, "run", "--repo", f.repo, "--", "commit", "x.txt", "X", "msg").mustOK(t)
+	r := f.goronation(t, "run", "--repo", f.repo, "--", "commit", "x.txt", "X", "msg").mustOK(t)
 	id := sessionID(t, r)
 	keyFile := filepath.Join(f.stateDir(), "sessions", id, "homekey")
 	if b, err := os.ReadFile(keyFile); err != nil || len(strings.TrimSpace(string(b))) != 16 {
@@ -329,15 +329,15 @@ func TestRunSessionWithoutOrWithBadHomeKey(t *testing.T) {
 	if err := os.Remove(keyFile); err != nil {
 		t.Fatal(err)
 	}
-	resumed := f.goro(t, "run", "--session", id, "--", "info")
-	if resumed.code != 1 || !strings.Contains(resumed.stderr, "HOME を repo ごとに分ける前に作った") || !strings.Contains(resumed.stderr, "goro run --repo PATH") {
+	resumed := f.goronation(t, "run", "--session", id, "--", "info")
+	if resumed.code != 1 || !strings.Contains(resumed.stderr, "HOME を repo ごとに分ける前に作った") || !strings.Contains(resumed.stderr, "goronation run --repo PATH") {
 		t.Errorf("記録の無いセッションの再開:\n%s", resumed)
 	}
 	for _, bad := range []string{"../../etc/xxxx\n", "0123456789ABCDEF\n", "0123456789abcdef\nextra\n", "\n"} {
 		if err := os.WriteFile(keyFile, []byte(bad), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if r := f.goro(t, "run", "--session", id, "--", "info"); r.code != 1 || !strings.Contains(r.stderr, "セッションを使えない") {
+		if r := f.goronation(t, "run", "--session", id, "--", "info"); r.code != 1 || !strings.Contains(r.stderr, "セッションを使えない") {
 			t.Errorf("壊れた記録 %q の再開:\n%s", bad, r)
 		}
 	}
@@ -345,5 +345,5 @@ func TestRunSessionWithoutOrWithBadHomeKey(t *testing.T) {
 		t.Errorf("HOME の数 = %v, want 1", keys)
 	}
 	// 記録が無くなっても、成果は取り出せる (clone は、そのまま)。
-	f.goro(t, "export", id).mustOK(t)
+	f.goronation(t, "export", id).mustOK(t)
 }

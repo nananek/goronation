@@ -18,8 +18,8 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-// このファイルは、goro web の HTTP ハンドラの配線 (routing・cookie・状態コード) を、実際に HTTP で叩いて
-// 確かめる結合テスト (bwrap は要らない: goro serve の起動が絡む部分は web_proxy_bwrap_linux_test.go)。
+// このファイルは、goronation web の HTTP ハンドラの配線 (routing・cookie・状態コード) を、実際に HTTP で叩いて
+// 確かめる結合テスト (bwrap は要らない: goronation serve の起動が絡む部分は web_proxy_bwrap_linux_test.go)。
 // WebAuthn 自体の検証ロジック (署名・origin・challenge など) の単体テストは、cmd/internal/webauthn 側に
 // ある。ここでは、本物のブラウザの代わりに、webauthntest.Authenticator (偽の認証器) が、実際の
 // PublicKeyCredential の応答と同じ形の JSON を組み立てて送る。
@@ -111,9 +111,9 @@ func loggedInClient(t *testing.T, srv *httptest.Server, store *iwebauthn.Store, 
 	return loggedInClientWithToken(t, srv.URL, tok, rpID, origin)
 }
 
-// loggedInClientWithToken は、baseURL (goro web の origin) へ、すでに発行済みの token (goro web token
+// loggedInClientWithToken は、baseURL (goronation web の origin) へ、すでに発行済みの token (goronation web token
 // でも iwebauthn.IssueBootstrapToken でもよい) を使って register → login まで済ませた http.Client を
-// 返す。実プロセスの goro web (結合テスト、bwrap 要) と、httptest.Server 越しの goro web (単体テスト)
+// 返す。実プロセスの goronation web (結合テスト、bwrap 要) と、httptest.Server 越しの goronation web (単体テスト)
 // の、どちらからも呼べる (トークンの発行手段だけが違うので、それを呼び手が分ける)。
 func loggedInClientWithToken(t *testing.T, baseURL, token, rpID, origin string) *http.Client {
 	t.Helper()

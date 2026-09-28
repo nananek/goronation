@@ -19,15 +19,15 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-// 檻の中では、テストバイナリが、実際の goro (/opt/goro/goro) と、偽の claude (/opt/claude/claude)・偽の opencode
+// 檻の中では、テストバイナリが、実際の goronation (/opt/goronation/goronation) と、偽の claude (/opt/claude/claude)・偽の opencode
 // (/opt/opencode/opencode。同じ偽のエージェント) の代わりに動く:
 // bwrap は、起動するコマンドを、その path を argv[0] にして実行するので、名前で選ぶ。init は、テストバイナリの
 // TestMain より先に走る。syscall.Exit は、-race のバイナリの、終了時の 1 秒の待ち (atexit_sleep_ms) を避ける
 // (檻に環境変数は渡らないので、GORACE では避けられない)。
 func init() {
 	switch filepath.Base(os.Args[0]) {
-	case "goro":
-		// 実プロセスの goro (子プロセス) にだけ、テスト用の第 3 の profile を足す (テストの本体のプロセスの agents は、本物の 2 つのまま)。
+	case "goronation":
+		// 実プロセスの goronation (子プロセス) にだけ、テスト用の第 3 の profile を足す (テストの本体のプロセスの agents は、本物の 2 つのまま)。
 		// エージェントを足す作業は、この 1 つの profile を表に足すことだけ (TestRunThirdAgent)。
 		agents = append(agents, testAgentProfile)
 		syscall.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr))
@@ -36,7 +36,7 @@ func init() {
 	}
 }
 
-// screenStdout・screenStderr は、偽のエージェント (screen) が出す、TUI の画面に見えるバイト列。goro の解釈 (パターンマッチ・
+// screenStdout・screenStderr は、偽のエージェント (screen) が出す、TUI の画面に見えるバイト列。goronation の解釈 (パターンマッチ・
 // UTF-8 の検査・エスケープの除去など) が入ると、そのまま届かなくなる。
 const (
 	screenStdout = "\x1b[2J\x1b[H┌  Select integration\n│  Security notes: Login successful\n\xff\xfe\x00 not-utf8\n\x1b]0;title\x07Done\n"
@@ -62,7 +62,7 @@ var testAgentProfile = agentProfile{
 }
 
 // fakeClaude は、偽のエージェント (claude・opencode・テスト用の第 3 のエージェント)。最初の引数が、場面の名前で、結果を、標準出力に "キー=値" か "操作 => 結果" の行で出す
-// (goro run は、標準入出力を、檻の中の claude に直結する)。場面は次の通り。
+// (goronation run は、標準入出力を、檻の中の claude に直結する)。場面は次の通り。
 //
 //	auth login [場面...]  opencode の --login のときの起動 (auth login)。HOME にログインの目印を作り、続きに場面があれば、それを動かす
 //	                      (なければ、引数と環境を出す)
@@ -70,13 +70,13 @@ var testAgentProfile = agentProfile{
 //	probe OP...           OP (stat:PATH・write:PATH・dial:ADDR・mnt:PATH) を試して、結果を出す。mnt は、PATH の mount が ro か rw か
 //	connect TARGET...     HTTPS_PROXY へ、TARGET の CONNECT を送り、応答の状態コードを出す
 //	screen                エージェントの画面に見える出力 (エスケープ・項目名・エラー文・不正な UTF-8・NUL) を、標準出力と標準エラーに出し、
-//	                      終了コード 3 で終わる (goro が、出力を読まず・解釈せず、そのまま通すことの確認)
+//	                      終了コード 3 で終わる (goronation が、出力を読まず・解釈せず、そのまま通すことの確認)
 //	loopback [ADDR]       proxy の環境変数を守るクライアント (Bun・Node と同じ: NO_PROXY の宛先は直接、それ以外は HTTP_PROXY 経由) で、ADDR
 //	                      (無ければ、檻の中の loopback に自分で立てたサーバー) に GET し、"loopback => <状態コード> direct|proxy" を出す
 //	commit FILE TEXT MSG  /work に FILE を書いて、git commit する
 //	gitlog FILE           /work のコミットの一覧と、FILE の中身を出す
 //	marker                認証用ディレクトリ (/auth) のログインの目印を読む
-//	hwrite PATH TEXT...   HOME (/home/goro) の PATH に TEXT を書く (親のディレクトリも作る。PATH TEXT の組は、いくつでも)。"hwrite:PATH => ok" か "err: 理由"
+//	hwrite PATH TEXT...   HOME (/home/goronation) の PATH に TEXT を書く (親のディレクトリも作る。PATH TEXT の組は、いくつでも)。"hwrite:PATH => ok" か "err: 理由"
 //	hread PATH...         HOME の PATH を読み、"hread:PATH => <引用した中身>" (無ければ "err: 理由") を出す
 //	hls                   HOME の下の、通常のファイルと symlink (symlink は "path->先") を、相対 path で並べて出す ("hls => a,b,c")
 //	awrite NAME TEXT...   認証用ディレクトリ (/auth) の NAME に TEXT を、その場で書く (組は、いくつでも)。"awrite:NAME => ok" か "err: 理由"
@@ -93,8 +93,8 @@ var testAgentProfile = agentProfile{
 //	winsize               ready を出し、標準入力 (端末) の大きさを winsize=幅x高さ で出す。SIGWINCH を 1 回受けたら、
 //	                      もう一度出して終わる (pty 中継の、開始時の大きさの反映と、resize の伝わりの確認用)
 func fakeClaude(args []string) int {
-	// --push owner/repo のとき、claude には --mcp-config <JSON> が、場面の引数より前に入る (goro run 側。
-	// cmd/goro/mcp.go の claudeMCPInject)。実物の claude は、これを自分の flag として消費する。偽のエージェントも
+	// --push owner/repo のとき、claude には --mcp-config <JSON> が、場面の引数より前に入る (goronation run 側。
+	// cmd/goronation/mcp.go の claudeMCPInject)。実物の claude は、これを自分の flag として消費する。偽のエージェントも
 	// 同じに振る舞う (でないと、--push と組み合わせる場面のテストが "--mcp-config" 自体を場面の名前と誤認する)。
 	if len(args) >= 2 && args[0] == "--mcp-config" {
 		args = args[2:]
@@ -252,7 +252,7 @@ func fakeClaude(args []string) int {
 			fmt.Printf("winsize=%dx%d\n", ws.Col, ws.Row)
 		}
 		fmt.Println("ready")
-		print() // 起動時 (goro run が、開始時に、実端末の大きさを pty へ反映したもの) の大きさ
+		print() // 起動時 (goronation run が、開始時に、実端末の大きさを pty へ反映したもの) の大きさ
 		ch := make(chan os.Signal, 4)
 		signal.Notify(ch, syscall.SIGWINCH)
 		select {
@@ -264,7 +264,7 @@ func fakeClaude(args []string) int {
 		}
 		return 0
 	case "termecho":
-		// goro serve の端末ビュー (WebSocket 経由の pty 中継) の結合テスト用: 自分を raw モードにして
+		// goronation serve の端末ビュー (WebSocket 経由の pty 中継) の結合テスト用: 自分を raw モードにして
 		// (kernel の ECHO と重ならないようにする)、"ready" を出し、以後は stdin で読んだバイト列を、
 		// 一切加工せずそのまま stdout に書き返す (中継が生バイトのまま届く・返ることを、byte-exact で
 		// 確かめるため)。0x04 (Ctrl-D・EOT) を受け取ったら、そこまでを書き返して自分から終了する
@@ -480,7 +480,7 @@ func fakeCommit(file, text, msg string) int {
 }
 
 // fakeSigCount は、最初のシグナルから 1 秒間の、SIGINT と SIGQUIT の数を出す (端末のシグナルが、何回届くかの確認)。
-// ready の前に、起動時の SIGINT・SIGQUIT が、無視になっているか (ホストの goro run の無視が、引き継がれたか) も出す。
+// ready の前に、起動時の SIGINT・SIGQUIT が、無視になっているか (ホストの goronation run の無視が、引き継がれたか) も出す。
 func fakeSigCount() int {
 	fmt.Printf("sigign=%s\n", sigIgnMask())
 	ch := make(chan os.Signal, 16)

@@ -13,17 +13,17 @@ import (
 )
 
 // helperArg が最初の引数のとき、テストバイナリは、テストではなく、下のヘルパーとして動く。
-// 実プロセスの goro と、その子 (シグナルや環境変数を確かめる役) を、テストバイナリの再実行で用意する。
+// 実プロセスの goronation と、その子 (シグナルや環境変数を確かめる役) を、テストバイナリの再実行で用意する。
 const helperArg = "__goro_test_helper__"
 
 // helpers は、名前で選ぶテスト用の子プログラム。他のテストファイルが、init で足す。
-// "goro" は、dispatch (実際の goro) を動かす特別な名前で、この表には無い。
+// "goronation" は、dispatch (実際の goronation) を動かす特別な名前で、この表には無い。
 var helpers = map[string]func(args []string) int{}
 
 func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == helperArg {
 		name, args := os.Args[2], os.Args[3:]
-		if name == "goro" {
+		if name == "goronation" {
 			os.Exit(dispatch(args, os.Stdout, os.Stderr))
 		}
 		h, ok := helpers[name]
@@ -52,9 +52,10 @@ func selfCmd(t *testing.T, name string, args ...string) []string {
 }
 
 // tempSock は、UDS を置く短い path を返す (UDS の path は 108 バイトまで)。
+// prefix は "goronation" ではなく短い "gt" にする (shortDir と同じ理由)。
 func tempSock(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "goro")
+	dir, err := os.MkdirTemp("", "gt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,12 +116,12 @@ func TestDispatch(t *testing.T) {
 		code int
 		want string
 	}{
-		{"引数なし", nil, exitUsage, "使い方: goro"},
+		{"引数なし", nil, exitUsage, "使い方: goronation"},
 		{"未知のサブコマンド", []string{"bogus"}, exitUsage, `未知のサブコマンド: "bogus"`},
-		{"--help", []string{"--help"}, 0, "使い方: goro"},
-		{"-h", []string{"-h"}, 0, "使い方: goro"},
-		{"pr -h", []string{"pr", "-h"}, 0, "goro pr create"},
-		{"pr 引数なし", []string{"pr"}, exitUsage, "goro pr create"},
+		{"--help", []string{"--help"}, 0, "使い方: goronation"},
+		{"-h", []string{"-h"}, 0, "使い方: goronation"},
+		{"pr -h", []string{"pr", "-h"}, 0, "goronation pr create"},
+		{"pr 引数なし", []string{"pr"}, exitUsage, "goronation pr create"},
 		{"pr 未知のサブコマンド", []string{"pr", "bogus"}, exitUsage, `未知のサブコマンド "bogus"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

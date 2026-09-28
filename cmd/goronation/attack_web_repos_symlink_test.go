@@ -41,7 +41,7 @@ func TestResolveRepoNameRejectsSymlinkEscapingReposDir(t *testing.T) {
 	}
 	if filepath.Dir(real) != realReposDir {
 		t.Fatalf("resolveRepoName(%q, \"evil-link\") = %q は、symlink をたどると reposDir (実体 %s) の外 "+
-			"(%s) を指す。POST /api/repos/start に \"evil-link\" を渡すと、goro serve --repo %s が起動され、"+
+			"(%s) を指す。POST /api/repos/start に \"evil-link\" を渡すと、goronation serve --repo %s が起動され、"+
 			"reposDir の外の repo がそのまま複製・操作対象になる (実際に到達するには、reposDir 配下に、"+
 			"外を指す symlink があらかじめ存在する必要がある)。",
 			reposDir, resolved, realReposDir, filepath.Dir(real), resolved)
@@ -75,7 +75,7 @@ func TestListReposExcludesSymlinkedGitMetadata(t *testing.T) {
 	for _, n := range names {
 		if n == "looks-normal" {
 			t.Fatalf(".git が (reposDir の外を指す) symlink であるディレクトリ %q が、一覧に含まれてしまった。"+
-				"選択すると、goro serve --repo %s が起動され、git は symlink をたどって reposDir の外の "+
+				"選択すると、goronation serve --repo %s が起動され、git は symlink をたどって reposDir の外の "+
 				"リポジトリを対象にする。", "looks-normal", dir)
 		}
 	}

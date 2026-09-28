@@ -18,7 +18,7 @@ func TestMCPServersForGatedOnPush(t *testing.T) {
 		t.Errorf("mcpServersFor(\"\") = %v, want nil (--push が無ければ登録しない)", got)
 	}
 	got := mcpServersFor("o/r")
-	want := []mcpServerDef{{Name: "goro", Command: jailGoro, Args: []string{"mcp"}}}
+	want := []mcpServerDef{{Name: "goronation", Command: jailGoro, Args: []string{"mcp"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("mcpServersFor(\"o/r\") = %+v, want %+v", got, want)
 	}
@@ -28,14 +28,14 @@ func TestClaudeMCPInject(t *testing.T) {
 	if args, env := claudeMCPInject(nil); args != nil || env != nil {
 		t.Errorf("空の servers で args/env が出た: %v %v", args, env)
 	}
-	args, env := claudeMCPInject([]mcpServerDef{{Name: "goro", Command: "/opt/goro/goro", Args: []string{"mcp"}}})
+	args, env := claudeMCPInject([]mcpServerDef{{Name: "goronation", Command: "/opt/goronation/goronation", Args: []string{"mcp"}}})
 	if env != nil {
 		t.Errorf("claude は起動時の環境変数を使わない: %v", env)
 	}
 	if len(args) != 2 || args[0] != "--mcp-config" {
 		t.Fatalf("args = %v, want [--mcp-config <json>]", args)
 	}
-	want := `{"mcpServers":{"goro":{"type":"stdio","command":"/opt/goro/goro","args":["mcp"]}}}`
+	want := `{"mcpServers":{"goronation":{"type":"stdio","command":"/opt/goronation/goronation","args":["mcp"]}}}`
 	if args[1] != want {
 		t.Errorf("--mcp-config の JSON = %s, want %s", args[1], want)
 	}
@@ -49,14 +49,14 @@ func TestOpencodeMCPInject(t *testing.T) {
 	if args, env := opencodeMCPInject(nil); args != nil || env != nil {
 		t.Errorf("空の servers で args/env が出た: %v %v", args, env)
 	}
-	args, env := opencodeMCPInject([]mcpServerDef{{Name: "goro", Command: "/opt/goro/goro", Args: []string{"mcp"}}})
+	args, env := opencodeMCPInject([]mcpServerDef{{Name: "goronation", Command: "/opt/goronation/goronation", Args: []string{"mcp"}}})
 	if args != nil {
 		t.Errorf("opencode は起動時の引数を使わない: %v", args)
 	}
 	if len(env) != 1 || env[0].Key != "OPENCODE_CONFIG_CONTENT" {
 		t.Fatalf("env = %v, want [OPENCODE_CONFIG_CONTENT=<json>]", env)
 	}
-	want := `{"$schema":"https://opencode.ai/config.json","mcp":{"goro":{"type":"local","command":["/opt/goro/goro","mcp"]}}}`
+	want := `{"$schema":"https://opencode.ai/config.json","mcp":{"goronation":{"type":"local","command":["/opt/goronation/goronation","mcp"]}}}`
 	if env[0].Value != want {
 		t.Errorf("OPENCODE_CONFIG_CONTENT = %s, want %s", env[0].Value, want)
 	}
@@ -89,7 +89,7 @@ func TestCageSpecInjectsMCPForClaude(t *testing.T) {
 	if argv[i+1] != "--mcp-config" {
 		t.Fatalf("エージェントの直後 = %q, want --mcp-config: argv = %q", argv[i+1], argv)
 	}
-	if !strings.Contains(argv[i+2], `"goro"`) || !strings.Contains(argv[i+2], "/opt/goro/goro") {
+	if !strings.Contains(argv[i+2], `"goronation"`) || !strings.Contains(argv[i+2], "/opt/goronation/goronation") {
 		t.Errorf("--mcp-config の値がおかしい: %q", argv[i+2])
 	}
 	if argv[i+3] != "--resume" { // testCage().Args = {"--resume", "x y"}
@@ -121,7 +121,7 @@ func TestCageSpecInjectsMCPForOpenCode(t *testing.T) {
 	for _, e := range spec.Env {
 		if e.Key == "OPENCODE_CONFIG_CONTENT" {
 			found = true
-			if !strings.Contains(e.Value, "/opt/goro/goro") {
+			if !strings.Contains(e.Value, "/opt/goronation/goronation") {
 				t.Errorf("OPENCODE_CONFIG_CONTENT = %s", e.Value)
 			}
 		}
@@ -169,7 +169,7 @@ func TestRunMCPInitialize(t *testing.T) {
 		t.Errorf("protocolVersion = %v", result["protocolVersion"])
 	}
 	si, ok := result["serverInfo"].(map[string]any)
-	if !ok || si["name"] != "goro" {
+	if !ok || si["name"] != "goronation" {
 		t.Errorf("serverInfo = %+v", result["serverInfo"])
 	}
 }
@@ -243,9 +243,9 @@ func TestRunMCPToolsList(t *testing.T) {
 
 func TestRunMCPToolsCallCreatePR(t *testing.T) {
 	dir := t.TempDir()
-	writeGitHead(t, dir, "ref: refs/heads/goro/sess-1/x\n")
+	writeGitHead(t, dir, "ref: refs/heads/goronation/sess-1/x\n")
 	chdir(t, dir)
-	t.Setenv("GORO_PUSH_REPO", "o/r")
+	t.Setenv("GORONATION_PUSH_REPO", "o/r")
 
 	var gotBody map[string]any
 	withFakeJailAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -271,13 +271,13 @@ func TestRunMCPToolsCallCreatePR(t *testing.T) {
 	if !strings.Contains(text, "#9") || !strings.Contains(text, "pull/9") {
 		t.Errorf("text = %q", text)
 	}
-	if gotBody["title"] != "t" || gotBody["head"] != "goro/sess-1/x" {
+	if gotBody["title"] != "t" || gotBody["head"] != "goronation/sess-1/x" {
 		t.Errorf("上流に送った body = %+v", gotBody)
 	}
 }
 
 func TestRunMCPToolsCallCreatePRMissingTitleIsToolError(t *testing.T) {
-	t.Setenv("GORO_PUSH_REPO", "o/r")
+	t.Setenv("GORONATION_PUSH_REPO", "o/r")
 	resp := mcpRoundTrip(t, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"create_pr","arguments":{}}}`)
 	result, ok := resp["result"].(map[string]any)
 	if !ok {
@@ -301,10 +301,10 @@ func TestRunMCPToolsCallUnknownToolIsProtocolError(t *testing.T) {
 
 func TestRunMCPToolsCallPushContext(t *testing.T) {
 	dir := t.TempDir()
-	writeGitHead(t, dir, "ref: refs/heads/goro/sess-1/x\n")
+	writeGitHead(t, dir, "ref: refs/heads/goronation/sess-1/x\n")
 	chdir(t, dir)
-	t.Setenv("GORO_PUSH_REPO", "o/r")
-	t.Setenv("GORO_PUSH_REF_PREFIX", "refs/heads/goro/sess-1/")
+	t.Setenv("GORONATION_PUSH_REPO", "o/r")
+	t.Setenv("GORONATION_PUSH_REF_PREFIX", "refs/heads/goronation/sess-1/")
 
 	resp := mcpRoundTrip(t, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"push_context","arguments":{}}}`)
 	result, ok := resp["result"].(map[string]any)
@@ -316,20 +316,20 @@ func TestRunMCPToolsCallPushContext(t *testing.T) {
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		t.Fatalf("push_context の text が JSON でない: %v (%q)", err, content)
 	}
-	if payload["repo"] != "o/r" || payload["branch"] != "goro/sess-1/x" || payload["push_ref_prefix"] != "refs/heads/goro/sess-1/" {
+	if payload["repo"] != "o/r" || payload["branch"] != "goronation/sess-1/x" || payload["push_ref_prefix"] != "refs/heads/goronation/sess-1/" {
 		t.Errorf("push_context = %+v", payload)
 	}
 }
 
 func TestRunMCPToolsCallPushContextWithoutPush(t *testing.T) {
-	t.Setenv("GORO_PUSH_REPO", "")
+	t.Setenv("GORONATION_PUSH_REPO", "")
 	resp := mcpRoundTrip(t, `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"push_context","arguments":{}}}`)
 	result, ok := resp["result"].(map[string]any)
 	if !ok {
 		t.Fatalf("result が無い: %+v", resp)
 	}
 	if result["isError"] != true {
-		t.Errorf("isError = %v, want true (GORO_PUSH_REPO が無い)", result["isError"])
+		t.Errorf("isError = %v, want true (GORONATION_PUSH_REPO が無い)", result["isError"])
 	}
 }
 

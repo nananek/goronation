@@ -86,19 +86,19 @@ func helperWaitStdin([]string) int {
 	return 3
 }
 
-// initCmd は、goro init (テストバイナリの再実行) を、child を子として起動するコマンドを返す。
+// initCmd は、goronation init (テストバイナリの再実行) を、child を子として起動するコマンドを返す。
 // 標準入出力は呼び出し側が決める。testTimeout か、テストの終了で、子を含めて強制終了する。
 func initCmd(t *testing.T, listen, upstream string, extra []string, child ...string) *exec.Cmd {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), testTimeout)
 	t.Cleanup(cancel)
-	self := selfCmd(t, "goro")
+	self := selfCmd(t, "goronation")
 	args := append(self[1:], "init", "--listen", listen, "--upstream", upstream)
 	args = append(args, extra...)
 	args = append(args, "--")
 	args = append(args, child...)
 	cmd := exec.CommandContext(ctx, self[0], args...)
-	// goro init だけを kill すると、子が stdout の pipe を握ったまま残る。プロセスグループごと kill する。
+	// goronation init だけを kill すると、子が stdout の pipe を握ったまま残る。プロセスグループごと kill する。
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	return cmd
@@ -109,11 +109,11 @@ func exitCode(t *testing.T, err error, cmd *exec.Cmd) int {
 	t.Helper()
 	var ee *exec.ExitError
 	if err != nil && !errors.As(err, &ee) {
-		t.Fatalf("goro init を実行できない: %v", err)
+		t.Fatalf("goronation init を実行できない: %v", err)
 	}
 	code := cmd.ProcessState.ExitCode()
 	if code < 0 {
-		t.Fatalf("goro init がシグナルで死んだ: %v", cmd.ProcessState)
+		t.Fatalf("goronation init がシグナルで死んだ: %v", cmd.ProcessState)
 	}
 	return code
 }
@@ -133,8 +133,8 @@ func TestInitExitCode(t *testing.T) {
 		{"0 以外", []string{"sh", "-c", "exit 42"}, 42},
 		{"SIGKILL", []string{"sh", "-c", "kill -KILL $$"}, 128 + 9},
 		{"SIGTERM", []string{"sh", "-c", "kill -TERM $$"}, 128 + 15},
-		{"見つからない", []string{"goro-test-no-such-command"}, exitNotFound},
-		{"path が無い", []string{"/goro-test/no/such/file"}, exitNotFound},
+		{"見つからない", []string{"goronation-test-no-such-command"}, exitNotFound},
+		{"path が無い", []string{"/goronation-test/no/such/file"}, exitNotFound},
 		{"実行できない", []string{notExec}, exitNoExec},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,7 +162,7 @@ func TestInitStdio(t *testing.T) {
 	}
 }
 
-// startSigRecorder は、goro init (extra の引数つき) の子として sigrecorder を起動し、"ready" が出るまで待つ。
+// startSigRecorder は、goronation init (extra の引数つき) の子として sigrecorder を起動し、"ready" が出るまで待つ。
 // next は、子が出した次の 1 行を返す (5 秒来なければ、テストを止める)。
 func startSigRecorder(t *testing.T, extra []string) (cmd *exec.Cmd, next func() string) {
 	t.Helper()
@@ -261,7 +261,7 @@ func withEnv(names []string, add ...string) []string {
 	return append(env, add...)
 }
 
-// printEnv は、goro init の子に printenv を実行させ、子から見えた NAME=VALUE の表を返す。
+// printEnv は、goronation init の子に printenv を実行させ、子から見えた NAME=VALUE の表を返す。
 func printEnv(t *testing.T, env []string, extra []string, listen string) map[string]string {
 	t.Helper()
 	names := append([]string{"GORO_TEST_MARKER"}, proxyEnvNames...)
@@ -440,7 +440,7 @@ func TestInitExitsWithOpenConnection(t *testing.T) {
 }
 
 func TestParseInitArgs(t *testing.T) {
-	const listen, upstream = "127.0.0.1:0", "/run/goro/egress.sock"
+	const listen, upstream = "127.0.0.1:0", "/run/goronation/egress.sock"
 	base := []string{"--listen", listen, "--upstream", upstream}
 
 	t.Run("受け付ける", func(t *testing.T) {
@@ -508,7 +508,7 @@ func TestParseInitArgs(t *testing.T) {
 			if got := runInit(tc.args, &stderr); got != exitUsage {
 				t.Errorf("終了コード = %d, want %d", got, exitUsage)
 			}
-			if s := stderr.String(); !strings.Contains(s, tc.want) || !strings.Contains(s, "使い方: goro init") {
+			if s := stderr.String(); !strings.Contains(s, tc.want) || !strings.Contains(s, "使い方: goronation init") {
 				t.Errorf("stderr に %q と使い方が無い: %q", tc.want, s)
 			}
 			if _, err := os.Stat(marker); err == nil {
@@ -522,7 +522,7 @@ func TestParseInitArgs(t *testing.T) {
 		if got := runInit([]string{"-h"}, &stderr); got != 0 {
 			t.Errorf("終了コード = %d, want 0", got)
 		}
-		if !strings.Contains(stderr.String(), "使い方: goro init") {
+		if !strings.Contains(stderr.String(), "使い方: goronation init") {
 			t.Errorf("使い方が出ない: %q", stderr.String())
 		}
 	})

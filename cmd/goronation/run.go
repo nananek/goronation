@@ -38,11 +38,11 @@ func runUsage() string {
   --name N          clone の user.name (--repo のとき。既定は goronation)
   --email E         clone の user.email (--repo のとき)
   --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goronation か ~/.local/state/goronation)。セッションは <DIR>/sessions/、エージェントごとの認証情報 (auth/)・repo ごとの HOME (homes/)・ログイン用のディレクトリは <DIR>/agents/<エージェント名>/
-  --bin PATH        動かすエージェントの実行ファイル (既定は、環境変数 GORO_<エージェント名の大文字> か、PATH の実行ファイル。下の「エージェント」)
+  --bin PATH        動かすエージェントの実行ファイル (既定は、環境変数 GORONATION_<エージェント名の大文字> か、PATH の実行ファイル。下の「エージェント」)
   --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は、エージェントごと。下の「エージェント」)
   --push OWNER/REPO 檻の git push・fetch と goronation pr create (檻の中のコマンド) を、この 1 つの repo だけに許す
                     (トークンは檻に渡さない)。--login とは併用できない。ref は refs/heads/goronation/<セッション ID>/
-                    の下だけ (GORO_PUSH_REF_PREFIX で檻に伝える)。ready for review にするのは、ホストの goronation pr ready
+                    の下だけ (GORONATION_PUSH_REF_PREFIX で檻に伝える)。ready for review にするのは、ホストの goronation pr ready
   -- ARGS...        エージェントに渡す引数 (--login のときは、そのエージェントのログインの引数の後ろに付く)
 
 エージェント:
@@ -88,7 +88,7 @@ type runOptions struct {
 	name, email   string
 	stateDir      string // 空なら既定
 	agent         string // 動かすエージェント (agents の表の name)。空は、--session なら記録のエージェント、それ以外は既定
-	bin           string // 動かすエージェントの実行ファイル。空なら GORO_<NAME> か PATH
+	bin           string // 動かすエージェントの実行ファイル。空なら GORONATION_<NAME> か PATH
 	allow         []string
 	push          string   // "owner/repo"。空なら無効 (--login とは併用できない)
 	agentArgs     []string // エージェントへの引数 (-- の後ろ)
@@ -221,7 +221,7 @@ func resolveExe(p string) (string, error) {
 	return real, nil
 }
 
-// resolveAgentExe は、檻に見せるエージェント p の実体を決める: --bin、なければ環境変数 (GORO_<NAME>)、
+// resolveAgentExe は、檻に見せるエージェント p の実体を決める: --bin、なければ環境変数 (GORONATION_<NAME>)、
 // なければ PATH の実行ファイル (binName)。どれも、symlink を辿った実体にする (claude の native 版は、~/.local/bin/claude が、版ごとの実体への
 // symlink)。スクリプト (先頭が #!) は、檻の中で、呼ぶ先の実体が見えず動かないので断る。
 func resolveAgentExe(p agentProfile, flagVal, envVal string, lookPath func(string) (string, error)) (string, error) {

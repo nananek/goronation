@@ -98,7 +98,7 @@ func TestCredentialKindsTable(t *testing.T) {
 		}
 		usage := authUsage()
 		if !strings.Contains(usage, k.name) || !strings.Contains(usage, strings.SplitN(k.usage, "\n", 2)[0]) {
-			t.Errorf("%s の説明が、goro auth -h に出ない:\n%s", k.name, usage)
+			t.Errorf("%s の説明が、goronation auth -h に出ない:\n%s", k.name, usage)
 		}
 	}
 	if credentialNames() != "github" {
@@ -106,7 +106,7 @@ func TestCredentialKindsTable(t *testing.T) {
 	}
 }
 
-// 表に足すだけで、goro auth NAME が通り、保存先が <state>/credentials/<NAME> になる (最初の 1 つを特別扱いしない)。
+// 表に足すだけで、goronation auth NAME が通り、保存先が <state>/credentials/<NAME> になる (最初の 1 つを特別扱いしない)。
 func TestAuthWorksForAnyRegisteredKind(t *testing.T) {
 	saved := credentialKinds
 	defer func() { credentialKinds = saved }()
@@ -128,7 +128,7 @@ func TestAuthWorksForAnyRegisteredKind(t *testing.T) {
 		t.Errorf("表に足した検査: %d %s", code, stderr)
 	}
 	if !strings.Contains(authUsage(), "other-cred") {
-		t.Error("goro auth -h に、表に足した名前が出ない")
+		t.Error("goronation auth -h に、表に足した名前が出ない")
 	}
 }
 
@@ -185,8 +185,8 @@ func TestAuthRefusesBadTokenWithoutTouchingDisk(t *testing.T) {
 		if code != 1 || stdout != "" {
 			t.Errorf("%s: 終了コード %d, stdout %q (want 1・空)", name, code, stdout)
 		}
-		if n := strings.Count(strings.TrimSpace(stderr), "\n") + 1; n != 1 || !strings.HasPrefix(stderr, "goro auth: ") {
-			t.Errorf("%s: 表示が、goro auth: で始まる 1 行でない: %q", name, stderr)
+		if n := strings.Count(strings.TrimSpace(stderr), "\n") + 1; n != 1 || !strings.HasPrefix(stderr, "goronation auth: ") {
+			t.Errorf("%s: 表示が、goronation auth: で始まる 1 行でない: %q", name, stderr)
 		}
 		if leaksAuth(stdout+stderr) != "" {
 			t.Errorf("%s: 出力に値が出た: %q", name, stderr)
@@ -197,7 +197,7 @@ func TestAuthRefusesBadTokenWithoutTouchingDisk(t *testing.T) {
 	}
 	// 断り方 (形式) の文言は、次にすること (貼り直し・作り方) を示す。
 	_, _, stderr := auth(t, t.TempDir(), "nope\n", "github")
-	if !strings.Contains(stderr, "github_pat_ で始まる") || !strings.Contains(stderr, "goro auth -h") {
+	if !strings.Contains(stderr, "github_pat_ で始まる") || !strings.Contains(stderr, "goronation auth -h") {
 		t.Errorf("形式の断り: %q", stderr)
 	}
 }
@@ -234,7 +234,7 @@ func TestAuthUsageErrors(t *testing.T) {
 	if code := runAuth([]string{"-h"}, pipeStdin(t, ""), io.Discard, &errb); code != 0 {
 		t.Errorf("-h の終了コード = %d", code)
 	}
-	for _, want := range []string{"使い方: goro auth NAME", "github", "https://github.com/settings/personal-access-tokens/new", "Contents と Pull requests", "引数には書けない", "表示せずに"} {
+	for _, want := range []string{"使い方: goronation auth NAME", "github", "https://github.com/settings/personal-access-tokens/new", "Contents と Pull requests", "引数には書けない", "表示せずに"} {
 		if !strings.Contains(errb.String(), want) {
 			t.Errorf("-h に %q が無い:\n%s", want, errb.String())
 		}
@@ -289,7 +289,7 @@ func TestAuthHidesInputOnTerminal(t *testing.T) {
 			t.Fatalf("終了コード %d\nstderr: %s", code, errb.String())
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("goro auth が終わらない")
+		t.Fatal("goronation auth が終わらない")
 	}
 	master.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 	rest, _ := io.ReadAll(master)
@@ -365,7 +365,7 @@ func TestReadSecretLine(t *testing.T) {
 	}
 }
 
-// 値が、error・表示・%v・panic に出ないこと: goro auth の全ての失敗経路で、stdout・stderr に値が無い。
+// 値が、error・表示・%v・panic に出ないこと: goronation auth の全ての失敗経路で、stdout・stderr に値が無い。
 func TestAuthNeverPrintsTheToken(t *testing.T) {
 	state := t.TempDir()
 	dir := filepath.Join(state, "credentials")

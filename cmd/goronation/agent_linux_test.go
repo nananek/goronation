@@ -37,10 +37,10 @@ func TestAgentProfiles(t *testing.T) {
 	}{
 		{claudeProfile, "claude", "/opt/claude/claude",
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1,DISABLE_TELEMETRY=1,DISABLE_ERROR_REPORTING=1,DISABLE_AUTOUPDATER=1,CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1",
-			[]string{"api.anthropic.com:443", "platform.claude.com:443"}, "GORO_CLAUDE", nil},
+			[]string{"api.anthropic.com:443", "platform.claude.com:443"}, "GORONATION_CLAUDE", nil},
 		{opencodeProfile, "opencode", "/opt/opencode/opencode",
 			"OPENCODE_DISABLE_AUTOUPDATE=1,OPENCODE_DISABLE_MODELS_FETCH=1,OPENCODE_DISABLE_SHARE=1,OPENCODE_DISABLE_LSP_DOWNLOAD=1",
-			[]string{"opencode.ai:443"}, "GORO_OPENCODE", []string{"auth", "login"}},
+			[]string{"opencode.ai:443"}, "GORONATION_OPENCODE", []string{"auth", "login"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := tc.p
@@ -172,7 +172,7 @@ func TestParseRunArgsAgent(t *testing.T) {
 	}
 }
 
-// opencode の実行ファイルの解決: PATH の opencode・GORO_OPENCODE・--bin の順。スクリプトは、claude と同じく断る。
+// opencode の実行ファイルの解決: PATH の opencode・GORONATION_OPENCODE・--bin の順。スクリプトは、claude と同じく断る。
 func TestResolveOpenCode(t *testing.T) {
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -209,10 +209,10 @@ func TestResolveOpenCode(t *testing.T) {
 		{"PATH の opencode は、symlink を辿った実体", "", "", pathLookup, real, ""},
 		{"環境変数が PATH に勝つ", "", real, pathLookup, real, ""},
 		{"--bin が環境変数に勝つ", link, script, pathLookup, real, ""},
-		{"PATH に無い", "", "", noLookup, "", "opencode が見つからない。PATH に置くか、--bin PATH か GORO_OPENCODE で指す"},
+		{"PATH に無い", "", "", noLookup, "", "opencode が見つからない。PATH に置くか、--bin PATH か GORONATION_OPENCODE で指す"},
 		{"存在しない", filepath.Join(dir, "none"), "", pathLookup, "", "opencode ("},
 		{"スクリプト (npm のラッパーなど)", script, "", pathLookup, "", "スクリプト"},
-		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin PATH か GORO_OPENCODE"},
+		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin PATH か GORONATION_OPENCODE"},
 		{"スクリプトの例は、opencode の置き場", script, "", pathLookup, "", "~/.opencode/bin/opencode"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -230,11 +230,11 @@ func TestResolveOpenCode(t *testing.T) {
 	}
 	// claude のエラーの文言は、opencode の値に置き換わらない。
 	_, err = resolveAgentExe(claudeProfile, "", "", noLookup)
-	if err == nil || !strings.Contains(err.Error(), "claude が見つからない。PATH に置くか、--bin PATH か GORO_CLAUDE で指す") {
+	if err == nil || !strings.Contains(err.Error(), "claude が見つからない。PATH に置くか、--bin PATH か GORONATION_CLAUDE で指す") {
 		t.Errorf("claude の見つからないエラー = %v", err)
 	}
 	_, err = resolveAgentExe(claudeProfile, script, "", pathLookup)
-	if err == nil || !strings.Contains(err.Error(), "--bin PATH か GORO_CLAUDE") || !strings.Contains(err.Error(), "/opt/claude-code/bin/claude") {
+	if err == nil || !strings.Contains(err.Error(), "--bin PATH か GORONATION_CLAUDE") || !strings.Contains(err.Error(), "/opt/claude-code/bin/claude") {
 		t.Errorf("claude のスクリプトのエラー = %v", err)
 	}
 	var pe *os.PathError
@@ -248,8 +248,8 @@ func testOpenCodeCage() cageConfig {
 	c := testCage()
 	c.Agent = opencodeProfile
 	c.AgentExe = "/home/u/.opencode/bin/opencode"
-	c.AgentHome = "/home/u/.local/state/goro/agents/opencode/homes/0123456789abcdef"
-	c.AuthDir = "/home/u/.local/state/goro/agents/opencode/auth"
+	c.AgentHome = "/home/u/.local/state/goronation/agents/opencode/homes/0123456789abcdef"
+	c.AuthDir = "/home/u/.local/state/goronation/agents/opencode/auth"
 	c.Args = []string{"--continue"}
 	return c
 }
@@ -270,14 +270,14 @@ func TestCageSpecGoldenOpenCode(t *testing.T) {
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
 		"--ro-bind", "/home/u/.opencode/bin/opencode", "/opt/opencode/opencode",
-		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
-		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/agents/opencode/homes/0123456789abcdef", "/home/goro",
-		"--bind", "/home/u/.local/state/goro/agents/opencode/auth", "/auth",
-		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
+		"--ro-bind", "/home/u/bin/goronation", "/opt/goronation/goronation",
+		"--ro-bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/run", "/run/goronation",
+		"--bind", "/home/u/.local/state/goronation/agents/opencode/homes/0123456789abcdef", "/home/goronation",
+		"--bind", "/home/u/.local/state/goronation/agents/opencode/auth", "/auth",
+		"--bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/clone", "/work",
 		"--chdir", "/work",
 		"--clearenv",
-		"--setenv", "HOME", "/home/goro",
+		"--setenv", "HOME", "/home/goronation",
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "TERM", "xterm-256color",
 		"--setenv", "LANG", "C.UTF-8",
@@ -286,7 +286,7 @@ func TestCageSpecGoldenOpenCode(t *testing.T) {
 		"--setenv", "OPENCODE_DISABLE_SHARE", "1",
 		"--setenv", "OPENCODE_DISABLE_LSP_DOWNLOAD", "1",
 		"--",
-		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
+		"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--no-forward-tty", "--",
 		"/opt/opencode/opencode", "--continue",
 	}
 	if !slices.Equal(argv, want) {
@@ -313,8 +313,8 @@ func TestCageSpecBindsOpenCode(t *testing.T) {
 	}
 	want := map[string]bind{
 		"/usr": {false, false}, "/etc/ssl/certs": {false, false},
-		"/opt/opencode/opencode": {false, true}, "/opt/goro/goro": {false, true}, "/run/goro": {false, true},
-		"/home/goro": {true, true}, "/auth": {true, true}, "/work": {true, true},
+		"/opt/opencode/opencode": {false, true}, "/opt/goronation/goronation": {false, true}, "/run/goronation": {false, true},
+		"/home/goronation": {true, true}, "/auth": {true, true}, "/work": {true, true},
 	}
 	if len(got) != len(want) {
 		t.Errorf("bind の数 = %d, want %d: %+v", len(got), len(want), got)
@@ -408,19 +408,19 @@ func TestPrintRunSummaryAgent(t *testing.T) {
 		not  []string
 	}{
 		{"claude (agent を書かない)", runSummary{id: id},
-			[]string{"  再開:   goro run --session " + id + "\n", "  取り出し: goro export " + id + "\n"},
+			[]string{"  再開:   goronation run --session " + id + "\n", "  取り出し: goronation export " + id + "\n"},
 			[]string{"--agent", "opencode", "/sessions"}},
 		{"claude (profile を書く)", runSummary{id: id, agent: claudeProfile},
-			[]string{"  再開:   goro run --session " + id + "\n"}, []string{"--agent", "opencode"}},
+			[]string{"  再開:   goronation run --session " + id + "\n"}, []string{"--agent", "opencode"}},
 		{"opencode", runSummary{id: id, agent: opencodeProfile},
-			[]string{"  再開:   goro run --agent opencode --session " + id + "\n", "  取り出し: goro export " + id + "\n"},
-			[]string{"goro export --agent", "/sessions"}}, // 会話の続きの説明は、-h だけ
+			[]string{"  再開:   goronation run --agent opencode --session " + id + "\n", "  取り出し: goronation export " + id + "\n"},
+			[]string{"goronation export --agent", "/sessions"}}, // 会話の続きの説明は、-h だけ
 		{"opencode と --state-dir", runSummary{id: id, agent: opencodeProfile, stateDir: "/s t", stateDirGiven: true},
-			[]string{"goro run --agent opencode --state-dir '/s t' --session " + id + "\n", "goro export --state-dir '/s t' " + id + "\n"}, nil},
+			[]string{"goronation run --agent opencode --state-dir '/s t' --session " + id + "\n", "goronation export --state-dir '/s t' " + id + "\n"}, nil},
 		{"opencode の --login", runSummary{agent: opencodeProfile, authDir: "/h"},
-			[]string{"次は: goro run --agent opencode --repo PATH\n", "ログイン状態: /h\n"}, []string{"セッション:", "/sessions"}},
+			[]string{"次は: goronation run --agent opencode --repo PATH\n", "ログイン状態: /h\n"}, []string{"セッション:", "/sessions"}},
 		{"claude の --login", runSummary{authDir: "/h"},
-			[]string{"次は: goro run --repo PATH\n"}, []string{"--agent"}},
+			[]string{"次は: goronation run --repo PATH\n"}, []string{"--agent"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := summary(tc.s)
@@ -522,7 +522,7 @@ func TestPickAgent(t *testing.T) {
 	mk("20260926-120000-aaaaaa", "", true) // 記録なし (エージェントを記録する前)
 	mk("20260926-120001-bbbbbb", "claude\n", true)
 	mk("20260926-120002-cccccc", "opencode\n", true)
-	mk("20260926-120003-dddddd", "codex\n", true)     // この goro の知らないエージェント
+	mk("20260926-120003-dddddd", "codex\n", true)     // この goronation の知らないエージェント
 	mk("20260926-120004-eeeeee", "Bad Agent\n", true) // 壊れた記録
 	mk("20260926-120005-ffffff", "opencode\n", false) // clone が無い
 
@@ -543,7 +543,7 @@ func TestPickAgent(t *testing.T) {
 		{"opencode・省略", runOptions{session: "20260926-120002-cccccc"}, "opencode", ""},
 		{"opencode・--agent opencode", runOptions{session: "20260926-120002-cccccc", agent: "opencode"}, "opencode", ""},
 		{"opencode・--agent claude は断る", runOptions{session: "20260926-120002-cccccc", agent: "claude"}, "", "このセッションは opencode で作った"},
-		{"知らないエージェントの記録", runOptions{session: "20260926-120003-dddddd"}, "", `"codex" を、この goro は知らない`},
+		{"知らないエージェントの記録", runOptions{session: "20260926-120003-dddddd"}, "", `"codex" を、この goronation は知らない`},
 		{"壊れた記録", runOptions{session: "20260926-120004-eeeeee"}, "", "エージェントの記録"},
 		{"壊れた記録・--agent claude でも断る", runOptions{session: "20260926-120004-eeeeee", agent: "claude"}, "", "エージェントの記録"},
 		{"clone が無い", runOptions{session: "20260926-120005-ffffff"}, "", "セッションを使えない"},
@@ -556,7 +556,7 @@ func TestPickAgent(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tc.err) {
 					t.Fatalf("pickAgent = %q, %v, want error に %q", p.name, err, tc.err)
 				}
-				if tc.o.session != "" && strings.Contains(tc.err, "で作った") && !strings.Contains(err.Error(), "新しく作る: goro run --agent") {
+				if tc.o.session != "" && strings.Contains(tc.err, "で作った") && !strings.Contains(err.Error(), "新しく作る: goronation run --agent") {
 					t.Errorf("エラーに、次の手 (--repo から新しいセッション) が無い: %v", err)
 				}
 				return
@@ -622,7 +622,7 @@ func TestAgentTable(t *testing.T) {
 			if got, want := p.jailExe(), "/opt/"+p.name+"/"+p.binName(); got != want {
 				t.Errorf("jailExe = %q, want %q", got, want)
 			}
-			if want := "GORO_" + strings.ToUpper(strings.ReplaceAll(p.name, "-", "_")); p.exeEnv() != want {
+			if want := "GORONATION_" + strings.ToUpper(strings.ReplaceAll(p.name, "-", "_")); p.exeEnv() != want {
 				t.Errorf("exeEnv = %q, want %q", p.exeEnv(), want)
 			}
 			if p.hosts == nil || len(p.hosts()) == 0 || p.loginUsage == "" || p.exitHint == "" || p.exeExample == "" {
@@ -652,15 +652,15 @@ func TestAgentTable(t *testing.T) {
 	if _, ok := agentByName(legacySessionAgent); !ok {
 		t.Errorf("legacySessionAgent %q が、表に無い", legacySessionAgent)
 	}
-	// 環境変数の名前の規則: GORO_<NAME 大文字> (- は _)。claude の既存の名前は、規則どおり。
-	for name, want := range map[string]string{"claude": "GORO_CLAUDE", "opencode": "GORO_OPENCODE", "my-agent": "GORO_MY_AGENT", "a1": "GORO_A1"} {
+	// 環境変数の名前の規則: GORONATION_<NAME 大文字> (- は _)。claude の既存の名前は、規則どおり。
+	for name, want := range map[string]string{"claude": "GORONATION_CLAUDE", "opencode": "GORONATION_OPENCODE", "my-agent": "GORONATION_MY_AGENT", "a1": "GORONATION_A1"} {
 		if got := exeEnvName(name); got != want {
 			t.Errorf("exeEnvName(%q) = %q, want %q", name, got, want)
 		}
 	}
 	// bin が name と違うエージェント: PATH で探す名前と、檻の中のファイル名が、bin になる。
 	p := agentProfile{name: "foo", bin: "foo-cli"}
-	if p.binName() != "foo-cli" || p.jailExe() != "/opt/foo/foo-cli" || p.exeEnv() != "GORO_FOO" {
+	if p.binName() != "foo-cli" || p.jailExe() != "/opt/foo/foo-cli" || p.exeEnv() != "GORONATION_FOO" {
 		t.Errorf("bin つき: binName・jailExe・exeEnv = %q・%q・%q", p.binName(), p.jailExe(), p.exeEnv())
 	}
 	if got, err := resolveAgentExe(p, "", "", func(name string) (string, error) {
@@ -668,7 +668,7 @@ func TestAgentTable(t *testing.T) {
 			t.Errorf("PATH で探す名前 = %q, want foo-cli", name)
 		}
 		return "", exec.ErrNotFound
-	}); err == nil || !strings.Contains(err.Error(), "foo-cli が見つからない") || !strings.Contains(err.Error(), "GORO_FOO") {
+	}); err == nil || !strings.Contains(err.Error(), "foo-cli が見つからない") || !strings.Contains(err.Error(), "GORONATION_FOO") {
 		t.Errorf("resolveAgentExe = %q, %v", got, err)
 	}
 }
@@ -681,7 +681,7 @@ func withTestAgent(t *testing.T, p agentProfile) {
 	t.Cleanup(func() { agents = saved })
 }
 
-// goro run -h の使い方は、agents の表から作る: 各エージェントの名前・実行ファイルを指す環境変数・既定の許可宛先・--login の説明・終了操作が
+// goronation run -h の使い方は、agents の表から作る: 各エージェントの名前・実行ファイルを指す環境変数・既定の許可宛先・--login の説明・終了操作が
 // 出る。表に profile を足すだけで、usage・--agent の許容値・エラーの文言に反映される (usage のコードは、変えない)。
 func TestRunUsageFromProfiles(t *testing.T) {
 	usage := runUsage()
@@ -695,7 +695,7 @@ func TestRunUsageFromProfiles(t *testing.T) {
 	if !strings.Contains(usage, "claude (既定)") || strings.Contains(usage, "opencode (既定)") {
 		t.Errorf("既定のエージェントの印が、表の先頭でない:\n%s", usage)
 	}
-	for _, want := range []string{"goro は出力を解釈しない (端末に直結する)", "檻からホストの localhost には届かない。ローカルのモデルサーバー"} {
+	for _, want := range []string{"goronation は出力を解釈しない (端末に直結する)", "檻からホストの localhost には届かない。ローカルのモデルサーバー"} {
 		if !strings.Contains(usage, want) {
 			t.Errorf("usage に %q が無い:\n%s", want, usage)
 		}
@@ -710,7 +710,7 @@ func TestRunUsageFromProfiles(t *testing.T) {
 	}
 	withTestAgent(t, testAgentProfile)
 	usage = runUsage()
-	for _, want := range []string{testAgentProfile.name, "GORO_FAKEAGENT", "fake.example:443", testAgentProfile.loginUsage, testAgentProfile.exitHint, "claude か opencode か fakeagent"} {
+	for _, want := range []string{testAgentProfile.name, "GORONATION_FAKEAGENT", "fake.example:443", testAgentProfile.loginUsage, testAgentProfile.exitHint, "claude か opencode か fakeagent"} {
 		if !strings.Contains(usage, want) {
 			t.Errorf("表に足した profile の %q が、usage に出ない:\n%s", want, usage)
 		}
@@ -728,7 +728,7 @@ func TestRunUsageFromProfiles(t *testing.T) {
 	}
 }
 
-// ユーザー向けのメッセージは、短く、ユーザーがすることだけ (理由・経緯・制約の説明は、goro run -h に置く)。長さの予算で固定する:
+// ユーザー向けのメッセージは、短く、ユーザーがすることだけ (理由・経緯・制約の説明は、goronation run -h に置く)。長さの予算で固定する:
 // ログイン開始の案内は 2 行以内・120 文字以内、拒否された宛先の一言は 40 文字以内、主要なエラーは 1 行・130 文字以内。
 func TestUserMessagesStayShort(t *testing.T) {
 	runes := utf8.RuneCountInString
@@ -741,7 +741,7 @@ func TestUserMessagesStayShort(t *testing.T) {
 			t.Errorf("%s の loginGuide が、ユーザーへの依頼 (〜してください) でない: %q", p.name, guide)
 		}
 		// エージェントの画面の内容 (項目名・手順・URL) を、説明しない (版で変わり、嘘になる)。案内は、エージェントに共通で、
-		// 違うのは終了操作だけ。goro は、エージェントの出力を読まない・解釈しない (TestAgentOutputPassesThroughUntouched)。
+		// 違うのは終了操作だけ。goronation は、エージェントの出力を読まない・解釈しない (TestAgentOutputPassesThroughUntouched)。
 		for _, word := range []string{"テーマ", "theme", "Theme", "provider", "Provider", "integration", "Integration", "Security", "API", "キー", "URL", "http", "ブラウザ", "コード"} {
 			if strings.Contains(guide, word) {
 				t.Errorf("%s の loginGuide が、エージェントの画面の内容 (%q) を説明している: %q", p.name, word, guide)

@@ -24,9 +24,11 @@ import (
 )
 
 // shortDir は、UDS を置ける短い path の、空のディレクトリを返す (UDS の path は 107 バイトまで)。
+// prefix は "goronation" ではなく短い "gt" にする: state dir 名自体が長くなった分 (goro→goronation)、
+// ここで削っておかないと、セッション ID を含む term.sock の path が 108 バイトを超えうる。
 func shortDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "goro")
+	dir, err := os.MkdirTemp("", "gt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +100,7 @@ func TestParseRunArgsHelp(t *testing.T) {
 	if _, err := parseRunArgs([]string{"-h"}, &stderr); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("-h の error = %v, want flag.ErrHelp", err)
 	}
-	if !strings.Contains(stderr.String(), "使い方: goro run") || !strings.Contains(stderr.String(), "--allow") {
+	if !strings.Contains(stderr.String(), "使い方: goronation run") || !strings.Contains(stderr.String(), "--allow") {
 		t.Errorf("使い方が出ていない:\n%s", stderr.String())
 	}
 	if code := runRun([]string{"-h"}, io.Discard); code != 0 {
@@ -146,13 +148,13 @@ func TestExportSessionsUsageAndArgs(t *testing.T) {
 		code int
 		want string // stdout か stderr に含まれる
 	}{
-		{"export -h", []string{"export", "-h"}, 0, "使い方: goro export"},
-		{"sessions -h", []string{"sessions", "-h"}, 0, "使い方: goro sessions"},
-		{"run -h", []string{"run", "-h"}, 0, "使い方: goro run"},
+		{"export -h", []string{"export", "-h"}, 0, "使い方: goronation export"},
+		{"sessions -h", []string{"sessions", "-h"}, 0, "使い方: goronation sessions"},
+		{"run -h", []string{"run", "-h"}, 0, "使い方: goronation run"},
 		{"export の ID が無い", []string{"export", "--state-dir", state}, exitUsage, "セッション ID を 1 つ"},
 		{"export の ID が 2 つ", []string{"export", "--state-dir", state, "a", "b"}, exitUsage, "セッション ID を 1 つ"},
 		{"export の未知のフラグ", []string{"export", "--bogus"}, exitUsage, "bogus"},
-		{"存在しない ID", []string{"export", "--state-dir", state, "20260101-000000-aaaaaa"}, 1, "goro export:"},
+		{"存在しない ID", []string{"export", "--state-dir", state, "20260101-000000-aaaaaa"}, 1, "goronation export:"},
 		{"形が違う ID", []string{"export", "--state-dir", state, "../etc"}, 1, "形が正しくない"},
 		{"sessions の余計な引数", []string{"sessions", "--state-dir", state, "x"}, exitUsage, "余計な引数"},
 		{"sessions (空)", []string{"sessions", "--state-dir", state}, 0, "セッションは無い"},
@@ -241,7 +243,7 @@ func TestResolveClaude(t *testing.T) {
 		{"2 文字目だけ !", bang, "", pathLookup, bang, ""},
 		{"スクリプト (ラッパー)", script, "", pathLookup, "", "スクリプト"},
 		{"スクリプトへの symlink", scriptLink, "", pathLookup, "", "スクリプト"},
-		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin PATH か GORO_CLAUDE"},
+		{"環境変数のスクリプト", "", script, pathLookup, "", "--bin PATH か GORONATION_CLAUDE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := resolveAgentExe(claudeProfile, tc.flagVal, tc.env, tc.look)
@@ -264,12 +266,12 @@ func testCage() cageConfig {
 		Host:      bwrap.Host{Home: "/home/u"},
 		Agent:     claudeProfile,
 		AgentExe:  "/home/u/.local/share/claude/versions/2.0.0",
-		GoroExe:   "/home/u/bin/goro",
+		GoroExe:   "/home/u/bin/goronation",
 		CACerts:   "/etc/ssl/certs",
-		RunDir:    "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run",
-		AgentHome: "/home/u/.local/state/goro/agents/claude/homes/0123456789abcdef",
-		AuthDir:   "/home/u/.local/state/goro/agents/claude/auth",
-		Work:      "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone",
+		RunDir:    "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/run",
+		AgentHome: "/home/u/.local/state/goronation/agents/claude/homes/0123456789abcdef",
+		AuthDir:   "/home/u/.local/state/goronation/agents/claude/auth",
+		Work:      "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/clone",
 		Term:      "xterm-256color",
 		Args:      []string{"--resume", "x y"},
 	}
@@ -291,14 +293,14 @@ func TestCageSpecGolden(t *testing.T) {
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
 		"--ro-bind", "/home/u/.local/share/claude/versions/2.0.0", "/opt/claude/claude",
-		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
-		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/agents/claude/homes/0123456789abcdef", "/home/goro",
-		"--bind", "/home/u/.local/state/goro/agents/claude/auth", "/auth",
-		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
+		"--ro-bind", "/home/u/bin/goronation", "/opt/goronation/goronation",
+		"--ro-bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/run", "/run/goronation",
+		"--bind", "/home/u/.local/state/goronation/agents/claude/homes/0123456789abcdef", "/home/goronation",
+		"--bind", "/home/u/.local/state/goronation/agents/claude/auth", "/auth",
+		"--bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/clone", "/work",
 		"--chdir", "/work",
 		"--clearenv",
-		"--setenv", "HOME", "/home/goro",
+		"--setenv", "HOME", "/home/goronation",
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "TERM", "xterm-256color",
 		"--setenv", "LANG", "C.UTF-8",
@@ -309,7 +311,7 @@ func TestCageSpecGolden(t *testing.T) {
 		"--setenv", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1",
 		"--setenv", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "/auth",
 		"--",
-		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
+		"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--no-forward-tty", "--",
 		"/opt/claude/claude", "--resume", "x y",
 	}
 	if !slices.Equal(argv, want) {
@@ -317,7 +319,7 @@ func TestCageSpecGolden(t *testing.T) {
 	}
 }
 
-// TestCageSpecGoldenPTY は、cfg.PTY が true のときだけ、bwrap.Spec.NewSession が true になり、goro init の
+// TestCageSpecGoldenPTY は、cfg.PTY が true のときだけ、bwrap.Spec.NewSession が true になり、goronation init の
 // argv に --set-ctty が (--no-forward-tty の後・-- の前に) 入ることを確認する。それ以外 (bind・環境変数・
 // エージェントへの引数) は、TestCageSpecGolden と同じであることも確認する (PTY が、それ以外に影響しない)。
 func TestCageSpecGoldenPTY(t *testing.T) {
@@ -339,14 +341,14 @@ func TestCageSpecGoldenPTY(t *testing.T) {
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
 		"--ro-bind", "/home/u/.local/share/claude/versions/2.0.0", "/opt/claude/claude",
-		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
-		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/agents/claude/homes/0123456789abcdef", "/home/goro",
-		"--bind", "/home/u/.local/state/goro/agents/claude/auth", "/auth",
-		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
+		"--ro-bind", "/home/u/bin/goronation", "/opt/goronation/goronation",
+		"--ro-bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/run", "/run/goronation",
+		"--bind", "/home/u/.local/state/goronation/agents/claude/homes/0123456789abcdef", "/home/goronation",
+		"--bind", "/home/u/.local/state/goronation/agents/claude/auth", "/auth",
+		"--bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/clone", "/work",
 		"--chdir", "/work",
 		"--clearenv",
-		"--setenv", "HOME", "/home/goro",
+		"--setenv", "HOME", "/home/goronation",
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "TERM", "xterm-256color",
 		"--setenv", "LANG", "C.UTF-8",
@@ -357,7 +359,7 @@ func TestCageSpecGoldenPTY(t *testing.T) {
 		"--setenv", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1",
 		"--setenv", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "/auth",
 		"--",
-		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--set-ctty", "--",
+		"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--no-forward-tty", "--set-ctty", "--",
 		"/opt/claude/claude", "--resume", "x y",
 	}
 	if !slices.Equal(argv, want) {
@@ -368,7 +370,7 @@ func TestCageSpecGoldenPTY(t *testing.T) {
 // claude の檻の実効の Spec は、HOME をエージェントで 1 つ共有していた前の golden と、次の 3 つだけが違う: HOME の bind 元 (homes/<repo のキー>)・
 // 認証用ディレクトリの bind (/auth)・認証用ディレクトリを指す環境変数 (CLAUDE_SECURESTORAGE_CONFIG_DIR)。ほかの mount・環境変数・引数は、増えも減りもしない。
 func TestCageSpecDiffersFromSharedHomeOnlyInHomeAndAuth(t *testing.T) {
-	previous := []string{ // 前の golden (agents/claude/home を、そのまま /home/goro に rw で見せていたときの argv)
+	previous := []string{ // 前の golden (agents/claude/home を、そのまま /home/goronation に rw で見せていたときの argv)
 		"/usr/bin/bwrap", "--unshare-all", "--die-with-parent",
 		"--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
 		"--proc", "/proc", "--dev", "/dev",
@@ -376,13 +378,13 @@ func TestCageSpecDiffersFromSharedHomeOnlyInHomeAndAuth(t *testing.T) {
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
 		"--ro-bind", "/home/u/.local/share/claude/versions/2.0.0", "/opt/claude/claude",
-		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
-		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/agents/claude/home", "/home/goro",
-		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
+		"--ro-bind", "/home/u/bin/goronation", "/opt/goronation/goronation",
+		"--ro-bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/run", "/run/goronation",
+		"--bind", "/home/u/.local/state/goronation/agents/claude/home", "/home/goronation",
+		"--bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/clone", "/work",
 		"--chdir", "/work",
 		"--clearenv",
-		"--setenv", "HOME", "/home/goro",
+		"--setenv", "HOME", "/home/goronation",
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "TERM", "xterm-256color",
 		"--setenv", "LANG", "C.UTF-8",
@@ -392,7 +394,7 @@ func TestCageSpecDiffersFromSharedHomeOnlyInHomeAndAuth(t *testing.T) {
 		"--setenv", "DISABLE_AUTOUPDATER", "1",
 		"--setenv", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1",
 		"--",
-		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
+		"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--no-forward-tty", "--",
 		"/opt/claude/claude", "--resume", "x y",
 	}
 	argv, err := cageSpec(testCage()).Argv()
@@ -404,7 +406,7 @@ func TestCageSpecDiffersFromSharedHomeOnlyInHomeAndAuth(t *testing.T) {
 	for i := 0; i < len(argv); i++ {
 		switch {
 		case argv[i] == "--bind" && argv[i+2] == "/auth": // 認証用ディレクトリの bind
-			if argv[i+1] != "/home/u/.local/state/goro/agents/claude/auth" {
+			if argv[i+1] != "/home/u/.local/state/goronation/agents/claude/auth" {
 				t.Errorf("認証用ディレクトリの bind 元 = %q", argv[i+1])
 			}
 			i += 2
@@ -415,11 +417,11 @@ func TestCageSpecDiffersFromSharedHomeOnlyInHomeAndAuth(t *testing.T) {
 			}
 			i += 2
 			removed++
-		case argv[i] == "--bind" && argv[i+2] == "/home/goro": // HOME の bind 元だけが違う (repo のキーの HOME)
-			if argv[i+1] != "/home/u/.local/state/goro/agents/claude/homes/0123456789abcdef" {
+		case argv[i] == "--bind" && argv[i+2] == "/home/goronation": // HOME の bind 元だけが違う (repo のキーの HOME)
+			if argv[i+1] != "/home/u/.local/state/goronation/agents/claude/homes/0123456789abcdef" {
 				t.Errorf("HOME の bind 元 = %q", argv[i+1])
 			}
-			rest = append(rest, "--bind", "/home/u/.local/state/goro/agents/claude/home", "/home/goro")
+			rest = append(rest, "--bind", "/home/u/.local/state/goronation/agents/claude/home", "/home/goronation")
 			i += 2
 			removed++
 		default:
@@ -444,8 +446,8 @@ func TestCageSpecBinds(t *testing.T) {
 	}
 	want := map[string]bind{
 		"/usr": {false, false}, "/etc/ssl/certs": {false, false},
-		"/opt/claude/claude": {false, true}, "/opt/goro/goro": {false, true}, "/run/goro": {false, true},
-		"/home/goro": {true, true}, "/auth": {true, true}, "/work": {true, true},
+		"/opt/claude/claude": {false, true}, "/opt/goronation/goronation": {false, true}, "/run/goronation": {false, true},
+		"/home/goronation": {true, true}, "/auth": {true, true}, "/work": {true, true},
 	}
 	if len(got) != len(want) {
 		t.Errorf("bind の数 = %d, want %d: %+v", len(got), len(want), got)
@@ -461,7 +463,7 @@ func TestCageSpecBinds(t *testing.T) {
 
 	// HOME の外 (テストバイナリや /opt の claude) は、InHome が付かず、Argv も通る。CA が無ければ、その bind は無い。
 	c := testCage()
-	c.AgentExe, c.GoroExe, c.CACerts = "/opt/claude-real/claude", "/usr/local/bin/goro", ""
+	c.AgentExe, c.GoroExe, c.CACerts = "/opt/claude-real/claude", "/usr/local/bin/goronation", ""
 	spec = cageSpec(c)
 	if _, err := spec.Argv(); err != nil {
 		t.Fatalf("HOME の外の claude で Argv が error: %v", err)
@@ -470,11 +472,11 @@ func TestCageSpecBinds(t *testing.T) {
 		if b.Dst == "/etc/ssl/certs" {
 			t.Error("CACerts が空なのに、/etc/ssl/certs を bind している")
 		}
-		if (b.Dst == "/opt/claude/claude" || b.Dst == "/opt/goro/goro") && b.InHome {
+		if (b.Dst == "/opt/claude/claude" || b.Dst == "/opt/goronation/goronation") && b.InHome {
 			t.Errorf("HOME の外の %s に InHome が付いている", b.Dst)
 		}
 	}
-	// 機密の path にある claude・goro は、bwrap が拒否する (goro run が、それを回避しない)。
+	// 機密の path にある claude・goronation は、bwrap が拒否する (goronation run が、それを回避しない)。
 	c = testCage()
 	c.AgentExe = "/home/u/.claude/local/claude"
 	if _, err := cageSpec(c).Argv(); err == nil {
@@ -516,20 +518,20 @@ func TestCageEnv(t *testing.T) {
 	}
 }
 
-// TestCageEnvPush は、push・refPrefix が空でないとき、GORO_PUSH_REPO・GORO_PUSH_REF_PREFIX と、
+// TestCageEnvPush は、push・refPrefix が空でないとき、GORONATION_PUSH_REPO・GORONATION_PUSH_REF_PREFIX と、
 // git の insteadOf (GIT_CONFIG_*) が、正しい値で足されることを確かめる。
 func TestCageEnvPush(t *testing.T) {
-	env := cageEnv(claudeProfile, "xterm", "", "o/r", "refs/heads/goro/sess-1/")
+	env := cageEnv(claudeProfile, "xterm", "", "o/r", "refs/heads/goronation/sess-1/")
 	got := map[string]string{}
 	for _, e := range env {
 		got[e.Key] = e.Value
 	}
 	want := map[string]string{
-		"GORO_PUSH_REPO":       "o/r",
-		"GORO_PUSH_REF_PREFIX": "refs/heads/goro/sess-1/",
-		"GIT_CONFIG_COUNT":     "1",
-		"GIT_CONFIG_KEY_0":     "url." + jailGitBase + ".insteadOf",
-		"GIT_CONFIG_VALUE_0":   "https://github.com/",
+		"GORONATION_PUSH_REPO":       "o/r",
+		"GORONATION_PUSH_REF_PREFIX": "refs/heads/goronation/sess-1/",
+		"GIT_CONFIG_COUNT":           "1",
+		"GIT_CONFIG_KEY_0":           "url." + jailGitBase + ".insteadOf",
+		"GIT_CONFIG_VALUE_0":         "https://github.com/",
 	}
 	for k, v := range want {
 		if got[k] != v {
@@ -559,7 +561,7 @@ func TestCageEnvTZ(t *testing.T) {
 		t.Errorf("TZ = %q, ok = %v, want \"Asia/Tokyo\", true", v, ok)
 	}
 	// --push の有無に関わらず、TZ は同じように渡る。
-	if v, ok := hasTZ(cageEnv(claudeProfile, "xterm", "Asia/Tokyo", "o/r", "refs/heads/goro/sess-1/")); !ok || v != "Asia/Tokyo" {
+	if v, ok := hasTZ(cageEnv(claudeProfile, "xterm", "Asia/Tokyo", "o/r", "refs/heads/goronation/sess-1/")); !ok || v != "Asia/Tokyo" {
 		t.Errorf("--push ありでの TZ = %q, ok = %v, want \"Asia/Tokyo\", true", v, ok)
 	}
 	// 許可リストは、bwrap の資格情報らしい名前の検査に通る (TZ は該当しない)。
@@ -700,8 +702,8 @@ func TestStartProxy(t *testing.T) {
 	if fi, err := os.Stat(p.sockPath); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("UDS の権限 = %v, %v, want 0600", fi, err)
 	}
-	if _, err := startProxy(run, allowList(claudeProfile, nil), nil); err == nil || !strings.Contains(err.Error(), "別の goro run が使っている") {
-		t.Errorf("同じ run dir の 2 つ目の startProxy = %v, want 別の goro run が使っている", err)
+	if _, err := startProxy(run, allowList(claudeProfile, nil), nil); err == nil || !strings.Contains(err.Error(), "別の goronation run が使っている") {
+		t.Errorf("同じ run dir の 2 つ目の startProxy = %v, want 別の goronation run が使っている", err)
 	}
 	if got := connectVia(t, p.sockPath, "denied.example:443"); got != "403" {
 		t.Errorf("許可外の宛先 = %s, want 403", got)
@@ -883,8 +885,8 @@ func TestPrintRunSummary(t *testing.T) {
 	got := w.String()
 	for _, want := range []string{
 		"セッション: 20260926-120000-abcdef",
-		`goro run --state-dir '/tmp/s t'\''x' --session 20260926-120000-abcdef`,
-		`goro export --state-dir '/tmp/s t'\''x' 20260926-120000-abcdef`,
+		`goronation run --state-dir '/tmp/s t'\''x' --session 20260926-120000-abcdef`,
+		`goronation export --state-dir '/tmp/s t'\''x' 20260926-120000-abcdef`,
 		"監査ログ: /tmp/s/run/egress.log",
 		"拒否された宛先:",
 		"  cdn.example:443 (3 回)",
@@ -906,7 +908,7 @@ func TestPrintRunSummary(t *testing.T) {
 	w.Reset()
 	printRunSummary(&w, runSummary{id: "20260926-120000-abcdef", started: true, stateDir: "/x", logPath: "/x/log"})
 	got = w.String()
-	if strings.Contains(got, "--state-dir") || strings.Contains(got, "拒否") || strings.Contains(got, "監査") || !strings.Contains(got, "goro run --session 20260926-120000-abcdef") {
+	if strings.Contains(got, "--state-dir") || strings.Contains(got, "拒否") || strings.Contains(got, "監査") || !strings.Contains(got, "goronation run --session 20260926-120000-abcdef") {
 		t.Errorf("既定の案内:\n%s", got)
 	}
 
@@ -914,7 +916,7 @@ func TestPrintRunSummary(t *testing.T) {
 	w.Reset()
 	printRunSummary(&w, runSummary{stateDir: "/x", authDir: "/x/agents/claude/auth", started: true, logPath: "/x/login-run/egress.log"})
 	got = w.String()
-	if !strings.Contains(got, "ログイン状態: /x/agents/claude/auth") || !strings.Contains(got, "goro run --repo PATH") || strings.Contains(got, "セッション:") {
+	if !strings.Contains(got, "ログイン状態: /x/agents/claude/auth") || !strings.Contains(got, "goronation run --repo PATH") || strings.Contains(got, "セッション:") {
 		t.Errorf("--login の案内:\n%s", got)
 	}
 	// 檻を起動できなかったなら、何も案内しない (必ず失敗する再開・中身の無い取り出しを、案内しない)。--login も、セッションも。
@@ -933,7 +935,7 @@ func TestPrintRunSummary(t *testing.T) {
 func TestPrintSessionsAndBundle(t *testing.T) {
 	var w bytes.Buffer
 	printSessions(&w, nil)
-	if w.String() != "セッションは無い。作る: goro run --repo PATH\n" {
+	if w.String() != "セッションは無い。作る: goronation run --repo PATH\n" {
 		t.Errorf("空の一覧 = %q", w.String())
 	}
 	w.Reset()
@@ -946,10 +948,10 @@ func TestPrintSessionsAndBundle(t *testing.T) {
 	}
 
 	w.Reset()
-	printBundle(&w, &session.Bundle{Path: "/s/export/goro.bundle", Size: 1234, Heads: []string{"refs/heads/main", "refs/heads/x"}, Skipped: 1,
-		Fetch: "git -c transfer.fsckObjects=true fetch '/s/export/goro.bundle' 'refs/heads/main:refs/heads/goro/ID/main'"})
-	for _, want := range []string{"bundle: /s/export/goro.bundle (1234 バイト)", "ブランチ: refs/heads/main, refs/heads/x", "除いたブランチ: 1",
-		"自分の repo で実行する", "  git -c transfer.fsckObjects=true fetch '/s/export/goro.bundle'"} {
+	printBundle(&w, &session.Bundle{Path: "/s/export/goronation.bundle", Size: 1234, Heads: []string{"refs/heads/main", "refs/heads/x"}, Skipped: 1,
+		Fetch: "git -c transfer.fsckObjects=true fetch '/s/export/goronation.bundle' 'refs/heads/main:refs/heads/goronation/ID/main'"})
+	for _, want := range []string{"bundle: /s/export/goronation.bundle (1234 バイト)", "ブランチ: refs/heads/main, refs/heads/x", "除いたブランチ: 1",
+		"自分の repo で実行する", "  git -c transfer.fsckObjects=true fetch '/s/export/goronation.bundle'"} {
 		if !strings.Contains(w.String(), want) {
 			t.Errorf("bundle の表示に %q が無い:\n%s", want, w.String())
 		}
@@ -991,7 +993,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 // 檻を起動する前は、SIGINT・SIGTERM・SIGHUP のどれでも取り消す。檻に入った後 (enterCage) は、SIGINT と SIGQUIT を無視し
-// (ホストの goro run が、claude の中断で落ちない)、SIGTERM と SIGHUP だけで取り消す。stop は、元に戻す。
+// (ホストの goronation run が、claude の中断で落ちない)、SIGTERM と SIGHUP だけで取り消す。stop は、元に戻す。
 func TestSigWatch(t *testing.T) {
 	self := syscall.Getpid()
 	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
@@ -1018,7 +1020,7 @@ func TestSigWatch(t *testing.T) {
 	if signal.Ignored(syscall.SIGTERM) || signal.Ignored(syscall.SIGHUP) {
 		t.Error("SIGTERM・SIGHUP を無視している (これは、檻を止めるために受ける)")
 	}
-	// 無視している SIGINT・SIGQUIT を、自分に送っても、落ちず、取り消しにならない (ホストの goro run に届く、Ctrl-C の代わり)。
+	// 無視している SIGINT・SIGQUIT を、自分に送っても、落ちず、取り消しにならない (ホストの goronation run に届く、Ctrl-C の代わり)。
 	syscall.Kill(self, syscall.SIGINT)
 	syscall.Kill(self, syscall.SIGQUIT)
 	time.Sleep(100 * time.Millisecond)
@@ -1071,7 +1073,7 @@ func TestRunFailsBeforeCage(t *testing.T) {
 		{"repo が無い", []string{"--state-dir", state, "--bin", self, "--repo", filepath.Join(state, "none")}, "セッションを作れない"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("GORO_CLAUDE", "")
+			t.Setenv("GORONATION_CLAUDE", "")
 			var stderr bytes.Buffer
 			if code := runRun(tc.args, &stderr); code != 1 || !strings.Contains(stderr.String(), tc.want) {
 				t.Errorf("終了コード = %d (want 1), stderr:\n%s\nwant に %q", code, stderr.String(), tc.want)

@@ -22,8 +22,8 @@ const (
 	requireBwrapEnv = "GORO_REQUIRE_BWRAP"
 
 	// 檻の中の path。
-	jailExe  = "/goro-test"
-	jailSock = "/run/goro/up.sock"
+	jailExe  = "/goronation-test"
+	jailSock = "/run/goronation/up.sock"
 )
 
 func init() {
@@ -56,9 +56,9 @@ func requireBwrap(t *testing.T) {
 	}
 }
 
-// runInJail は、--unshare-all の檻の中で、goro init を動かし、子として selfCmd の helper を実行する。
+// runInJail は、--unshare-all の檻の中で、goronation init を動かし、子として selfCmd の helper を実行する。
 // 檻に置くのは、ホストの /usr (テストバイナリの動的リンクの分)・テストバイナリ・上流の UDS (ro) だけ。
-// asPID1 なら、goro init が檻の PID 1 になる (bwrap の --as-pid-1)。
+// asPID1 なら、goronation init が檻の PID 1 になる (bwrap の --as-pid-1)。
 func runInJail(t *testing.T, sock string, asPID1 bool, helper string) (string, int) {
 	t.Helper()
 	exe, err := os.Executable()
@@ -79,7 +79,7 @@ func runInJail(t *testing.T, sock string, asPID1 bool, helper string) (string, i
 		}
 	}
 	args = append(args, "--ro-bind", exe, jailExe, "--ro-bind", sock, jailSock)
-	args = append(args, "--", jailExe, helperArg, "goro", "init",
+	args = append(args, "--", jailExe, helperArg, "goronation", "init",
 		"--listen", "127.0.0.1:0", "--upstream", jailSock, "--", jailExe, helperArg, helper)
 
 	ctx, cancel := context.WithTimeout(t.Context(), testTimeout)
@@ -124,7 +124,7 @@ func TestInitInBwrapRelay(t *testing.T) {
 	}
 }
 
-// goro init が檻の PID 1 のとき、孤児 (子の子が、親より先に親を失ったもの) を回収する。
+// goronation init が檻の PID 1 のとき、孤児 (子の子が、親より先に親を失ったもの) を回収する。
 func TestInitInBwrapReapsOrphans(t *testing.T) {
 	requireBwrap(t)
 	// 上流は使わないが、bind する UDS が要る。
@@ -133,7 +133,7 @@ func TestInitInBwrapReapsOrphans(t *testing.T) {
 
 	out, code := runInJail(t, sock, true, "jailreap")
 	if code != 0 {
-		t.Fatalf("終了コード = %d (7: zombie が残った, 9: goro init が PID 1 ではない)\n%s", code, out)
+		t.Fatalf("終了コード = %d (7: zombie が残った, 9: goronation init が PID 1 ではない)\n%s", code, out)
 	}
 }
 
@@ -148,7 +148,7 @@ func helperJailReap([]string) int {
 		fmt.Println(err)
 		return 1
 	}
-	// 中間の子が、孫を起動して、待たずに終わる。孫は孤児になり、PID 1 (goro init) に引き取られる。
+	// 中間の子が、孫を起動して、待たずに終わる。孫は孤児になり、PID 1 (goronation init) に引き取られる。
 	if err := exec.Command(exe, helperArg, "orphan-maker").Run(); err != nil {
 		fmt.Println(err)
 		return 1

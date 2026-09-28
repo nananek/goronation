@@ -19,7 +19,7 @@ import (
 )
 
 // saveTestToken は、stateDir に、gateway.CredentialName ("github") のトークン tok を保存する
-// (credfile.New(stateDir).Save と同じ経路。goro auth github が使うのと同じ形)。
+// (credfile.New(stateDir).Save と同じ経路。goronation auth github が使うのと同じ形)。
 func saveTestToken(t *testing.T, stateDir, tok string) {
 	t.Helper()
 	store, err := credfile.New(stateDir)
@@ -45,12 +45,12 @@ func writeGitHead(t *testing.T, dir, content string) {
 
 func TestCurrentBranch(t *testing.T) {
 	dir := t.TempDir()
-	writeGitHead(t, dir, "ref: refs/heads/goro/sess-1/feature\n")
+	writeGitHead(t, dir, "ref: refs/heads/goronation/sess-1/feature\n")
 	got, err := currentBranch(dir)
 	if err != nil {
 		t.Fatalf("currentBranch: %v", err)
 	}
-	if want := "goro/sess-1/feature"; got != want {
+	if want := "goronation/sess-1/feature"; got != want {
 		t.Fatalf("currentBranch = %q, want %q", got, want)
 	}
 }
@@ -105,23 +105,23 @@ func TestRunPrCreateRequiresTitle(t *testing.T) {
 }
 
 func TestRunPrCreateRequiresGoroPushRepo(t *testing.T) {
-	t.Setenv("GORO_PUSH_REPO", "")
+	t.Setenv("GORONATION_PUSH_REPO", "")
 	var out, errOut bytes.Buffer
 	code := runPrCreate([]string{"--title", "t"}, &out, &errOut)
 	if code == 0 {
-		t.Fatal("GORO_PUSH_REPO が無いのに成功した")
+		t.Fatal("GORONATION_PUSH_REPO が無いのに成功した")
 	}
-	if !strings.Contains(errOut.String(), "GORO_PUSH_REPO") {
+	if !strings.Contains(errOut.String(), "GORONATION_PUSH_REPO") {
 		t.Fatalf("stderr = %q", errOut.String())
 	}
 }
 
 func TestRunPrCreateRejectsBadGoroPushRepo(t *testing.T) {
-	t.Setenv("GORO_PUSH_REPO", "not-a-repo")
+	t.Setenv("GORONATION_PUSH_REPO", "not-a-repo")
 	var out, errOut bytes.Buffer
 	code := runPrCreate([]string{"--title", "t"}, &out, &errOut)
 	if code == 0 {
-		t.Fatal("壊れた GORO_PUSH_REPO なのに成功した")
+		t.Fatal("壊れた GORONATION_PUSH_REPO なのに成功した")
 	}
 	if !strings.Contains(errOut.String(), "owner/repo") {
 		t.Fatalf("stderr = %q", errOut.String())
@@ -132,7 +132,7 @@ func TestRunPrCreateRejectsBadGoroPushRepo(t *testing.T) {
 // 直接は使わず、payload の組み立て (title・head・body・base の有無) だけを確かめる代わりに、findGitDir 経由で
 // currentBranch が読めない (.git が無い) ケースで、要求を一切送らずに断ることを確かめる (ネットワークに触れない)。
 func TestRunPrCreateFailsWithoutGitDir(t *testing.T) {
-	t.Setenv("GORO_PUSH_REPO", "o/r")
+	t.Setenv("GORONATION_PUSH_REPO", "o/r")
 	chdir(t, t.TempDir())
 	var out, errOut bytes.Buffer
 	code := runPrCreate([]string{"--title", "t"}, &out, &errOut)
@@ -187,12 +187,12 @@ func TestRunPrReadyRequiresToken(t *testing.T) {
 	if code == 0 {
 		t.Fatal("トークンが無いのに成功した")
 	}
-	if !strings.Contains(errOut.String(), "goro auth github") {
+	if !strings.Contains(errOut.String(), "goronation auth github") {
 		t.Fatalf("stderr = %q", errOut.String())
 	}
 }
 
-// TestRunPrReadyFullFlow は、goro pr ready が、保存済みトークンを読んで GraphQL を呼び、checks が SUCCESS
+// TestRunPrReadyFullFlow は、goronation pr ready が、保存済みトークンを読んで GraphQL を呼び、checks が SUCCESS
 // の PR を ready for review にすることを、偽の GraphQL 上流に対して確かめる。
 func TestRunPrReadyFullFlow(t *testing.T) {
 	dir := t.TempDir()
@@ -279,9 +279,9 @@ func chdir(t *testing.T, dir string) {
 // 成功のメッセージを stdout に出すことを確かめる。
 func TestRunPrCreateFullFlow(t *testing.T) {
 	dir := t.TempDir()
-	writeGitHead(t, dir, "ref: refs/heads/goro/sess-1/x\n")
+	writeGitHead(t, dir, "ref: refs/heads/goronation/sess-1/x\n")
 	chdir(t, dir)
-	t.Setenv("GORO_PUSH_REPO", "o/r")
+	t.Setenv("GORONATION_PUSH_REPO", "o/r")
 
 	var gotPath string
 	var gotBody map[string]any
@@ -303,7 +303,7 @@ func TestRunPrCreateFullFlow(t *testing.T) {
 	if gotPath != "/repos/o/r/pulls" {
 		t.Fatalf("path = %q", gotPath)
 	}
-	if gotBody["title"] != "t" || gotBody["head"] != "goro/sess-1/x" || gotBody["body"] != "b" {
+	if gotBody["title"] != "t" || gotBody["head"] != "goronation/sess-1/x" || gotBody["body"] != "b" {
 		t.Fatalf("body = %+v", gotBody)
 	}
 	if _, hasDraft := gotBody["draft"]; hasDraft {
@@ -317,13 +317,13 @@ func TestRunPrCreateFullFlow(t *testing.T) {
 	}
 }
 
-// TestRunPrCreateUpstreamRejects は、上流 (gateway) が非 201 (403 など) を返したとき、goro pr create が
+// TestRunPrCreateUpstreamRejects は、上流 (gateway) が非 201 (403 など) を返したとき、goronation pr create が
 // error として断り、本文を stderr に (制御文字などを無害化して) 出すことを確かめる。
 func TestRunPrCreateUpstreamRejects(t *testing.T) {
 	dir := t.TempDir()
 	writeGitHead(t, dir, "ref: refs/heads/main\n") // Push の名前空間の外: 実際の gateway なら断る想定を模す
 	chdir(t, dir)
-	t.Setenv("GORO_PUSH_REPO", "o/r")
+	t.Setenv("GORONATION_PUSH_REPO", "o/r")
 
 	withFakeJailAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Forbidden", http.StatusForbidden)

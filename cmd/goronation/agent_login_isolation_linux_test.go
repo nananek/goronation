@@ -13,13 +13,13 @@ func TestRunLoginWorkNotSharedAcrossAgents(t *testing.T) {
 	f := newRunFixture(t)
 
 	// claude の --login の檻が、/work にファイルを置く (偽の claude の commit は、repo が無く失敗するが、ファイルは残る)。
-	f.goro(t, "run", "--login", "--", "commit", "opencode.json", "PLANTED-BY-CLAUDE-LOGIN", "msg")
+	f.goronation(t, "run", "--login", "--", "commit", "opencode.json", "PLANTED-BY-CLAUDE-LOGIN", "msg")
 	if b, err := os.ReadFile(f.agentPath("claude", "login-work", "opencode.json")); err != nil || string(b) != "PLANTED-BY-CLAUDE-LOGIN" {
 		t.Fatalf("前提: claude の --login の檻が、/work (<state>/agents/claude/login-work) に書けていない: %q, %v", b, err)
 	}
 
 	// opencode の --login の檻の /work は、空のはず。
-	r := f.goro(t, "run", "--agent", "opencode", "--login").mustOK(t)
+	r := f.goronation(t, "run", "--agent", "opencode", "--login").mustOK(t)
 	kv, _ := parseOut(r.stdout)
 	if kv["work"] != "" {
 		t.Errorf("opencode の --login の檻の /work に、claude の --login の檻が置いたものが見える: work=%q\n%s", kv["work"], r)

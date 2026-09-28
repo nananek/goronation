@@ -16,18 +16,18 @@ import (
 	"github.com/nananek/goronation/cmd/internal/termrelay/termrelaytest"
 )
 
-// 結合テスト (bwrap が要る): 実プロセスの goro web が、WebAuthn でログインしたブラウザの代わり
+// 結合テスト (bwrap が要る): 実プロセスの goronation web が、WebAuthn でログインしたブラウザの代わり
 // (webauthntest.Authenticator 相当。loggedInClientWithToken 経由) から、セッション一覧・repo の
-// ファイルブラウザ・端末ビューの WebSocket までの一通りを、実際に goro serve (子プロセスとして起動する)
-// と本物の bwrap の檻を使って確かめる。goro serve 自身の UDS 経由の中継ロジック (生バイト列がそのまま
-// 往復すること) は serve_terminal_bwrap_linux_test.go で確認済みなので、ここでは goro web 固有の経路
+// ファイルブラウザ・端末ビューの WebSocket までの一通りを、実際に goronation serve (子プロセスとして起動する)
+// と本物の bwrap の檻を使って確かめる。goronation serve 自身の UDS 経由の中継ロジック (生バイト列がそのまま
+// 往復すること) は serve_terminal_bwrap_linux_test.go で確認済みなので、ここでは goronation web 固有の経路
 // (WebAuthn・repo のファイルブラウザ・dial-or-spawn・httputil.ReverseProxy 越しの WebSocket の配線) に
 // 絞る。
 
-var webListenRE = regexp.MustCompile(`goro web: (\S+) で待ち受けている`)
+var webListenRE = regexp.MustCompile(`goronation web: (\S+) で待ち受けている`)
 
-// freeLoopbackPort は、一時的に空きの TCP ポートを 1 つ確保して番号だけ返す (goro web --listen は、
-// 実プロセスの起動時引数として、待ち受けるアドレスを先に決める必要がある。close してから goro web が
+// freeLoopbackPort は、一時的に空きの TCP ポートを 1 つ確保して番号だけ返す (goronation web --listen は、
+// 実プロセスの起動時引数として、待ち受けるアドレスを先に決める必要がある。close してから goronation web が
 // bind するまでの短い窓での競合は、テスト環境では実用上無視できる)。
 func freeLoopbackPort(t *testing.T) int {
 	t.Helper()
@@ -39,7 +39,7 @@ func freeLoopbackPort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// webFixture は、動いている goro web と、WebAuthn でログイン済みの http.Client。
+// webFixture は、動いている goronation web と、WebAuthn でログイン済みの http.Client。
 type webFixture struct {
 	f      *runFixture
 	r      *liveRun
@@ -47,7 +47,7 @@ type webFixture struct {
 	client *http.Client
 }
 
-// startWebFixture は、goro web --repos-dir reposDir (省略可) を起動し、ブートストラップトークンの発行・
+// startWebFixture は、goronation web --repos-dir reposDir (省略可) を起動し、ブートストラップトークンの発行・
 // WebAuthn の登録・ログインまで済ませる。t.Cleanup で、SIGTERM を送って終了を待つ。
 func startWebFixture(t *testing.T, f *runFixture, reposDir string) *webFixture {
 	t.Helper()
@@ -65,7 +65,7 @@ func startWebFixture(t *testing.T, f *runFixture, reposDir string) *webFixture {
 	})
 	waitStderrMatch(t, r, webListenRE)
 
-	tok := f.goro(t, "web", "token", "--state-dir", f.stateDir()).mustOK(t)
+	tok := f.goronation(t, "web", "token", "--state-dir", f.stateDir()).mustOK(t)
 	token := strings.TrimSpace(tok.stdout)
 	if token == "" {
 		t.Fatalf("ブートストラップトークンが発行されていない: %s", tok)
@@ -86,7 +86,7 @@ func (wf *webFixture) cookieHeader(t *testing.T) http.Header {
 			return http.Header{"Cookie": []string{sessionCookieName + "=" + c.Value}}
 		}
 	}
-	t.Fatal("goro_session cookie が無い")
+	t.Fatal("goronation_session cookie が無い")
 	return nil
 }
 
@@ -99,8 +99,8 @@ func mustParseBase(t *testing.T, base string) *url.URL {
 	return u
 }
 
-// TestWebRepoBrowserStartsSessionAndRelays は、goro web の repo のファイルブラウザ経由で新しいセッション
-// を始め (goro serve を子プロセスとして起動させ)、その端末ビューの WebSocket が、実際の bwrap の檻の
+// TestWebRepoBrowserStartsSessionAndRelays は、goronation web の repo のファイルブラウザ経由で新しいセッション
+// を始め (goronation serve を子プロセスとして起動させ)、その端末ビューの WebSocket が、実際の bwrap の檻の
 // 中のエージェントと生バイト列を中継することを確かめる。
 func TestWebRepoBrowserStartsSessionAndRelays(t *testing.T) {
 	f := newRunFixture(t)
@@ -159,19 +159,19 @@ func TestWebRepoBrowserStartsSessionAndRelays(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// WebSocket 越しに、goro web が dial-or-spawn した goro serve へ実際に繋がることを確かめる。
-	// goro web の repo のファイルブラウザ経由では、エージェントへの引数 (-- ARGS...) を指定する手段が
+	// WebSocket 越しに、goronation web が dial-or-spawn した goronation serve へ実際に繋がることを確かめる。
+	// goronation web の repo のファイルブラウザ経由では、エージェントへの引数 (-- ARGS...) を指定する手段が
 	// 無い (実運用では、エージェントの既定の対話モードで起動するので問題にならない)。テストのエージェント
 	// (fakeClaude) は、引数が無いと即座に終了する場面 (scenario=none) になるので、接続を試みるタイミング
 	// によっては、エージェントがすでに終わっていて 410 (Gone) が返ることがある。どちらも
-	// 「goro web → goro serve の配線」自体は正しく機能した結果なので、両方を正常とみなす (生バイト中継
-	// そのものの確認は、--session 再開のテスト (下) と、goro serve 直接の serve_terminal_bwrap_linux_test.go
+	// 「goronation web → goronation serve の配線」自体は正しく機能した結果なので、両方を正常とみなす (生バイト中継
+	// そのものの確認は、--session 再開のテスト (下) と、goronation serve 直接の serve_terminal_bwrap_linux_test.go
 	// で、termecho 場面を使って行う)。
 	ctx := t.Context()
 	cli, resp2, err := termrelaytest.Dial(ctx, wf.wsURL(started.ID), &termrelaytest.DialOptions{Header: wf.cookieHeader(t)})
 	if err != nil {
 		if resp2 != nil && resp2.StatusCode == http.StatusGone {
-			t.Logf("エージェントは接続前にすでに終わっていた (410)。goro web 経由の起動・配線としては正常")
+			t.Logf("エージェントは接続前にすでに終わっていた (410)。goronation web 経由の起動・配線としては正常")
 			return
 		}
 		t.Fatalf("WebSocket に繋げない (応答 %v): %v", resp2, err)
@@ -182,21 +182,21 @@ func TestWebRepoBrowserStartsSessionAndRelays(t *testing.T) {
 	}
 }
 
-// TestWebProxySpawnsServeOnDemandForExistingSession は、goro run --repo が (goro web を介さず) 直接
-// 作った既存のセッションに、goro web 経由で初めて繋いだときに、goro web が goro serve --session を
+// TestWebProxySpawnsServeOnDemandForExistingSession は、goronation run --repo が (goronation web を介さず) 直接
+// 作った既存のセッションに、goronation web 経由で初めて繋いだときに、goronation web が goronation serve --session を
 // 自動で起動する (dial-or-spawn) ことを確かめる。
 func TestWebProxySpawnsServeOnDemandForExistingSession(t *testing.T) {
 	f := newRunFixture(t)
-	created := f.goro(t, "run", "--repo", f.repo, "--", "exit", "0").mustOK(t)
+	created := f.goronation(t, "run", "--repo", f.repo, "--", "exit", "0").mustOK(t)
 	id := sessionID(t, created)
 
 	wf := startWebFixture(t, f, "")
 	ctx := t.Context()
 	header := wf.cookieHeader(t)
 
-	// この時点で、この id の goro serve は、まだ (goro run --repo が終わっているので) 動いていない。
-	// goro web 経由の再開でも、エージェントへの引数は渡せない (上の TestWebRepoBrowserStartsSessionAndRelays
-	// と同じ理由)。最初の dial は「goro serve がまだ動いていない」ため必ず失敗する (それ自体は正常。
+	// この時点で、この id の goronation serve は、まだ (goronation run --repo が終わっているので) 動いていない。
+	// goronation web 経由の再開でも、エージェントへの引数は渡せない (上の TestWebRepoBrowserStartsSessionAndRelays
+	// と同じ理由)。最初の dial は「goronation serve がまだ動いていない」ため必ず失敗する (それ自体は正常。
 	// spawn を挟んでリトライする) が、spawn 後の dial が 410 なら、dial-or-spawn は正しく機能した
 	// うえでエージェントが先に終わっただけなので、それも正常とみなして終える。
 	deadline := time.Now().Add(serveTestTimeout)
@@ -218,7 +218,7 @@ func TestWebProxySpawnsServeOnDemandForExistingSession(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	if cli == nil {
-		t.Fatalf("goro web 経由での自動起動に失敗した (応答 %v): %v", lastResp, lastErr)
+		t.Fatalf("goronation web 経由での自動起動に失敗した (応答 %v): %v", lastResp, lastErr)
 	}
 	defer cli.Close()
 	if err := cli.WriteResize(ctx, 80, 24); err != nil {
@@ -226,9 +226,9 @@ func TestWebProxySpawnsServeOnDemandForExistingSession(t *testing.T) {
 	}
 }
 
-// TestWebTerminalWebSocketRequiresAuth は、cookie 無しで /s/{id}/ws に繋いでも、goro serve へ届く前に
-// requireSession で拒まれることを確かめる (goro serve 自身は UDS 越しなら無条件に信頼するので、この
-// 認証は goro web の層だけで担保されている)。
+// TestWebTerminalWebSocketRequiresAuth は、cookie 無しで /s/{id}/ws に繋いでも、goronation serve へ届く前に
+// requireSession で拒まれることを確かめる (goronation serve 自身は UDS 越しなら無条件に信頼するので、この
+// 認証は goronation web の層だけで担保されている)。
 func TestWebTerminalWebSocketRequiresAuth(t *testing.T) {
 	f := newRunFixture(t)
 	wf := startWebFixture(t, f, "")

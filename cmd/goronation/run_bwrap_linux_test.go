@@ -20,9 +20,9 @@ import (
 	"time"
 )
 
-// 結合テスト (bwrap が要る): 実プロセスの goro run (テストバイナリを、argv[0] = goro で再実行したもの) が、偽の claude
-// (テストバイナリを、argv[0] = claude で再実行したもの。GORO_CLAUDE で指す) を、本物の檻の中で動かす。
-// goro run は新しいセッション (Setsid) で起動する: 制御端末を持たず (TIOCSTI の確認が、開発者の端末に左右されない)、
+// 結合テスト (bwrap が要る): 実プロセスの goronation run (テストバイナリを、argv[0] = goronation で再実行したもの) が、偽の claude
+// (テストバイナリを、argv[0] = claude で再実行したもの。GORONATION_CLAUDE で指す) を、本物の檻の中で動かす。
+// goronation run は新しいセッション (Setsid) で起動する: 制御端末を持たず (TIOCSTI の確認が、開発者の端末に左右されない)、
 // プロセスグループが自分だけになる (端末のシグナルを、グループへの kill で真似られる)。
 
 const (
@@ -30,12 +30,12 @@ const (
 	runTimeout = 90 * time.Second
 )
 
-// runFixture は、偽の HOME・元の repo・goro run の環境変数。
+// runFixture は、偽の HOME・元の repo・goronation run の環境変数。
 type runFixture struct {
 	dir  string // 短い path の作業ディレクトリ
 	home string // 偽のホストの HOME (~/.ssh などの目印がある)
 	repo string // 元の repo
-	exe  string // テストバイナリ (goro としても、偽の claude としても、動く)
+	exe  string // テストバイナリ (goronation としても、偽の claude としても、動く)
 	env  []string
 }
 
@@ -64,7 +64,7 @@ func newRunFixture(t *testing.T) *runFixture {
 			t.Fatal(err)
 		}
 	}
-	f.env = []string{"HOME=" + f.home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "TERM=xterm-256color", "GORO_CLAUDE=" + exe, "GORO_OPENCODE=" + exe}
+	f.env = []string{"HOME=" + f.home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "TERM=xterm-256color", "GORONATION_CLAUDE=" + exe, "GORONATION_OPENCODE=" + exe}
 	if err := os.Mkdir(f.repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func newRunFixture(t *testing.T) *runFixture {
 	return f
 }
 
-// git は、ホストで git を実行する (テストの準備と、利用者の git fetch を模す確認だけ。goro 本体は、ホストで git を実行しない)。
+// git は、ホストで git を実行する (テストの準備と、利用者の git fetch を模す確認だけ。goronation 本体は、ホストで git を実行しない)。
 func (f *runFixture) git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(gitPath, append([]string{"-c", "user.name=t", "-c", "user.email=t@e.invalid", "-c", "commit.gpgsign=false"}, args...)...)
@@ -108,7 +108,7 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
-// liveRun は、動いている goro の子プロセス。
+// liveRun は、動いている goronation の子プロセス。
 type liveRun struct {
 	t      *testing.T
 	cmd    *exec.Cmd
@@ -118,14 +118,14 @@ type liveRun struct {
 	err    error
 }
 
-// start は、goro を、args で、新しいセッションで起動する。
+// start は、goronation を、args で、新しいセッションで起動する。
 func (f *runFixture) start(t *testing.T, args ...string) *liveRun {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	t.Cleanup(cancel)
 	r := &liveRun{t: t, done: make(chan struct{})}
 	r.cmd = exec.CommandContext(ctx, f.exe, args...)
-	r.cmd.Args[0] = "goro"
+	r.cmd.Args[0] = "goronation"
 	r.cmd.Env = f.env
 	r.cmd.Stdout, r.cmd.Stderr = &r.stdout, &r.stderr
 	r.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -149,7 +149,7 @@ func (r *liveRun) waitStdout(substr string) {
 			if strings.Contains(r.stdout.String(), substr) {
 				return
 			}
-			r.t.Fatalf("%q が出る前に、goro が終わった: %v\nstdout:\n%s\nstderr:\n%s", substr, r.err, r.stdout.String(), r.stderr.String())
+			r.t.Fatalf("%q が出る前に、goronation が終わった: %v\nstdout:\n%s\nstderr:\n%s", substr, r.err, r.stdout.String(), r.stderr.String())
 		case <-deadline:
 			r.t.Fatalf("%q が出ない\nstdout:\n%s\nstderr:\n%s", substr, r.stdout.String(), r.stderr.String())
 		case <-time.After(10 * time.Millisecond):
@@ -157,13 +157,13 @@ func (r *liveRun) waitStdout(substr string) {
 	}
 }
 
-// wait は、goro の終了を待ち、終了コード (シグナルで死んだら -1) を返す。
+// wait は、goronation の終了を待ち、終了コード (シグナルで死んだら -1) を返す。
 func (r *liveRun) wait() int {
 	r.t.Helper()
 	select {
 	case <-r.done:
 	case <-time.After(runTimeout):
-		r.t.Fatalf("goro が終わらない (檻の中に、標準出力を持ったまま残っているものがあるか)\nstdout:\n%s\nstderr:\n%s", r.stdout.String(), r.stderr.String())
+		r.t.Fatalf("goronation が終わらない (檻の中に、標準出力を持ったまま残っているものがあるか)\nstdout:\n%s\nstderr:\n%s", r.stdout.String(), r.stderr.String())
 	}
 	if r.err == nil {
 		return 0
@@ -172,18 +172,18 @@ func (r *liveRun) wait() int {
 	if errors.As(r.err, &ee) {
 		return ee.ExitCode()
 	}
-	r.t.Fatalf("goro の Wait: %v", r.err)
+	r.t.Fatalf("goronation の Wait: %v", r.err)
 	return -1
 }
 
-// goroResult は、終わった goro の結果。
+// goroResult は、終わった goronation の結果。
 type goroResult struct {
 	stdout, stderr string
 	code           int
 }
 
-// goro は、goro を args で起動し、終わるのを待つ。
-func (f *runFixture) goro(t *testing.T, args ...string) goroResult {
+// goronation は、goronation を args で起動し、終わるのを待つ。
+func (f *runFixture) goronation(t *testing.T, args ...string) goroResult {
 	t.Helper()
 	r := f.start(t, args...)
 	code := r.wait()
@@ -198,7 +198,7 @@ func (r goroResult) String() string {
 func (r goroResult) mustOK(t *testing.T) goroResult {
 	t.Helper()
 	if r.code != 0 {
-		t.Fatalf("goro が失敗した: %s", r)
+		t.Fatalf("goronation が失敗した: %s", r)
 	}
 	return r
 }
@@ -218,7 +218,7 @@ func parseOut(out string) (kv, arrow map[string]string) {
 
 var sessionIDRE = regexp.MustCompile(`セッション: (\d{8}-\d{6}-[0-9a-f]{6})`)
 
-// sessionID は、goro run の案内から、セッション ID を取り出す。
+// sessionID は、goronation run の案内から、セッション ID を取り出す。
 func sessionID(t *testing.T, r goroResult) string {
 	t.Helper()
 	m := sessionIDRE.FindStringSubmatch(r.stderr)
@@ -228,21 +228,21 @@ func sessionID(t *testing.T, r goroResult) string {
 	return m[1]
 }
 
-func (f *runFixture) stateDir() string { return filepath.Join(f.home, ".local", "state", "goro") }
+func (f *runFixture) stateDir() string { return filepath.Join(f.home, ".local", "state", "goronation") }
 
-// (a) 偽の claude が /work に commit する → goro export → bundle → 別の repo で、表示された取り込みのコマンドを実行できる。
+// (a) 偽の claude が /work に commit する → goronation export → bundle → 別の repo で、表示された取り込みのコマンドを実行できる。
 // (d) --session で再開すると、同じ clone が見える。sessions は、一覧に出す。
 func TestRunCommitExportFetchResume(t *testing.T) {
 	f := newRunFixture(t)
 
-	run1 := f.goro(t, "run", "--repo", f.repo, "--", "commit", "hello.txt", "hi there", "add hello").mustOK(t)
+	run1 := f.goronation(t, "run", "--repo", f.repo, "--", "commit", "hello.txt", "hi there", "add hello").mustOK(t)
 	kv, _ := parseOut(run1.stdout)
 	commit := strings.TrimSpace(kv["commit"])
 	if len(commit) != 40 {
 		t.Fatalf("偽の claude が commit できていない: %s", run1)
 	}
 	id := sessionID(t, run1)
-	for _, want := range []string{"goro run --session " + id, "goro export " + id} {
+	for _, want := range []string{"goronation run --session " + id, "goronation export " + id} {
 		if !strings.Contains(run1.stderr, want) {
 			t.Errorf("終了後の案内に %q が無い:\n%s", want, run1.stderr)
 		}
@@ -255,8 +255,8 @@ func TestRunCommitExportFetchResume(t *testing.T) {
 	}
 
 	// export → 別の repo に取り込む。
-	exp := f.goro(t, "export", id).mustOK(t)
-	if !strings.Contains(exp.stdout, "refs/heads/main") || !strings.Contains(exp.stdout, "goro.bundle") {
+	exp := f.goronation(t, "export", id).mustOK(t)
+	if !strings.Contains(exp.stdout, "refs/heads/main") || !strings.Contains(exp.stdout, "goronation.bundle") {
 		t.Fatalf("export の表示:\n%s", exp)
 	}
 	var fetch string
@@ -280,7 +280,7 @@ func TestRunCommitExportFetchResume(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("表示された取り込みのコマンドが失敗した: %v\n%s\n%s", err, fetch, out)
 	}
-	ref := "refs/heads/goro/" + id + "/main"
+	ref := "refs/heads/goronation/" + id + "/main"
 	if got := strings.TrimSpace(f.git(t, dest, "rev-parse", ref)); got != commit {
 		t.Errorf("取り込んだ %s = %s, want %s", ref, got, commit)
 	}
@@ -289,13 +289,13 @@ func TestRunCommitExportFetchResume(t *testing.T) {
 	}
 
 	// sessions
-	ss := f.goro(t, "sessions").mustOK(t)
+	ss := f.goronation(t, "sessions").mustOK(t)
 	if !strings.Contains(ss.stdout, id) || !strings.HasSuffix(strings.TrimSpace(ss.stdout), "  repo") {
 		t.Errorf("sessions の表示 (ID と、元の repo 名 repo が出る):\n%s", ss.stdout)
 	}
 
 	// (d) 再開: 前の commit と、ファイルが残っている。
-	run2 := f.goro(t, "run", "--session", id, "--", "gitlog", "hello.txt").mustOK(t)
+	run2 := f.goronation(t, "run", "--session", id, "--", "gitlog", "hello.txt").mustOK(t)
 	if !strings.Contains(run2.stdout, "log="+commit) || !strings.Contains(run2.stdout, `file="hi there"`) {
 		t.Errorf("再開した clone に、前の commit が見えない:\n%s", run2)
 	}
@@ -311,7 +311,7 @@ func TestRunCommitExportFetchResume(t *testing.T) {
 // 既定の宛先と、--allow で足した宛先は、403 にならない (200 か、CI にネットワークが無いときの 502・504)。
 func TestRunEgressAllowList(t *testing.T) {
 	f := newRunFixture(t)
-	r := f.goro(t, "run", "--repo", f.repo, "--allow", "example.org:443", "--",
+	r := f.goronation(t, "run", "--repo", f.repo, "--allow", "example.org:443", "--",
 		"connect", "example.com:443", "example.com:80", "api.anthropic.com:443", "platform.claude.com:443", "example.org:443", "127.0.0.1:22").mustOK(t)
 	_, res := parseOut(r.stdout)
 	for _, target := range []string{"example.com:443", "example.com:80"} {
@@ -386,12 +386,12 @@ func TestRunCageIsolation(t *testing.T) {
 	// 届いてはいけないもの (外部・ホストの loopback)。
 	unreachable := []string{"dial:1.1.1.1:443", "dial:" + l.Addr().String()}
 	// ro の mount のはずのもの (ro の mount に、書き込みは失敗する)。
-	readOnly := []string{"/usr", "/etc/ssl/certs", "/opt/claude/claude", "/opt/goro/goro", "/run/goro"}
-	readOnlyWrites := []string{"write:/usr/x", "write:/etc/ssl/certs/x", "write:/run/goro/x", "write:/run/goro/proxy.sock", "write:/run/goro/egress.log"}
+	readOnly := []string{"/usr", "/etc/ssl/certs", "/opt/claude/claude", "/opt/goronation/goronation", "/run/goronation"}
+	readOnlyWrites := []string{"write:/usr/x", "write:/etc/ssl/certs/x", "write:/run/goronation/x", "write:/run/goronation/proxy.sock", "write:/run/goronation/egress.log"}
 	// rw の mount のはずのもの。
-	readWrite := []string{"/home/goro", "/work"}
-	writable := []string{"write:/work/x", "write:/home/goro/x", "write:/tmp/x"}
-	visible := []string{"stat:/opt/goro/goro", "stat:/opt/claude/claude", "stat:/usr/bin/git", "stat:/etc/ssl/certs", "stat:/run/goro/egress.log", "dial:127.0.0.1:3128"}
+	readWrite := []string{"/home/goronation", "/work"}
+	writable := []string{"write:/work/x", "write:/home/goronation/x", "write:/tmp/x"}
+	visible := []string{"stat:/opt/goronation/goronation", "stat:/opt/claude/claude", "stat:/usr/bin/git", "stat:/etc/ssl/certs", "stat:/run/goronation/egress.log", "dial:127.0.0.1:3128"}
 
 	var probes []string
 	for _, g := range [][]string{hidden, unreachable, readOnlyWrites, writable, visible} {
@@ -400,7 +400,7 @@ func TestRunCageIsolation(t *testing.T) {
 	for _, p := range append(slices.Clone(readOnly), readWrite...) {
 		probes = append(probes, "mnt:"+p)
 	}
-	r := f.goro(t, append([]string{"run", "--repo", f.repo, "--", "probe"}, probes...)...).mustOK(t)
+	r := f.goronation(t, append([]string{"run", "--repo", f.repo, "--", "probe"}, probes...)...).mustOK(t)
 	_, res := parseOut(r.stdout)
 	for _, g := range []struct {
 		what string
@@ -411,7 +411,7 @@ func TestRunCageIsolation(t *testing.T) {
 		{"外部・ホストの loopback に、直接届く", unreachable, false},
 		{"ro のはずの path に、書けた", readOnlyWrites, false},
 		{"書けるはずの path に、書けない", writable, true},
-		{"見えるはずの path・檻の loopback の中継 (goro init) に、届かない", visible, true},
+		{"見えるはずの path・檻の loopback の中継 (goronation init) に、届かない", visible, true},
 	} {
 		for _, op := range g.ops {
 			if s := res[op]; (s == "ok") != g.ok || (!g.ok && !strings.HasPrefix(s, "err")) {
@@ -436,9 +436,9 @@ func TestRunCageIsolation(t *testing.T) {
 	}
 
 	// 環境変数と、起動の状態。
-	info := f.goro(t, "run", "--repo", f.repo, "--", "info").mustOK(t)
+	info := f.goronation(t, "run", "--repo", f.repo, "--", "info").mustOK(t)
 	kv, _ := parseOut(info.stdout)
-	if kv["home"] != "/home/goro" || kv["cwd"] != "/work" || kv["https_proxy"] != "http://127.0.0.1:3128" || kv["no_proxy"] != "127.0.0.1,localhost,::1" {
+	if kv["home"] != "/home/goronation" || kv["cwd"] != "/work" || kv["https_proxy"] != "http://127.0.0.1:3128" || kv["no_proxy"] != "127.0.0.1,localhost,::1" {
 		t.Errorf("HOME・cwd・HTTPS_PROXY・NO_PROXY = %q・%q・%q・%q", kv["home"], kv["cwd"], kv["https_proxy"], kv["no_proxy"])
 	}
 	allowed := map[string]bool{}
@@ -467,7 +467,7 @@ func TestRunCageIsolation(t *testing.T) {
 // 次の --repo の檻に見える。--state-dir は、案内に含まれる。
 func TestRunLogin(t *testing.T) {
 	f := newRunFixture(t)
-	r := f.goro(t, "run", "--login", "--", "auth", "--extra").mustOK(t) // fake claude の場面 auth が、ログインの目印を作る
+	r := f.goronation(t, "run", "--login", "--", "auth", "--extra").mustOK(t) // fake claude の場面 auth が、ログインの目印を作る
 	kv, _ := parseOut(r.stdout)
 	if kv["args"] != `["auth" "--extra"]` {
 		t.Errorf("claude の引数 = %s, want [auth --extra] (--login は、claude auth login を付けない)", kv["args"])
@@ -476,7 +476,7 @@ func TestRunLogin(t *testing.T) {
 		strings.Contains(r.stderr, "Security notes") || strings.Contains(r.stderr, "テーマ") { // エージェントの画面の内容を、説明しない
 		t.Errorf("--login の起動前の案内が無い:\n%s", r.stderr)
 	}
-	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goro" {
+	if kv["cwd"] != "/work" || kv["work"] != "" || kv["home"] != "/home/goronation" {
 		t.Errorf("cwd・/work の中身・HOME = %q・%q・%q (空の作業ディレクトリのはず)", kv["cwd"], kv["work"], kv["home"])
 	}
 	if b, err := os.ReadFile(f.agentPath("claude", "auth", "login-marker")); err != nil || string(b) != "logged-in\n" {
@@ -488,31 +488,31 @@ func TestRunLogin(t *testing.T) {
 	if _, err := os.Stat(f.agentPath("claude", "login-run", egressLogName)); err != nil {
 		t.Errorf("ログイン用の run dir に、監査ログが無い: %v", err)
 	}
-	if !strings.Contains(r.stderr, "ログイン状態: ") || !strings.Contains(r.stderr, "goro run --repo PATH") || strings.Contains(r.stderr, "セッション:") {
+	if !strings.Contains(r.stderr, "ログイン状態: ") || !strings.Contains(r.stderr, "goronation run --repo PATH") || strings.Contains(r.stderr, "セッション:") {
 		t.Errorf("--login の案内:\n%s", r.stderr)
 	}
-	if ss := f.goro(t, "sessions").mustOK(t); !strings.Contains(ss.stdout, "セッションは無い") {
+	if ss := f.goronation(t, "sessions").mustOK(t); !strings.Contains(ss.stdout, "セッションは無い") {
 		t.Errorf("--login が、セッションを作った:\n%s", ss.stdout)
 	}
 
 	// 次の --repo の檻で、ログイン状態が見える。ホストの HOME の .claude は、見えない。
-	next := f.goro(t, "run", "--repo", f.repo, "--", "marker").mustOK(t)
+	next := f.goronation(t, "run", "--repo", f.repo, "--", "marker").mustOK(t)
 	if !strings.Contains(next.stdout, `marker="logged-in\n"`) {
 		t.Errorf("ログイン状態が、次の檻に見えない:\n%s", next)
 	}
 
 	// --state-dir
 	st := filepath.Join(f.dir, "st")
-	r = f.goro(t, "run", "--state-dir", st, "--login", "--", "auth").mustOK(t)
+	r = f.goronation(t, "run", "--state-dir", st, "--login", "--", "auth").mustOK(t)
 	if _, err := os.Stat(filepath.Join(st, "agents", "claude", "auth", "login-marker")); err != nil {
 		t.Errorf("--state-dir の下の認証情報のディレクトリに、ログイン状態が無い: %v", err)
 	}
-	if !strings.Contains(r.stderr, "goro run --state-dir '"+st+"' --repo PATH") {
+	if !strings.Contains(r.stderr, "goronation run --state-dir '"+st+"' --repo PATH") {
 		t.Errorf("案内に --state-dir が含まれない:\n%s", r.stderr)
 	}
 }
 
-// 端末のシグナル: Ctrl-C (SIGINT)・SIGQUIT は、フォアグラウンドの process group 全体に届く。ホストの goro run は無視して落ちず
+// 端末のシグナル: Ctrl-C (SIGINT)・SIGQUIT は、フォアグラウンドの process group 全体に届く。ホストの goronation run は無視して落ちず
 // (終了コードは claude のもの)、檻の中の claude は、ちょうど 1 回、直接受ける。無視の設定は、claude に引き継がれない。
 func TestRunTerminalSignals(t *testing.T) {
 	f := newRunFixture(t)
@@ -524,7 +524,7 @@ func TestRunTerminalSignals(t *testing.T) {
 				t.Fatal(err)
 			}
 			if code := r.wait(); code != 0 {
-				t.Fatalf("終了コード = %d, want 0 (ホストの goro run が、%v で落ちた・檻が死んだ)\nstdout:\n%s\nstderr:\n%s", code, sig, r.stdout.String(), r.stderr.String())
+				t.Fatalf("終了コード = %d, want 0 (ホストの goronation run が、%v で落ちた・檻が死んだ)\nstdout:\n%s\nstderr:\n%s", code, sig, r.stdout.String(), r.stderr.String())
 			}
 			kv, _ := parseOut(r.stdout.String())
 			want := map[syscall.Signal]string{syscall.SIGINT: "sigint=1 sigquit=0", syscall.SIGQUIT: "sigint=0 sigquit=1"}[sig]
@@ -542,7 +542,7 @@ func TestRunTerminalSignals(t *testing.T) {
 	}
 }
 
-// SIGTERM・SIGHUP は、ホストの goro run が受けて、檻を止め、後始末 (UDS の削除・案内) をして、128+番号で終わる。
+// SIGTERM・SIGHUP は、ホストの goronation run が受けて、檻を止め、後始末 (UDS の削除・案内) をして、128+番号で終わる。
 func TestRunTermSignalsStopCage(t *testing.T) {
 	f := newRunFixture(t)
 	for _, tc := range []struct {
@@ -552,7 +552,7 @@ func TestRunTermSignalsStopCage(t *testing.T) {
 		t.Run(tc.sig.String(), func(t *testing.T) {
 			r := f.start(t, "run", "--repo", f.repo, "--", "hold")
 			r.waitStdout("ready")
-			if err := syscall.Kill(r.cmd.Process.Pid, tc.sig); err != nil { // ホストの goro run だけに送る
+			if err := syscall.Kill(r.cmd.Process.Pid, tc.sig); err != nil { // ホストの goronation run だけに送る
 				t.Fatal(err)
 			}
 			if code := r.wait(); code != tc.code { // wait は、檻の中の全員が、標準出力を閉じるまで戻らない
@@ -567,12 +567,12 @@ func TestRunTermSignalsStopCage(t *testing.T) {
 				t.Error("終了後も、egress の UDS が残っている")
 			}
 			// ロックも離れている: 同じセッションを、もう一度使える。
-			f.goro(t, "run", "--session", id, "--", "info").mustOK(t)
+			f.goronation(t, "run", "--session", id, "--", "info").mustOK(t)
 		})
 	}
 }
 
-// 同じセッションを、同時に 2 つの goro run が使うことは、断る (UDS を取り合わない)。1 つ目は、影響を受けない。
+// 同じセッションを、同時に 2 つの goronation run が使うことは、断る (UDS を取り合わない)。1 つ目は、影響を受けない。
 func TestRunSameSessionTwiceRefused(t *testing.T) {
 	f := newRunFixture(t)
 	first := f.start(t, "run", "--repo", f.repo, "--", "hold")
@@ -582,9 +582,9 @@ func TestRunSameSessionTwiceRefused(t *testing.T) {
 		t.Fatalf("セッションが 1 つのはず: %v, %v", ents, err)
 	}
 	id := ents[0].Name()
-	second := f.goro(t, "run", "--session", id, "--", "info")
-	if second.code != 1 || !strings.Contains(second.stderr, "別の goro run が使っている") {
-		t.Errorf("2 つ目の goro run: %s", second)
+	second := f.goronation(t, "run", "--session", id, "--", "info")
+	if second.code != 1 || !strings.Contains(second.stderr, "別の goronation run が使っている") {
+		t.Errorf("2 つ目の goronation run: %s", second)
 	}
 	// 1 つ目の UDS は、無事 (取り替えられていない)。
 	c, err := net.Dial("unix", filepath.Join(f.stateDir(), "sessions", id, "run", proxySockName))
@@ -597,13 +597,13 @@ func TestRunSameSessionTwiceRefused(t *testing.T) {
 	first.wait()
 }
 
-// goro run の終了コードは、claude の終了コード。終わった後の案内は、失敗しても出る。
+// goronation run の終了コードは、claude の終了コード。終わった後の案内は、失敗しても出る。
 func TestRunExitCode(t *testing.T) {
 	f := newRunFixture(t)
 	for _, code := range []int{0, 1, 7, 42} {
-		r := f.goro(t, "run", "--repo", f.repo, "--", "exit", strconv.Itoa(code))
+		r := f.goronation(t, "run", "--repo", f.repo, "--", "exit", strconv.Itoa(code))
 		if r.code != code {
-			t.Errorf("claude が %d で終わったとき、goro run の終了コード = %d\n%s", code, r.code, r)
+			t.Errorf("claude が %d で終わったとき、goronation run の終了コード = %d\n%s", code, r.code, r)
 		}
 		if !strings.Contains(r.stderr, "セッション:") {
 			t.Errorf("claude が %d で終わったとき、案内が出ていない:\n%s", code, r.stderr)
@@ -612,13 +612,13 @@ func TestRunExitCode(t *testing.T) {
 }
 
 // TestRunPushSetsOrigin は、--push owner/repo で起動した、新しいセッションの clone に、origin (GitHub の URL)
-// が設定されることを確認する (session.Create は、clone した直後に origin を外すので、goro run --push 側で
+// が設定されることを確認する (session.Create は、clone した直後に origin を外すので、goronation run --push 側で
 // 設定し直さないと、素の git fetch/pull/push origin ... が「'origin' does not exist」で失敗する、というバグの
 // 回帰テスト)。--push を付けないときは、これまでどおり origin が無いままであることも確認する。
 func TestRunPushSetsOrigin(t *testing.T) {
 	f := newRunFixture(t)
 
-	run := f.goro(t, "run", "--push", "o/r", "--repo", f.repo, "--", "exit", "0").mustOK(t)
+	run := f.goronation(t, "run", "--push", "o/r", "--repo", f.repo, "--", "exit", "0").mustOK(t)
 	id := sessionID(t, run)
 	cfg, err := os.ReadFile(filepath.Join(f.stateDir(), "sessions", id, "clone", ".git", "config"))
 	if err != nil {
@@ -628,7 +628,7 @@ func TestRunPushSetsOrigin(t *testing.T) {
 		t.Fatalf("--push の clone に origin が設定されていない:\n%s", cfg)
 	}
 
-	run2 := f.goro(t, "run", "--repo", f.repo, "--", "exit", "0").mustOK(t)
+	run2 := f.goronation(t, "run", "--repo", f.repo, "--", "exit", "0").mustOK(t)
 	id2 := sessionID(t, run2)
 	cfg2, err := os.ReadFile(filepath.Join(f.stateDir(), "sessions", id2, "clone", ".git", "config"))
 	if err != nil {
@@ -648,7 +648,7 @@ func legacyTIOCSTIOff() (bool, string) {
 	return strings.TrimSpace(string(b)) == "0", strings.TrimSpace(string(b))
 }
 
-// 檻の中のプロセスが端末の設定 (raw・-echo・-isig) を変えても、goro run は、終了後 (正常終了でも、SIGTERM での取り消しでも)、
+// 檻の中のプロセスが端末の設定 (raw・-echo・-isig) を変えても、goronation run は、終了後 (正常終了でも、SIGTERM での取り消しでも)、
 // 起動前の termios (全部) に戻す。端末 (pty) は、標準入出力と制御端末にする。
 func TestRunRestoresTerminal(t *testing.T) {
 	f := newRunFixture(t)
@@ -669,7 +669,7 @@ func TestRunRestoresTerminal(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, f.exe, append([]string{"run", "--repo", f.repo, "--"}, tc.args...)...)
-			cmd.Args[0] = "goro"
+			cmd.Args[0] = "goronation"
 			cmd.Env = f.env
 			cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
@@ -683,7 +683,7 @@ func TestRunRestoresTerminal(t *testing.T) {
 			for !strings.Contains(out.String(), "raw-set") {
 				select {
 				case err := <-done:
-					t.Fatalf("raw-set が出る前に、goro が終わった: %v\n%s", err, out.String())
+					t.Fatalf("raw-set が出る前に、goronation が終わった: %v\n%s", err, out.String())
 				default:
 				}
 				if time.Now().After(deadline) {
@@ -705,23 +705,23 @@ func TestRunRestoresTerminal(t *testing.T) {
 			case err := <-done:
 				var ee *exec.ExitError
 				if tc.term != (errors.As(err, &ee) && ee.ExitCode() == 143) || (!tc.term && err != nil) {
-					t.Errorf("goro の終わり方: %v (want %s)", err, map[bool]string{true: "143", false: "0"}[tc.term])
+					t.Errorf("goronation の終わり方: %v (want %s)", err, map[bool]string{true: "143", false: "0"}[tc.term])
 				}
 			case <-time.After(runTimeout):
-				t.Fatalf("goro が終わらない:\n%s", out.String())
+				t.Fatalf("goronation が終わらない:\n%s", out.String())
 			}
 			if after := termOf(t, slave); after != before {
-				t.Errorf("goro の終了後、端末の設定が戻っていない:\n before %+v\n after  %+v\n出力:\n%s", before, after, out.String())
+				t.Errorf("goronation の終了後、端末の設定が戻っていない:\n before %+v\n after  %+v\n出力:\n%s", before, after, out.String())
 			}
 		})
 	}
 }
 
-// TestRunPtyPropagatesWinsize は、goro run が実端末に直結するとき (すべて実端末)、専用の pty を用意し、
+// TestRunPtyPropagatesWinsize は、goronation run が実端末に直結するとき (すべて実端末)、専用の pty を用意し、
 // (1) 起動時に、実端末の大きさをその pty に反映すること、(2) 実端末の resize (SIGWINCH) のたびに、大きさを
 // 追随させること、の両方を、実際に檻の中のエージェント (偽の claude、winsize 場面) が読む大きさで確認する。
 //
-// TestRunRestoresTerminal と違い、legacyTIOCSTIOff の確認をしない: この経路は、専用の pty (goro run 自身が
+// TestRunRestoresTerminal と違い、legacyTIOCSTIOff の確認をしない: この経路は、専用の pty (goronation run 自身が
 // 用意し、NewSession で起動する) を使うので、ホストの legacy_tiocsti の設定に左右されない、という設計どおりの
 // ことを、ここで実際に確かめる (legacy_tiocsti が有効な環境でも、このテストが通ることが、その裏付けになる)。
 func TestRunPtyPropagatesWinsize(t *testing.T) {
@@ -737,7 +737,7 @@ func TestRunPtyPropagatesWinsize(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, f.exe, "run", "--repo", f.repo, "--", "winsize")
-	cmd.Args[0] = "goro"
+	cmd.Args[0] = "goronation"
 	cmd.Env = f.env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
@@ -753,7 +753,7 @@ func TestRunPtyPropagatesWinsize(t *testing.T) {
 		for !strings.Contains(out.String(), want) {
 			select {
 			case err := <-done:
-				t.Fatalf("%q が出る前に、goro が終わった: %v\n%s", want, err, out.String())
+				t.Fatalf("%q が出る前に、goronation が終わった: %v\n%s", want, err, out.String())
 			default:
 			}
 			if time.Now().After(deadline) {
@@ -773,7 +773,7 @@ func TestRunPtyPropagatesWinsize(t *testing.T) {
 	for strings.Count(out.String(), "winsize=") < 2 {
 		select {
 		case err := <-done:
-			t.Fatalf("resize 後の winsize が出る前に、goro が終わった: %v\n%s", err, out.String())
+			t.Fatalf("resize 後の winsize が出る前に、goronation が終わった: %v\n%s", err, out.String())
 		default:
 		}
 		if time.Now().After(deadline) {
@@ -788,17 +788,17 @@ func TestRunPtyPropagatesWinsize(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("goro の終わり方: %v\n%s", err, out.String())
+			t.Errorf("goronation の終わり方: %v\n%s", err, out.String())
 		}
 	case <-time.After(runTimeout):
-		t.Fatalf("goro が終わらない:\n%s", out.String())
+		t.Fatalf("goronation が終わらない:\n%s", out.String())
 	}
 }
 
 // 標準入力が端末でないときは、何も保存も戻しもしない (警告も出さない)。
 func TestRunNoTerminalNoWarning(t *testing.T) {
 	f := newRunFixture(t)
-	r := f.goro(t, "run", "--repo", f.repo, "--", "exit", "0").mustOK(t)
+	r := f.goronation(t, "run", "--repo", f.repo, "--", "exit", "0").mustOK(t)
 	if strings.Contains(r.stderr, "端末の設定") {
 		t.Errorf("端末でないのに、端末の設定の警告が出ている:\n%s", r.stderr)
 	}
@@ -816,11 +816,11 @@ func TestRunStartFailureShowsOnlyCause(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"run", "--repo", f.repo, "--bin", bad}, {"run", "--login", "--bin", bad}} {
-		r := f.goro(t, args...)
+		r := f.goronation(t, args...)
 		if r.code != 1 || !strings.Contains(r.stderr, "檻を起動できない") {
 			t.Errorf("%v: 終了コード・原因の表示:\n%s", args, r)
 		}
-		for _, hint := range []string{"--session", "goro export", "セッション:", "次は:", "監査ログ"} {
+		for _, hint := range []string{"--session", "goronation export", "セッション:", "次は:", "監査ログ"} {
 			if strings.Contains(r.stderr, hint) {
 				t.Errorf("%v: 起動に失敗したのに、案内 %q が出ている:\n%s", args, hint, r.stderr)
 			}
