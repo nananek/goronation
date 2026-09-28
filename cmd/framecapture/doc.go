@@ -1,4 +1,4 @@
-// Package main (cmd/framecapture) は、M0 スパイク S1 (Issue #1) のためのフレーム採取ハーネス。
+// Command framecapture は、M0 スパイク S1 (Issue #1) のためのフレーム採取ハーネス。
 //
 // bwrap 檻の中で実物の claude・opencode を動かし、tools/fakeproviders の fake Anthropic Messages
 // API・fake OpenAI 互換 Chat Completions API に向けて、クレジットを使わずに実際のフレームを採取する。
@@ -18,8 +18,9 @@
 //	framecapture opencode -- "こんにちは"
 //	framecapture claude   -- "こんにちは"
 //
-// # 限界 (M0 スパイクとしての割り切り)
+// # 限界
 //
+//   - M0 スパイクとしての割り切りで、調査専用である。
 //   - push・MCP・PTY・セッションの永続化・認証情報の共有は無い (goronation run とは別物)。
 //   - 1 回の起動で 1 ターンだけ採取する (opencode の --session による複数ターン採取は PR③)。
 //   - fake サーバーの応答は、単純な固定文 (--response) だけ (ツール呼び出し・エラー等のシナリオ
