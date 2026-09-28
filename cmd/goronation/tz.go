@@ -78,7 +78,7 @@ func hostTZ() string {
 // (3) etcTimezonePath (Debian 系) の中身。どれも無い・形が壊れている・(見つかったはずの) zoneinfo が
 // 実在しない、のいずれであっても、空文字を返すだけで諦める: 呼び手 (cageEnv) は、空文字なら TZ を檻に
 // 渡さない。渡さなければ、これまでどおり UTC のまま動く (ホストの timezone 設定が壊れていても、
-// goro run 自体は止まらない)。localtimePath・etcTimezonePath を引数にするのは、hostTZ から実物の path を
+// goronation run 自体は止まらない)。localtimePath・etcTimezonePath を引数にするのは、hostTZ から実物の path を
 // 渡す一方、テストは差し替えた path で、この関数を直に確かめられるようにするため。
 func tzFrom(envTZ, localtimePath, etcTimezonePath string) string {
 	if v, ok := validTZValue(envTZ); ok {

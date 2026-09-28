@@ -27,19 +27,19 @@ import (
 	"github.com/nananek/goronation/egress/github"
 )
 
-// jailAPIBase は、檻の中から PR 作成の要求を送る先 (goro init が中継する loopback)。goro run --push が、
+// jailAPIBase は、檻の中から PR 作成の要求を送る先 (goronation init が中継する loopback)。goronation run --push が、
 // egress/gateway をこの経路の先に配線したときだけ、答えが返る。var なのは、テストが偽の上流に差し替えるため
 // (本番はこの値のまま)。
 var jailAPIBase = "http://" + jailProxyAddr + github.PathPrefix
 
-// prUsage は、goro pr -h の使い方。create (檻の中) と ready (ホスト) の 2 つで、動く場所が違う。
-const prUsage = `使い方: goro pr create --title T [--body B] [--base BRANCH]
-        goro pr ready OWNER/REPO N [--state-dir DIR]
+// prUsage は、goronation pr -h の使い方。create (檻の中) と ready (ホスト) の 2 つで、動く場所が違う。
+const prUsage = `使い方: goronation pr create --title T [--body B] [--base BRANCH]
+        goronation pr ready OWNER/REPO N [--state-dir DIR]
 
-create: 檻の中から、PR 作成の要求を送る (goro run --push owner/repo で起動した檻の中でだけ動く。
+create: 檻の中から、PR 作成の要求を送る (goronation run --push owner/repo で起動した檻の中でだけ動く。
         GORO_PUSH_REPO が無ければ断る)。head は、今いる repo の現在のブランチ。base を省くと、
         repo の既定の branch になる。PR は常に draft で作られる (ready にするのは、ホスト側の
-        goro pr ready)。
+        goronation pr ready)。
 
   --title T   PR の題 (必須)
   --body B    PR の本文 (省略可)
@@ -52,10 +52,10 @@ ready: ホストから、PR を ready for review にする (draft を外す)。�
 
   OWNER/REPO        対象の repo
   N                 PR の番号
-  --state-dir DIR   goro auth github で保存したトークンの場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
+  --state-dir DIR   goronation auth github で保存したトークンの場所 (既定は $XDG_STATE_HOME/goronation か ~/.local/state/goronation)
 `
 
-// runPr は goro pr の本体。create・ready へ振り分ける。
+// runPr は goronation pr の本体。create・ready へ振り分ける。
 func runPr(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, prUsage)
@@ -70,25 +70,25 @@ func runPr(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, prUsage)
 		return 0
 	}
-	fmt.Fprintf(stderr, "goro pr: 未知のサブコマンド %q\n%s", args[0], prUsage)
+	fmt.Fprintf(stderr, "goronation pr: 未知のサブコマンド %q\n%s", args[0], prUsage)
 	return exitUsage
 }
 
-// prCreateTimeout は、goro pr create が、egress の応答を待つ上限 (檻の中の egress 中継 + 上流の GitHub)。
+// prCreateTimeout は、goronation pr create が、egress の応答を待つ上限 (檻の中の egress 中継 + 上流の GitHub)。
 const prCreateTimeout = 30 * time.Second
 
-// maxPrCreateRespBytes は、goro pr create が読む応答の上限。成功時は {"number":N,"html_url":"…"} の小さい
+// maxPrCreateRespBytes は、goronation pr create が読む応答の上限。成功時は {"number":N,"html_url":"…"} の小さい
 // JSON、失敗時は http.StatusText の短い文字列 (gateway は、それ以上の詳細を檻に返さない)。
 const maxPrCreateRespBytes = 64 << 10
 
-// runPrCreate は goro pr create の本体 (檻の中で動く)。組み立て・送信・応答の読み取りは createPR に
-// 任せ (goro mcp の create_pr tool と共有する)、ここでは引数の解釈と、結果の表示だけを行う。
+// runPrCreate は goronation pr create の本体 (檻の中で動く)。組み立て・送信・応答の読み取りは createPR に
+// 任せ (goronation mcp の create_pr tool と共有する)、ここでは引数の解釈と、結果の表示だけを行う。
 func runPrCreate(args []string, stdout, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "goro pr create: "+format+"\n", a...)
+		fmt.Fprintf(stderr, "goronation pr create: "+format+"\n", a...)
 		return 1
 	}
-	flags := flag.NewFlagSet("goro pr create", flag.ContinueOnError)
+	flags := flag.NewFlagSet("goronation pr create", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() { fmt.Fprint(stderr, prUsage) }
 	title := flags.String("title", "", "")
@@ -101,11 +101,11 @@ func runPrCreate(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if flags.NArg() > 0 {
-		fmt.Fprintf(stderr, "goro pr create: 余計な引数 %q\n", flags.Arg(0))
+		fmt.Fprintf(stderr, "goronation pr create: 余計な引数 %q\n", flags.Arg(0))
 		return exitUsage
 	}
 	if strings.TrimSpace(*title) == "" {
-		fmt.Fprintln(stderr, "goro pr create: --title が要る")
+		fmt.Fprintln(stderr, "goronation pr create: --title が要る")
 		return exitUsage
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), prCreateTimeout)
@@ -126,7 +126,7 @@ type prCreateResult struct {
 
 // createPR は、title (必須)・body・base (どちらも省略可) から PR 作成の要求を組み立て、egress の
 // loopback (jailAPIBase) に送る。head は、今いる repo の現在のブランチ (currentBranch)、repo は
-// GORO_PUSH_REPO から取る。goro pr create (CLI) と goro mcp の create_pr tool が、この 1 つを共有する。
+// GORO_PUSH_REPO から取る。goronation pr create (CLI) と goronation mcp の create_pr tool が、この 1 つを共有する。
 // 返す error の文言は、すでに (sanitize などで) 端末・MCP の応答に出してよい形にしてある。
 func createPR(ctx context.Context, title, body, base string) (prCreateResult, error) {
 	if strings.TrimSpace(title) == "" {
@@ -134,7 +134,7 @@ func createPR(ctx context.Context, title, body, base string) (prCreateResult, er
 	}
 	repo := os.Getenv("GORO_PUSH_REPO")
 	if repo == "" {
-		return prCreateResult{}, errors.New("GORO_PUSH_REPO が無い (goro run --push owner/repo で起動していない)")
+		return prCreateResult{}, errors.New("GORO_PUSH_REPO が無い (goronation run --push owner/repo で起動していない)")
 	}
 	if _, err := git.ParseRepo(repo); err != nil {
 		return prCreateResult{}, fmt.Errorf("GORO_PUSH_REPO %s が owner/repo の形ではない", sanitize(repo))
@@ -160,7 +160,7 @@ func createPR(ctx context.Context, title, body, base string) (prCreateResult, er
 		return prCreateResult{}, fmt.Errorf("要求を作れない: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// http.DefaultClient (http.ProxyFromEnvironment 由来) をそのまま使う: goro init が設定する NO_PROXY に
+	// http.DefaultClient (http.ProxyFromEnvironment 由来) をそのまま使う: goronation init が設定する NO_PROXY に
 	// 127.0.0.1 が既に入っているため (檻の中の別プロセスへの直接アクセスを、proxy 経由にしないための既存の
 	// 仕組み)、この loopback 宛の要求は、二重に自分自身を proxy として経由せず、直接届く。
 	resp, err := http.DefaultClient.Do(req)
@@ -238,18 +238,18 @@ func currentBranch(dir string) (string, error) {
 	return rest, nil
 }
 
-// prReadyTimeout は、goro pr ready が、GitHub の GraphQL API を待つ上限 (要求 2 回: 状態の取得と mutation)。
+// prReadyTimeout は、goronation pr ready が、GitHub の GraphQL API を待つ上限 (要求 2 回: 状態の取得と mutation)。
 const prReadyTimeout = 30 * time.Second
 
-// ghapiBaseURL は、goro pr ready が使う GraphQL エンドポイント。var なのは、テストが偽の上流に差し替える
+// ghapiBaseURL は、goronation pr ready が使う GraphQL エンドポイント。var なのは、テストが偽の上流に差し替える
 // ため (本番は ghapi.DefaultBaseURL のまま)。
 var ghapiBaseURL = ghapi.DefaultBaseURL
 
-// runPrReady は goro pr ready の本体 (ホストで動く)。使い方どおり、OWNER/REPO と N は、オプションより先に書く
+// runPrReady は goronation pr ready の本体 (ホストで動く)。使い方どおり、OWNER/REPO と N は、オプションより先に書く
 // (flag.FlagSet.Parse は、最初の flag でない引数で解釈をやめるため、先に自分で取り出す)。
 func runPrReady(args []string, stdout, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "goro pr ready: "+format+"\n", a...)
+		fmt.Fprintf(stderr, "goronation pr ready: "+format+"\n", a...)
 		return 1
 	}
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
@@ -257,12 +257,12 @@ func runPrReady(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "goro pr ready: OWNER/REPO と PR の番号が要る")
+		fmt.Fprintln(stderr, "goronation pr ready: OWNER/REPO と PR の番号が要る")
 		return exitUsage
 	}
 	repoArg, numberArg, rest := args[0], args[1], args[2:]
 
-	flags := flag.NewFlagSet("goro pr ready", flag.ContinueOnError)
+	flags := flag.NewFlagSet("goronation pr ready", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() { fmt.Fprint(stderr, prUsage) }
 	stateDir := flags.String("state-dir", "", "")
@@ -273,17 +273,17 @@ func runPrReady(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if flags.NArg() > 0 {
-		fmt.Fprintf(stderr, "goro pr ready: 余計な引数 %q\n", flags.Arg(0))
+		fmt.Fprintf(stderr, "goronation pr ready: 余計な引数 %q\n", flags.Arg(0))
 		return exitUsage
 	}
 	repo, err := git.ParseRepo(repoArg)
 	if err != nil {
-		fmt.Fprintf(stderr, "goro pr ready: repo %s が owner/repo の形ではない\n", sanitize(repoArg))
+		fmt.Fprintf(stderr, "goronation pr ready: repo %s が owner/repo の形ではない\n", sanitize(repoArg))
 		return exitUsage
 	}
 	number, err := strconv.Atoi(numberArg)
 	if err != nil || number < 1 {
-		fmt.Fprintf(stderr, "goro pr ready: PR の番号 %s が正しくない\n", sanitize(numberArg))
+		fmt.Fprintf(stderr, "goronation pr ready: PR の番号 %s が正しくない\n", sanitize(numberArg))
 		return exitUsage
 	}
 	dir, err := resolveStateDir(*stateDir)
@@ -303,7 +303,7 @@ func runPrReady(args []string, stdout, stderr io.Writer) int {
 	token, err := store.Token(tctx, gateway.CredentialName)
 	if err != nil {
 		if errors.Is(err, credential.ErrNotFound) {
-			return fail("トークンが無い。先に: goro auth github")
+			return fail("トークンが無い。先に: goronation auth github")
 		}
 		return fail("トークンを読めない: %v", err)
 	}
@@ -311,7 +311,7 @@ func runPrReady(args []string, stdout, stderr io.Writer) int {
 	alreadyReady, err := client.Ready(tctx, repo.Owner, repo.Name, number)
 	switch {
 	case errors.Is(err, context.Canceled):
-		fmt.Fprintln(stderr, "goro pr ready: 中止した。")
+		fmt.Fprintln(stderr, "goronation pr ready: 中止した。")
 		return 130
 	case err != nil:
 		return fail("%s", sanitize(err.Error()))

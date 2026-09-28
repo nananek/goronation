@@ -16,18 +16,18 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-// goro mcp は、檻の中で動く MCP (Model Context Protocol) のサーバー。エージェント (claude・opencode) に
-// goro run --push の使い方を、起動のたびに説明しなくて済むように、create_pr・push_context の 2 つの tool を
+// goronation mcp は、檻の中で動く MCP (Model Context Protocol) のサーバー。エージェント (claude・opencode) に
+// goronation run --push の使い方を、起動のたびに説明しなくて済むように、create_pr・push_context の 2 つの tool を
 // 出す (check_status のような、egress の新しい読み取り専用の経路が要るものは、ここには入れない。別の変更)。
 // pr ready (draft を外す) は出さない: それは、より強い権限を持つ、将来の別の主体のための経路として空けてある。
 //
 // 標準入出力は、MCP の stdio transport の規約どおり: 標準入力から、改行区切りの JSON-RPC 2.0 を読み、標準
 // 出力には、その応答だけを書く (ログ・診断は標準エラーへ。標準出力に他のものを混ぜると、エージェント側の
-// JSON-RPC の parsing が壊れる)。goro mcp は、資格情報を持たない (I2 は、goro run --push が、トークンを檻に
+// JSON-RPC の parsing が壊れる)。goronation mcp は、資格情報を持たない (I2 は、goronation run --push が、トークンを檻に
 // 渡さないことで、すでに守られている)。この tool の返り値・エラーは、そのままエージェント (檻の中の同じ
 // プロセス) に渡ってよいものだけにする: ホストの path・トークンは、扱わない・組み立てない。
 
-// mcpProtocolVersion は、initialize の応答に載せる、goro mcp が話す MCP のプロトコル版。
+// mcpProtocolVersion は、initialize の応答に載せる、goronation mcp が話す MCP のプロトコル版。
 const mcpProtocolVersion = "2025-06-18"
 
 // mcpServerVersion は、initialize の応答の serverInfo.version。tool の形 (名前・引数) が変わったときだけ上げる。
@@ -48,10 +48,10 @@ type mcpServerDef struct {
 // この関数だけに閉じる (cage.go・run.go は、エージェントの種類で分岐しない: agentProfile.mcp を呼ぶだけ)。
 type mcpInjector func(servers []mcpServerDef) (args []string, env []bwrap.EnvVar)
 
-// mcpServerName は、goro 自身を MCP サーバーとして登録するときの名前。
-const mcpServerName = "goro"
+// mcpServerName は、goronation 自身を MCP サーバーとして登録するときの名前。
+const mcpServerName = "goronation"
 
-// mcpServersFor は、--push が有効なときだけ、goro 自身 (goro mcp、引数は "mcp" だけ) を注入する MCP サーバー
+// mcpServersFor は、--push が有効なときだけ、goronation 自身 (goronation mcp、引数は "mcp" だけ) を注入する MCP サーバー
 // の一覧にする (push が無いと、create_pr も push_context も動かないので、出しても使えない)。ファイルへ保存
 // する状態は無く、--push が有効な起動のたび (resume を含む) に、この関数から作り直すので、常に今の形になる。
 func mcpServersFor(push string) []mcpServerDef {
@@ -139,10 +139,10 @@ const (
 	mcpInvalidParams  = -32602
 )
 
-// runMCP は goro mcp の本体 (檻の中で動く)。標準入力を読み終える (EOF) か、読めなくなるまで応答し続ける。
+// runMCP は goronation mcp の本体 (檻の中で動く)。標準入力を読み終える (EOF) か、読めなくなるまで応答し続ける。
 func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
-		fmt.Fprintln(stderr, "goro mcp: 引数は取らない (エージェントの MCP 設定から、標準入出力で呼ばれる)")
+		fmt.Fprintln(stderr, "goronation mcp: 引数は取らない (エージェントの MCP 設定から、標準入出力で呼ばれる)")
 		return exitUsage
 	}
 	scanner := bufio.NewScanner(stdin)
@@ -161,12 +161,12 @@ func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			continue // mcpResponse は固定の構造なので、実際には起こらない
 		}
 		if _, err := fmt.Fprintln(stdout, string(b)); err != nil {
-			fmt.Fprintf(stderr, "goro mcp: 標準出力に書けない: %v\n", err)
+			fmt.Fprintf(stderr, "goronation mcp: 標準出力に書けない: %v\n", err)
 			return 1
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(stderr, "goro mcp: 標準入力を読めない: %v\n", err)
+		fmt.Fprintf(stderr, "goronation mcp: 標準入力を読めない: %v\n", err)
 		return 1
 	}
 	return 0
@@ -235,7 +235,7 @@ func mcpInitializeResult() any {
 		ServerInfo: struct {
 			Name    string `json:"name"`
 			Version string `json:"version"`
-		}{Name: "goro", Version: mcpServerVersion},
+		}{Name: "goronation", Version: mcpServerVersion},
 	}
 }
 
@@ -246,13 +246,13 @@ type mcpToolDef struct {
 	InputSchema any    `json:"inputSchema"`
 }
 
-// mcpTools は、goro mcp が出す tool の一覧: create_pr・push_context だけ (pr ready は出さない。ファイル
+// mcpTools は、goronation mcp が出す tool の一覧: create_pr・push_context だけ (pr ready は出さない。ファイル
 // 先頭の doc comment を参照)。
 func mcpTools() []mcpToolDef {
 	return []mcpToolDef{
 		{
 			Name: "create_pr",
-			Description: "今のブランチから、draft の PR を作る (goro run --push owner/repo で起動しているときだけ動く)。" +
+			Description: "今のブランチから、draft の PR を作る (goronation run --push owner/repo で起動しているときだけ動く)。" +
 				"base を省くと repo の既定の branch になる。PR は常に draft で作られ、ready for review にするのは、この MCP の外の役目。",
 			InputSchema: map[string]any{
 				"type": "object",
@@ -305,7 +305,7 @@ func callMCPTool(name string, args json.RawMessage) (result mcpToolCallResult, o
 	return mcpToolCallResult{}, false
 }
 
-// mcpCreatePR は、create_pr tool。goro pr create (pr.go) と同じ createPR を呼ぶ: 組み立て・送信・応答の
+// mcpCreatePR は、create_pr tool。goronation pr create (pr.go) と同じ createPR を呼ぶ: 組み立て・送信・応答の
 // 読み取りは 1 つだけ (CLI と MCP で重複させない)。
 func mcpCreatePR(args json.RawMessage) mcpToolCallResult {
 	var p struct {
@@ -336,7 +336,7 @@ func mcpCreatePR(args json.RawMessage) mcpToolCallResult {
 func mcpPushContext(args json.RawMessage) mcpToolCallResult {
 	repo := os.Getenv("GORO_PUSH_REPO")
 	if repo == "" {
-		return mcpErrorResult(errors.New("GORO_PUSH_REPO が無い (goro run --push owner/repo で起動していない)"))
+		return mcpErrorResult(errors.New("GORO_PUSH_REPO が無い (goronation run --push owner/repo で起動していない)"))
 	}
 	branch, err := currentBranch(".")
 	if err != nil {

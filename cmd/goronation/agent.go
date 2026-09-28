@@ -15,7 +15,7 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-// agentProfile は、goro run が檻の中で動かすエージェント 1 種類ごとの違い。檻の作り (何を bind し、どこを rw にし、通信をどう
+// agentProfile は、goronation run が檻の中で動かすエージェント 1 種類ごとの違い。檻の作り (何を bind し、どこを rw にし、通信をどう
 // 絞るか) と、セッション・export は、エージェントによらず同じで、ここに無いものは共通。
 //
 // エージェントごとに違うものは、すべて、この構造体のデータ (と、名前から導出するもの) で、「claude なら A・opencode なら B」の
@@ -36,12 +36,12 @@ type agentProfile struct {
 	hosts func() []string
 	// loginArgs は、--login のときに、エージェントへ渡す引数 (利用者の引数は、この後ろ)。
 	loginArgs []string
-	// loginUsage は、goro run -h の、このエージェントの --login の説明 (1 行)。理由・制約・API キーの取得 URL は、ここに書く。
+	// loginUsage は、goronation run -h の、このエージェントの --login の説明 (1 行)。理由・制約・API キーの取得 URL は、ここに書く。
 	// エージェントの画面の項目名・手順は、書かない (版で変わる。ログインは、エージェント自身の画面で行う)。
 	loginUsage string
-	// exitHint は、このエージェントの終了操作 (短く)。--login の案内 (loginGuide) と、goro run -h に出す。
+	// exitHint は、このエージェントの終了操作 (短く)。--login の案内 (loginGuide) と、goronation run -h に出す。
 	exitHint string
-	// resumeUsage は、goro run -h の、このエージェントの会話の続きの説明 (空なら出さない)。実行時のメッセージには、出さない。
+	// resumeUsage は、goronation run -h の、このエージェントの会話の続きの説明 (空なら出さない)。実行時のメッセージには、出さない。
 	resumeUsage string
 	// creds は、認証情報だけを、repo をまたいで共有するための、エージェントごとのデータ (下の credentials)。
 	creds credentials
@@ -51,7 +51,7 @@ type agentProfile struct {
 	// denyNotes は、拒否されたときに、宛先の後ろに添える短い一言 (10 文字前後。原因の推測・経緯は書かない)。終了後の一覧には出し
 	// (隠さない)、--allow の例には使わない。許可しなくてよいもの (動作に影響しない) と、許可より先にすることがあるものを書く。
 	denyNotes map[string]string
-	// mcp は、goro run --push のとき、goro mcp (mcp.go) を、このエージェントに MCP サーバーとして登録する方法 (起動時の
+	// mcp は、goronation run --push のとき、goronation mcp (mcp.go) を、このエージェントに MCP サーバーとして登録する方法 (起動時の
 	// 引数・環境変数への変換)。nil なら登録しない。呼び手 (cage.go) は、エージェントの種類で分岐せず、これを呼ぶだけ。
 	mcp mcpInjector
 }
@@ -77,9 +77,9 @@ type credentials struct {
 	files   []string
 }
 
-// loginGuide は、--login の起動前に出す案内 (先頭の "goro run: " は、呼び手が付ける)。エージェントの画面の内容 (項目名・手順・URL) は、
+// loginGuide は、--login の起動前に出す案内 (先頭の "goronation run: " は、呼び手が付ける)。エージェントの画面の内容 (項目名・手順・URL) は、
 // 説明しない: 画面はエージェントの版で変わり、説明は嘘になる (実際に、opencode 2 系で食い違った)。ログインは、エージェント自身の画面で
-// 行い、goro は出力を読まない・解釈しない (エージェントの標準入出力は、端末に直結する)。エージェントに共通の 1 行に、終了操作だけを添える。
+// 行い、goronation は出力を読まない・解釈しない (エージェントの標準入出力は、端末に直結する)。エージェントに共通の 1 行に、終了操作だけを添える。
 func (p agentProfile) loginGuide() string {
 	return "ログインの画面が出ます。画面の指示に従い、終わったら終了してください (終了: " + p.exitHint + ")。"
 }
@@ -205,7 +205,7 @@ func (p agentProfile) dirs(stateDir string) agentDirs {
 // 種のファイル (p.seed) を置いて作る。ある HOME は、中を見ない・直さない (檻の状態)。
 //
 // 置く場所は、ホストが作った新しい一時ディレクトリの中だけ (檻が置いたものを辿らない) で、rename で home に据える: 途中で止まっても、
-// 種の無い中途半端な HOME が残らない。同じ場所を同時に用意する goro run は、ロックで直列にする (後の方は、先の方の HOME を使う)。
+// 種の無い中途半端な HOME が残らない。同じ場所を同時に用意する goronation run は、ロックで直列にする (後の方は、先の方の HOME を使う)。
 func ensureHome(p agentProfile, home string, seed bool) error {
 	parent := filepath.Dir(home)
 	if err := ensureDir(parent); err != nil {

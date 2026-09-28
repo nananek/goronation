@@ -22,27 +22,27 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-// runUsage は、goro run -h の使い方。エージェントごとの記述 (既定の許可宛先・実行ファイルを指す環境変数・--login・終了操作) は、
+// runUsage は、goronation run -h の使い方。エージェントごとの記述 (既定の許可宛先・実行ファイルを指す環境変数・--login・終了操作) は、
 // agents の表 (agentProfile) から作る: エージェントを足しても、ここは変えない。
 func runUsage() string {
 	var b strings.Builder
 	def := defaultAgent()
-	fmt.Fprintf(&b, "使い方: goro run (--repo PATH | --session ID | --login) [--agent NAME] [オプション] [-- エージェントへの引数...]\n\n")
+	fmt.Fprintf(&b, "使い方: goronation run (--repo PATH | --session ID | --login) [--agent NAME] [オプション] [-- エージェントへの引数...]\n\n")
 	fmt.Fprintf(&b, "エージェント (%s) を、檻 (ネットワークの無い bwrap) の中で、ホストの repo の private clone の上で動かす。\n", agentNames())
 	b.WriteString("ホストの作業ツリー・.git・~/.ssh・エージェントの設定と認証情報 (~/.claude など)・環境変数は、檻から見えない。clone されるのはコミット済みの内容だけ。\n\n")
 	fmt.Fprintf(&b, "  --agent NAME      動かすエージェント: %s (省略は %s)。ログイン状態はエージェントごとに 1 つ (全 repo で共有)、会話の履歴・メモリ・trust の承認は repo ごとに別\n", agentNames(), def.name)
 	b.WriteString(`  --repo PATH       PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
-  --session ID      前の goro run のセッションを再開する (同じ clone と HOME が見える)。エージェントは、そのセッションを作ったもの (--agent は省略できる。別のエージェントは断る)
+  --session ID      前の goronation run のセッションを再開する (同じ clone と HOME が見える)。エージェントは、そのセッションを作ったもの (--agent は省略できる。別のエージェントは断る)
   --login           repo・clone 無しで、空の作業ディレクトリでエージェントのログインを行う (ログイン状態は、認証情報のディレクトリに残り、全 repo の檻で使う)。エージェントごとの起動は、下の「エージェント」
-                    ログインは、エージェント自身の画面で行う。goro は出力を解釈しない (端末に直結する)。
-  --name N          clone の user.name (--repo のとき。既定は goro)
+                    ログインは、エージェント自身の画面で行う。goronation は出力を解釈しない (端末に直結する)。
+  --name N          clone の user.name (--repo のとき。既定は goronation)
   --email E         clone の user.email (--repo のとき)
-  --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)。セッションは <DIR>/sessions/、エージェントごとの認証情報 (auth/)・repo ごとの HOME (homes/)・ログイン用のディレクトリは <DIR>/agents/<エージェント名>/
+  --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goronation か ~/.local/state/goronation)。セッションは <DIR>/sessions/、エージェントごとの認証情報 (auth/)・repo ごとの HOME (homes/)・ログイン用のディレクトリは <DIR>/agents/<エージェント名>/
   --bin PATH        動かすエージェントの実行ファイル (既定は、環境変数 GORO_<エージェント名の大文字> か、PATH の実行ファイル。下の「エージェント」)
   --allow HOST:PORT 檻から届く宛先を足す (何度でも書ける。既定は、エージェントごと。下の「エージェント」)
-  --push OWNER/REPO 檻の git push・fetch と goro pr create (檻の中のコマンド) を、この 1 つの repo だけに許す
-                    (トークンは檻に渡さない)。--login とは併用できない。ref は refs/heads/goro/<セッション ID>/
-                    の下だけ (GORO_PUSH_REF_PREFIX で檻に伝える)。ready for review にするのは、ホストの goro pr ready
+  --push OWNER/REPO 檻の git push・fetch と goronation pr create (檻の中のコマンド) を、この 1 つの repo だけに許す
+                    (トークンは檻に渡さない)。--login とは併用できない。ref は refs/heads/goronation/<セッション ID>/
+                    の下だけ (GORO_PUSH_REF_PREFIX で檻に伝える)。ready for review にするのは、ホストの goronation pr ready
   -- ARGS...        エージェントに渡す引数 (--login のときは、そのエージェントのログインの引数の後ろに付く)
 
 エージェント:
@@ -63,15 +63,15 @@ func runUsage() string {
 	}
 	fmt.Fprintf(&b, `
 例:
-  goro run --login                          既定のエージェント (%s) のログイン (別のエージェントは、--agent NAME を足す)
-  goro run --repo ~/work/foo                foo の private clone の中で、既定のエージェントと対話する
-  goro run --agent NAME --repo ~/work/foo   同じことを、エージェントを選んで行う
-  goro run --session ID -- ARGS...          再開する (エージェントは、そのセッションを作ったもの。-- の後ろはエージェントへの引数)
-  goro export ID                            成果 (コミット) を bundle にして、取り込みのコマンドを表示する
+  goronation run --login                          既定のエージェント (%s) のログイン (別のエージェントは、--agent NAME を足す)
+  goronation run --repo ~/work/foo                foo の private clone の中で、既定のエージェントと対話する
+  goronation run --agent NAME --repo ~/work/foo   同じことを、エージェントを選んで行う
+  goronation run --session ID -- ARGS...          再開する (エージェントは、そのセッションを作ったもの。-- の後ろはエージェントへの引数)
+  goronation export ID                            成果 (コミット) を bundle にして、取り込みのコマンドを表示する
 
 限界: 檻からホストの localhost には届かない。ローカルのモデルサーバー (Ollama・LM Studio など) は使えない。
 
-起動後の Ctrl-C は、エージェントの中断として効く (goro run 自身は終了しない)。止めるときは、エージェントの終了操作 (上の「終了」) か、別の端末から goro run に SIGTERM。
+起動後の Ctrl-C は、エージェントの中断として効く (goronation run 自身は終了しない)。止めるときは、エージェントの終了操作 (上の「終了」) か、別の端末から goronation run に SIGTERM。
 終わると、セッション ID・再開と取り出しのコマンド・拒否された宛先を表示する。
 `, def.name)
 	return b.String()
@@ -81,7 +81,7 @@ func runUsage() string {
 // (--claude) は、エージェントが増えるたびにオプションが増えるので、--bin 1 つにした。
 var removedFlags = []string{"claude"}
 
-// runOptions は、goro run の引数。
+// runOptions は、goronation run の引数。
 type runOptions struct {
 	repo, session string
 	login         bool
@@ -103,7 +103,7 @@ func (l *stringList) Set(v string) error {
 	return nil
 }
 
-// parseRunArgs は goro run の引数を解釈する。不正なら、理由と使い方を stderr に出して error を返す。
+// parseRunArgs は goronation run の引数を解釈する。不正なら、理由と使い方を stderr に出して error を返す。
 // -h のときは、使い方を出して flag.ErrHelp を返す。
 func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	var o runOptions
@@ -111,7 +111,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	if i := indexOf(args, "--"); i >= 0 {
 		head, tail = args[:i], args[i+1:]
 	}
-	flags := flag.NewFlagSet("goro run", flag.ContinueOnError)
+	flags := flag.NewFlagSet("goronation run", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {} // 使い方は、-h のときだけ (下)。エラーには、-h の案内 1 行だけを添える
 	var allow stringList
@@ -134,7 +134,7 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stderr, runUsage())
 		} else {
-			fmt.Fprintln(stderr, "使い方: goro run -h") // flag が、理由を出している
+			fmt.Fprintln(stderr, "使い方: goronation run -h") // flag が、理由を出している
 		}
 		return o, err
 	}
@@ -143,8 +143,8 @@ func parseRunArgs(args []string, stderr io.Writer) (runOptions, error) {
 	flags.Visit(func(f *flag.Flag) { agentSet = agentSet || f.Name == "agent" })
 
 	fail := func(format string, a ...any) (runOptions, error) {
-		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
-		fmt.Fprintln(stderr, "使い方: goro run -h")
+		fmt.Fprintf(stderr, "goronation run: "+format+"\n", a...)
+		fmt.Fprintln(stderr, "使い方: goronation run -h")
 		return o, errors.New("引数が不正")
 	}
 	if flags.NArg() > 0 {
@@ -266,7 +266,7 @@ func ensureDir(dir string) error {
 	return os.Chmod(dir, 0o700)
 }
 
-// runRun は goro run の本体で、終了コードを返す (claude の終了コード。goro run 自身の失敗は 1、引数の不正は 2)。
+// runRun は goronation run の本体で、終了コードを返す (claude の終了コード。goronation run 自身の失敗は 1、引数の不正は 2)。
 func runRun(args []string, stderr io.Writer) int {
 	o, err := parseRunArgs(args, stderr)
 	if err != nil {
@@ -282,7 +282,7 @@ func runRun(args []string, stderr io.Writer) int {
 
 	code := doRun(ctx, o, sw, stderr)
 	if s := sw.received(); s != nil {
-		fmt.Fprintf(stderr, "goro run: %v を受けて、檻を止めた\n", s)
+		fmt.Fprintf(stderr, "goronation run: %v を受けて、檻を止めた\n", s)
 		return exitCodeForSignal(s)
 	}
 	return code
@@ -292,10 +292,10 @@ func runRun(args []string, stderr io.Writer) int {
 type runTarget struct {
 	id     string // セッション ID。--login では空
 	work   string // /work に見せる
-	runDir string // /run/goro に見せる
+	runDir string // /run/goronation に見せる
 }
 
-// pickAgent は、この goro run で動かすエージェントと、--session で再開する既存のセッション (--session でなければ nil) を決める。
+// pickAgent は、この goronation run で動かすエージェントと、--session で再開する既存のセッション (--session でなければ nil) を決める。
 //
 // --session は、セッションを作ったエージェント (セッションの記録。記録の無い、エージェントを記録する前のセッションは legacySessionAgent) で
 // 動かす。clone には、エージェントが置いた設定 (.claude/settings.json・opencode.json など) が残り、次にそこで動く
@@ -310,10 +310,10 @@ func pickAgent(o runOptions, store *session.Store) (agentProfile, *session.Sessi
 		err = requireDir(sess.Clone)
 	}
 	if errors.Is(err, fs.ErrNotExist) {
-		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %s が無い。一覧: goro sessions", o.session)
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %s が無い。一覧: goronation sessions", o.session)
 	}
 	if err != nil {
-		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %s。一覧: goro sessions", strings.TrimPrefix(err.Error(), "session: "))
+		return agentProfile{}, nil, fmt.Errorf("セッションを使えない: %s。一覧: goronation sessions", strings.TrimPrefix(err.Error(), "session: "))
 	}
 	name, err := store.Agent(sess)
 	if err != nil {
@@ -324,19 +324,19 @@ func pickAgent(o runOptions, store *session.Store) (agentProfile, *session.Sessi
 	}
 	recorded, ok := agentByName(name)
 	if !ok {
-		return agentProfile{}, nil, fmt.Errorf("このセッションのエージェント %q を、この goro は知らない", name)
+		return agentProfile{}, nil, fmt.Errorf("このセッションのエージェント %q を、この goronation は知らない", name)
 	}
 	if o.agent != "" && o.agent != recorded.name {
-		return agentProfile{}, nil, fmt.Errorf("このセッションは %s で作った。--agent %s では使えない。新しく作る: goro run --agent %s --repo PATH",
+		return agentProfile{}, nil, fmt.Errorf("このセッションは %s で作った。--agent %s では使えない。新しく作る: goronation run --agent %s --repo PATH",
 			recorded.name, o.agent, o.agent)
 	}
 	return recorded, sess, nil
 }
 
 // resolveRepoTarget は、--repo (repo が空でなければ、新しいセッションを作る) か --session (existing を
-// 再開する) の、run dir・clone・HOME を用意する (goro run と goro serve が共有する。--login はここを
+// 再開する) の、run dir・clone・HOME を用意する (goronation run と goronation serve が共有する。--login はここを
 // 通らない: doRun 自身が別に扱う)。作った・再開した旨の案内は、呼び手が (repo が空でなかったかを見て)
-// 自分で出す (goro run と goro serve で文言が違うため、ここでは出さない)。
+// 自分で出す (goronation run と goronation serve で文言が違うため、ここでは出さない)。
 func resolveRepoTarget(ctx context.Context, store *session.Store, dirs agentDirs, agent agentProfile, repo, name, email string, existing *session.Session) (runTarget, string, error) {
 	sess := existing
 	if repo != "" {
@@ -352,7 +352,7 @@ func resolveRepoTarget(ctx context.Context, store *session.Store, dirs agentDirs
 	case err != nil:
 		return runTarget{}, "", fmt.Errorf("セッションを使えない: %s", strings.TrimPrefix(err.Error(), "session: "))
 	case key == "":
-		return runTarget{}, "", fmt.Errorf("このセッションは、HOME を repo ごとに分ける前に作った (使えない)。新しく作る: goro run%s --repo PATH", agentFlagFor(agent))
+		return runTarget{}, "", fmt.Errorf("このセッションは、HOME を repo ごとに分ける前に作った (使えない)。新しく作る: goronation run%s --repo PATH", agentFlagFor(agent))
 	}
 	home := dirs.homeFor(key)
 	if err := ensureHome(agent, home, true); err != nil {
@@ -366,8 +366,8 @@ func resolveRepoTarget(ctx context.Context, store *session.Store, dirs agentDirs
 
 // prepareAgentLaunch は、--repo・--session・--login のどれでも共通する下ごしらえ: session.Store・
 // エージェントの選択 (--session なら記録のエージェントで動かす)・エージェントの実行ファイルの解決・
-// goro 自身の実行ファイルの解決・エージェントの状態ディレクトリの用意、をまとめる (goro run と
-// goro serve が共有する)。
+// goronation 自身の実行ファイルの解決・エージェントの状態ディレクトリの用意、をまとめる (goronation run と
+// goronation serve が共有する)。
 func prepareAgentLaunch(stateDir, sessionID, agentFlag, bin string) (host bwrap.Host, store *session.Store, agent agentProfile, existing *session.Session, agentExe, self string, dirs agentDirs, err error) {
 	host = bwrap.CurrentHost()
 	store, err = session.NewStore(stateDir, host)
@@ -388,7 +388,7 @@ func prepareAgentLaunch(stateDir, sessionID, agentFlag, bin string) (host bwrap.
 		self, err = resolveExe(self)
 	}
 	if err != nil {
-		err = fmt.Errorf("goro 自身の実行ファイルを決められない: %w", err)
+		err = fmt.Errorf("goronation 自身の実行ファイルを決められない: %w", err)
 		return
 	}
 	dirs = agent.dirs(stateDir)
@@ -402,7 +402,7 @@ func prepareAgentLaunch(stateDir, sessionID, agentFlag, bin string) (host bwrap.
 
 func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "goro run: "+format+"\n", a...)
+		fmt.Fprintf(stderr, "goronation run: "+format+"\n", a...)
 		return 1
 	}
 	stateDir, err := resolveStateDir(o.stateDir)
@@ -439,12 +439,12 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 			return fail("%v", err)
 		}
 		if isNew {
-			fmt.Fprintf(stderr, "goro run: セッション %s を作った\n", tgt.id)
+			fmt.Fprintf(stderr, "goronation run: セッション %s を作った\n", tgt.id)
 		}
 	}
 
 	if o.login {
-		fmt.Fprintln(stderr, "goro run: "+agent.loginGuide())
+		fmt.Fprintln(stderr, "goronation run: "+agent.loginGuide())
 	}
 
 	// --push: git push・PR 作成の配線 (git.Policy・資格情報) を、檻を起こす前に用意する (作れなければ、檻を
@@ -481,7 +481,7 @@ func doRun(ctx context.Context, o runOptions, sw *sigWatch, stderr io.Writer) in
 }
 
 // newPushConfig は、--push owner/repo (sessionID の名前空間限定) の pushConfig (startProxy が
-// gateway.Handler を作るのに要るものだけ) を作る。stateDir は、goro auth github が保存したトークンの場所
+// gateway.Handler を作るのに要るものだけ) を作る。stateDir は、goronation auth github が保存したトークンの場所
 // (credfile.Store)。sessionID が git.NewPolicy の検査 (ref の要素として正しい 1〜64 文字) を通らなければ error
 // (--login は、この呼び出し自体をしない。呼び手が保証する)。
 func newPushConfig(stateDir, push, sessionID string) (*pushConfig, error) {
@@ -503,7 +503,7 @@ func newPushConfig(stateDir, push, sessionID string) (*pushConfig, error) {
 // sampleSessionID は、セッション ID と同じ長さの例 (session の ID の形。セッションを作る前に、UDS の path の長さを調べるため)。
 const sampleSessionID = "00000000-000000-000000"
 
-// sockPathFor は、o の goro run が使う egress の UDS の path。セッションの ID は、同じ長さの例で代える。
+// sockPathFor は、o の goronation run が使う egress の UDS の path。セッションの ID は、同じ長さの例で代える。
 func sockPathFor(stateDir string, o runOptions) string {
 	if o.login {
 		return filepath.Join(o.profile().dirs(stateDir).loginRun, proxySockName)
@@ -521,14 +521,14 @@ func cageArgs(o runOptions, p agentProfile) []string {
 
 // runCage は、egress を起こして、檻を起動し、終わるのを待つ。終了コードを返す。
 //
-// 標準入出力の 3 つ全てが実端末なら (isTTYFile)、goro run 自身が pty を用意し (cfg.PTY)、檻には、その slave を
-// 渡す (ホストの実端末には直結しない)。goro run は、ホストの実端末を raw モードにして、pty の master との間を
+// 標準入出力の 3 つ全てが実端末なら (isTTYFile)、goronation run 自身が pty を用意し (cfg.PTY)、檻には、その slave を
+// 渡す (ホストの実端末には直結しない)。goronation run は、ホストの実端末を raw モードにして、pty の master との間を
 // そのまま中継する (中身は解釈・模倣しない)。3 つのどれかが端末でなければ (redirect・pipe。テストの多くもここ)、
 // これまでどおり、ホストの標準入出力をそのまま渡す。
 func runCage(ctx context.Context, o runOptions, agent agentProfile, sw *sigWatch, tgt runTarget, cfg cageConfig, push *pushConfig, sum *runSummary, stderr io.Writer) int {
 	proxy, err := startProxy(tgt.runDir, allowList(agent, o.allow), push)
 	if err != nil {
-		fmt.Fprintf(stderr, "goro run: egress を起動できない: %v\n", err)
+		fmt.Fprintf(stderr, "goronation run: egress を起動できない: %v\n", err)
 		return 1
 	}
 	sum.logPath = proxy.logPath
@@ -542,26 +542,26 @@ func runCage(ctx context.Context, o runOptions, agent agentProfile, sw *sigWatch
 	cfg.PTY = isTTYFile(os.Stdin) && isTTYFile(os.Stdout) && isTTYFile(os.Stderr)
 	spec := cageSpec(cfg)
 
-	// 檻の中のプロセスは、端末の設定を変えられる (cfg.PTY のときは、goro run 自身が raw モードにする)。標準入力が
+	// 檻の中のプロセスは、端末の設定を変えられる (cfg.PTY のときは、goronation run 自身が raw モードにする)。標準入力が
 	// 端末なら、起動の前に保存し、どの経路で終わっても (正常・シグナルでの取り消し・エラー)、終了後の案内を出す
 	// 前に戻す。os.Stdin.Fd() は使わない: 一度呼ぶと、その *os.File は恒久的に blocking 扱いになり、pty 中継の
 	// SetReadDeadline (中継を止めるときに使う) が効かなくなる (SyscallConn 経由なら、fd は non-blocking のまま)。
 	var term *termState
 	if err := ctlFile(os.Stdin, func(fd int) (err error) { term, err = saveTermios(fd); return }); err != nil {
-		fmt.Fprintf(stderr, "goro run: 端末の設定を保存できない (終了後に戻せない): %v\n", err)
+		fmt.Fprintf(stderr, "goronation run: 端末の設定を保存できない (終了後に戻せない): %v\n", err)
 	}
 	defer restoreTermios(term, stderr)
 
 	if cfg.PTY {
 		master, slave, err := openHostPty()
 		if err != nil {
-			fmt.Fprintf(stderr, "goro run: pty を用意できない: %v\n", err)
+			fmt.Fprintf(stderr, "goronation run: pty を用意できない: %v\n", err)
 			return 1
 		}
 		defer slave.Close() // 檻が fork/exec で引き継いだ後は、ホスト側の複製は要らない
 		spec.Stdin, spec.Stdout, spec.Stderr = slave, slave, slave
 		if err := term.setRaw(); err != nil {
-			fmt.Fprintf(stderr, "goro run: 実端末を raw モードにできない: %v\n", err)
+			fmt.Fprintf(stderr, "goronation run: 実端末を raw モードにできない: %v\n", err)
 		}
 		relay := startPtyRelay(os.Stdin, os.Stdout, master)
 		defer relay.stop()
@@ -575,7 +575,7 @@ func runCage(ctx context.Context, o runOptions, agent agentProfile, sw *sigWatch
 	sw.enterCage()
 	c, err := bwrap.Start(ctx, spec)
 	if err != nil {
-		fmt.Fprintf(stderr, "goro run: 檻を起動できない: %v\n", err)
+		fmt.Fprintf(stderr, "goronation run: 檻を起動できない: %v\n", err)
 		return 1
 	}
 	sum.started = true
@@ -589,7 +589,7 @@ func exitCodeOf(err error, stderr io.Writer) int {
 	}
 	var ee *exec.ExitError
 	if !errors.As(err, &ee) {
-		fmt.Fprintf(stderr, "goro run: 檻を待てない: %v\n", err)
+		fmt.Fprintf(stderr, "goronation run: 檻を待てない: %v\n", err)
 		return 1
 	}
 	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
@@ -629,7 +629,7 @@ func existingDir(p string) string {
 // maxDeniedShown は、終了後に表示する、拒否された宛先の数の上限。
 const maxDeniedShown = 10
 
-// runSummary は、goro run の終了後に表示する内容。
+// runSummary は、goronation run の終了後に表示する内容。
 type runSummary struct {
 	id            string // セッション ID。--login では空
 	stateDir      string
@@ -644,9 +644,9 @@ type runSummary struct {
 	serveErr      error // egress の待ち受けの異常な終了
 }
 
-// printRunSummary は、goro run の終了後の案内を w に出す。ユーザーが次にすること (コマンド) と、拒否された宛先だけを、短く出す:
+// printRunSummary は、goronation run の終了後の案内を w に出す。ユーザーが次にすること (コマンド) と、拒否された宛先だけを、短く出す:
 // セッション ID・再開と取り出しのコマンド (--login なら、次のコマンド)・拒否された宛先 (許可するコマンドつき)。
-// 理由・経緯の説明は、出さない (goro run -h に書く)。檻を起動できなかったときは、何も出さない。
+// 理由・経緯の説明は、出さない (goronation run -h に書く)。檻を起動できなかったときは、何も出さない。
 func printRunSummary(w io.Writer, s runSummary) {
 	if !s.started {
 		return // 檻を起動できなかった: 原因は、すでに表示した。必ず失敗する再開や、中身の無い取り出しを案内しない
@@ -662,11 +662,11 @@ func printRunSummary(w io.Writer, s runSummary) {
 	fmt.Fprintln(w)
 	if s.id == "" {
 		fmt.Fprintf(w, "ログイン状態: %s\n", sanitize(s.authDir))
-		fmt.Fprintf(w, "次は: goro run%s%s --repo PATH\n", agentFlag, stateFlag)
+		fmt.Fprintf(w, "次は: goronation run%s%s --repo PATH\n", agentFlag, stateFlag)
 	} else {
 		fmt.Fprintf(w, "セッション: %s\n", s.id)
-		fmt.Fprintf(w, "  再開:   goro run%s%s --session %s\n", agentFlag, stateFlag, s.id)
-		fmt.Fprintf(w, "  取り出し: goro export%s %s\n", stateFlag, s.id)
+		fmt.Fprintf(w, "  再開:   goronation run%s%s --session %s\n", agentFlag, stateFlag, s.id)
+		fmt.Fprintf(w, "  取り出し: goronation export%s %s\n", stateFlag, s.id)
 	}
 	if len(s.denied) > 0 {
 		fmt.Fprintln(w, "拒否された宛先:")

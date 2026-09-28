@@ -49,7 +49,7 @@ type repoStartResponse struct {
 	ID string `json:"id"`
 }
 
-// handleRepoStart は、POST /api/repos/start: --repos-dir 直下の repo (name) を、goro serve --repo で
+// handleRepoStart は、POST /api/repos/start: --repos-dir 直下の repo (name) を、goronation serve --repo で
 // 新しいセッションとして起動し、新しいセッションの ID を返す (ブラウザは、それで /s/<id> へ移る)。
 func (s *webServer) handleRepoStart(w http.ResponseWriter, r *http.Request) {
 	var req repoStartRequest

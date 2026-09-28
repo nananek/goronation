@@ -17,7 +17,7 @@ import (
 	"syscall"
 )
 
-// goro init の終了コード。子の終了コードは、そのまま返す (シグナルなら 128+番号)。
+// goronation init の終了コード。子の終了コードは、そのまま返す (シグナルなら 128+番号)。
 const (
 	exitUsage    = 2   // 引数が不正
 	exitInit     = 125 // 子を起動する前に、init 自身が失敗した
@@ -25,9 +25,9 @@ const (
 	exitNotFound = 127 // 子が見つからない
 )
 
-const initUsage = `使い方: goro init --listen 127.0.0.1:PORT --upstream PATH [--no-proxy-env] [--no-forward-tty] [--set-ctty] [--] CMD [ARGS...]
+const initUsage = `使い方: goronation init --listen 127.0.0.1:PORT --upstream PATH [--no-proxy-env] [--no-forward-tty] [--set-ctty] [--] CMD [ARGS...]
 
-檻の中で最初に動く小さなリレー (goro run が起動する)。檻の loopback の TCP を、ホストの egress の Unix ドメインソケットへ
+檻の中で最初に動く小さなリレー (goronation run が起動する)。檻の loopback の TCP を、ホストの egress の Unix ドメインソケットへ
 中継しながら、子 (CMD) を起動する。子には、標準入出力と環境変数を引き継ぎ、HTTPS_PROXY・HTTP_PROXY (小文字も) を、待ち受け先を
 指す http の URL にして渡し、loopback (127.0.0.1・localhost・::1) は proxy を通さない (NO_PROXY・no_proxy。既存の値には足す)。SIGINT・SIGTERM・SIGHUP・SIGQUIT・SIGWINCH は子に転送し、自分が PID 1 の
 ときは孤児を回収する。子の終了コード (シグナルで死んだら 128+番号) で終わる。引数の不正は 2、子を起動する前の失敗は 125、
@@ -39,7 +39,7 @@ init は、檻を作らず、自分が檻の中にいることも確かめない
   --no-proxy-env    子に HTTPS_PROXY などを設定しない
   --no-forward-tty  端末のシグナル (SIGINT・SIGQUIT・SIGWINCH) を、子に転送しない (子が端末を共有し、直接受けるとき。二重に届かない)
   --set-ctty        子を、新しいセッションの leader にし、標準入力 (pty の slave) を、その制御端末にする
-                    (goro run が、専用の pty を中継するときに渡す)
+                    (goronation run が、専用の pty を中継するときに渡す)
 `
 
 // proxyEnvKeys は、init が子に設定する、proxy を指す環境変数。
@@ -71,11 +71,11 @@ type initConfig struct {
 	setCtty    bool     // 子を、標準入力 (pty の slave) を制御端末にする、新しいセッションの leader にする
 }
 
-// parseInitArgs は goro init の引数を解釈する。不正なら、理由と使い方を stderr に出して error を返す。
+// parseInitArgs は goronation init の引数を解釈する。不正なら、理由と使い方を stderr に出して error を返す。
 // -h のときは、使い方を出して flag.ErrHelp を返す。
 func parseInitArgs(args []string, stderr io.Writer) (initConfig, error) {
 	var cfg initConfig
-	flags := flag.NewFlagSet("goro init", flag.ContinueOnError)
+	flags := flag.NewFlagSet("goronation init", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() { fmt.Fprint(stderr, initUsage) }
 	flags.StringVar(&cfg.listen, "listen", "", "")
@@ -89,7 +89,7 @@ func parseInitArgs(args []string, stderr io.Writer) (initConfig, error) {
 	cfg.argv = flags.Args()
 
 	fail := func(format string, a ...any) (initConfig, error) {
-		fmt.Fprintf(stderr, "goro init: "+format+"\n", a...)
+		fmt.Fprintf(stderr, "goronation init: "+format+"\n", a...)
 		fmt.Fprint(stderr, initUsage)
 		return cfg, errors.New("引数が不正")
 	}
@@ -109,7 +109,7 @@ func parseInitArgs(args []string, stderr io.Writer) (initConfig, error) {
 	return cfg, nil
 }
 
-// runInit は goro init の本体で、終了コードを返す。
+// runInit は goronation init の本体で、終了コードを返す。
 func runInit(args []string, stderr io.Writer) int {
 	cfg, err := parseInitArgs(args, stderr)
 	if err != nil {
@@ -121,7 +121,7 @@ func runInit(args []string, stderr io.Writer) int {
 
 	l, err := net.Listen("tcp", cfg.listen)
 	if err != nil {
-		fmt.Fprintf(stderr, "goro init: 待ち受けられない: %v\n", err)
+		fmt.Fprintf(stderr, "goronation init: 待ち受けられない: %v\n", err)
 		return exitInit
 	}
 	defer l.Close()
@@ -143,7 +143,7 @@ func runInit(args []string, stderr io.Writer) int {
 	defer signal.Stop(sigs)
 
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(stderr, "goro init: 子を起動できない: %v\n", err)
+		fmt.Fprintf(stderr, "goronation init: 子を起動できない: %v\n", err)
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
 			return exitNotFound
 		}
@@ -230,7 +230,7 @@ func waitChild(pid int, stderr io.Writer) int {
 			continue
 		}
 		if err != nil {
-			fmt.Fprintf(stderr, "goro init: wait4: %v\n", err)
+			fmt.Fprintf(stderr, "goronation init: wait4: %v\n", err)
 			return exitInit
 		}
 		if got != pid { // 回収した孤児

@@ -19,8 +19,8 @@ import (
 	"github.com/nananek/goronation/core/credential"
 )
 
-// credentialKind は、goro auth が扱う資格情報 1 種類。名前 (表のキー) が、goro auth <名前> の引数と、保存先 <state>/credentials/<名前> になる。
-// 資格情報の種類は、今後も増える: 表に 1 つ足すだけで、goro auth・usage・保存に、そのまま使える (最初の 1 つ (github) を特別扱いしない)。
+// credentialKind は、goronation auth が扱う資格情報 1 種類。名前 (表のキー) が、goronation auth <名前> の引数と、保存先 <state>/credentials/<名前> になる。
+// 資格情報の種類は、今後も増える: 表に 1 つ足すだけで、goronation auth・usage・保存に、そのまま使える (最初の 1 つ (github) を特別扱いしない)。
 type credentialKind struct {
 	// name は、資格情報の名前 (credential.CheckName を満たす。表の中で重ならない)。
 	name string
@@ -28,21 +28,21 @@ type credentialKind struct {
 	valid func(v string) bool
 	// invalid は、形が違うときの表示 (1 行。何が起きたか + 次にすること)。値は含めない。
 	invalid string
-	// usage は、goro auth -h の、この資格情報の説明 (どこで作るか・要る権限)。表示は、-h だけ。
+	// usage は、goronation auth -h の、この資格情報の説明 (どこで作るか・要る権限)。表示は、-h だけ。
 	usage string
 }
 
 // githubTokenRE は、GitHub の Fine-grained トークンの形: github_pat_ + 英数字と _ (合計 40〜255 文字)。
 var githubTokenRE = regexp.MustCompile(`^github_pat_[A-Za-z0-9_]{29,244}$`)
 
-// credentialKinds は、goro auth NAME の NAME に指定できる資格情報の表。資格情報を足すときは、ここに足す。
+// credentialKinds は、goronation auth NAME の NAME に指定できる資格情報の表。資格情報を足すときは、ここに足す。
 var credentialKinds = []credentialKind{
 	{
 		name:    "github",
 		valid:   githubTokenRE.MatchString,
-		invalid: "形式が違う。github_pat_ で始まる Fine-grained トークンを貼り直してください (作り方: goro auth -h)。",
+		invalid: "形式が違う。github_pat_ で始まる Fine-grained トークンを貼り直してください (作り方: goronation auth -h)。",
 		usage: "Fine-grained トークン (github_pat_…)。作る場所: https://github.com/settings/personal-access-tokens/new\n" +
-			"           権限: Contents と Pull requests を Read and write にする。Workflows は付けない。goro は形式だけを検査し、有効かは確かめない。",
+			"           権限: Contents と Pull requests を Read and write にする。Workflows は付けない。goronation は形式だけを検査し、有効かは確かめない。",
 	},
 }
 
@@ -56,7 +56,7 @@ func credentialKindByName(name string) (k credentialKind, ok bool) {
 	return credentialKind{}, false
 }
 
-// credentialNames は、goro auth に指定できる名前を、"a か b" の形に並べる。
+// credentialNames は、goronation auth に指定できる名前を、"a か b" の形に並べる。
 func credentialNames() string {
 	names := make([]string, len(credentialKinds))
 	for i, c := range credentialKinds {
@@ -65,16 +65,16 @@ func credentialNames() string {
 	return strings.Join(names, " か ")
 }
 
-// authUsage は、goro auth -h の使い方。資格情報ごとの説明は、credentialKinds から作る。
+// authUsage は、goronation auth -h の使い方。資格情報ごとの説明は、credentialKinds から作る。
 func authUsage() string {
 	var b strings.Builder
-	b.WriteString(`使い方: goro auth NAME [--state-dir DIR]
+	b.WriteString(`使い方: goronation auth NAME [--state-dir DIR]
 
 資格情報を、ホストのファイル <DIR>/credentials/NAME (0600) に保存する。檻には入らない。
 値は、画面・履歴・ログ・エラーに出さない。引数には書けない (シェルの履歴・ps に残るため)。
 
   NAME              資格情報の名前 (下の一覧)
-  --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
+  --state-dir DIR   状態を置く場所 (既定は $XDG_STATE_HOME/goronation か ~/.local/state/goronation)
 
 入力: 端末なら、表示せずに 1 行。端末でなければ (パイプなど)、標準入力の 1 行。
 
@@ -89,22 +89,22 @@ func authUsage() string {
 // maxSecretLine は、入力の 1 行の長さの上限 (バイト)。これを超える入力は、形が違うものとして扱う。
 const maxSecretLine = 1024
 
-// runAuth は goro auth の本体で、終了コードを返す (成功 0・保存できない 1・使い方の誤り 2・中止 130)。
+// runAuth は goronation auth の本体で、終了コードを返す (成功 0・保存できない 1・使い方の誤り 2・中止 130)。
 // stdin が端末なら、表示せずに 1 行読む (プロンプトは stderr)。値は、どこにも出さない。
 func runAuth(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "goro auth: "+format+"\n", a...)
+		fmt.Fprintf(stderr, "goronation auth: "+format+"\n", a...)
 		return 1
 	}
 	usageErr := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "goro auth: "+format+"\n", a...) // format は、こちらが決めた固定の文だけ (呼び手が、利用者の引数を渡さない)
+		fmt.Fprintf(stderr, "goronation auth: "+format+"\n", a...) // format は、こちらが決めた固定の文だけ (呼び手が、利用者の引数を渡さない)
 		return exitUsage
 	}
 	name, rest := "", args // NAME は、オプションの前でも後ろでも書ける
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		name, rest = args[0], args[1:]
 	}
-	flags := flag.NewFlagSet("goro auth", flag.ContinueOnError)
+	flags := flag.NewFlagSet("goronation auth", flag.ContinueOnError)
 	flags.SetOutput(io.Discard) // flag 自身には、利用者の引数 (値の書き間違いを含みうる) を出させない。理由は、こちらで固定の文にする
 	flags.Usage = func() {}
 	stateDir := flags.String("state-dir", "", "")
@@ -113,14 +113,14 @@ func runAuth(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 			fmt.Fprint(stderr, authUsage())
 			return 0
 		}
-		return usageErr("引数が不正。使い方: goro auth -h")
+		return usageErr("引数が不正。使い方: goronation auth -h")
 	}
 	positional := flags.Args()
 	if name == "" && len(positional) > 0 {
 		name, positional = positional[0], positional[1:]
 	}
 	if len(positional) > 0 {
-		return usageErr("余計な引数。使い方: goro auth -h")
+		return usageErr("余計な引数。使い方: goronation auth -h")
 	}
 	if name == "" {
 		return usageErr("名前を 1 つ指定する。使える名前: %s", credentialNames())
@@ -143,15 +143,15 @@ func runAuth(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	line, err := readSecretLine(ctx, stdin, "トークンを貼ってください (表示されません): ", stderr)
 	switch {
 	case errors.Is(err, context.Canceled):
-		fmt.Fprintln(stderr, "goro auth: 中止した。")
+		fmt.Fprintln(stderr, "goronation auth: 中止した。")
 		return 130
 	case err != nil:
-		return fail("入力を読めない。もう一度: goro auth %s", name)
+		return fail("入力を読めない。もう一度: goronation auth %s", name)
 	}
 	value := strings.TrimSpace(string(line)) // 貼り付けの前後の空白・改行を除く
 	clear(line)
 	if value == "" {
-		return fail("入力が空。もう一度: goro auth %s", name)
+		return fail("入力が空。もう一度: goronation auth %s", name)
 	}
 	if !kind.valid(value) { // ディスクに触る前に断る。値は、表示しない
 		return fail("%s", kind.invalid)
@@ -181,7 +181,7 @@ func readSecretLine(ctx context.Context, in *os.File, prompt string, out io.Writ
 			// TCSAFLUSH (restoreFlush) で戻す: 端末の入力キューに残った未読の入力 (貼り付けの 2 行目以降・入力途中の断片) を捨てる。
 			// TCSETS のままだと、ECHO を戻した後、そのキューが親のシェルに読まれて実行されうる (pastejacking。sudo・getpass(3) と同じ対策)。
 			if err := ts.restoreFlush(); err != nil && !errors.Is(err, syscall.EIO) { // 端末が切れた (EIO) ときは、戻す先が無い
-				fmt.Fprintf(out, "goro auth: 端末の設定を戻せない (stty sane で戻す): %v\n", err)
+				fmt.Fprintf(out, "goronation auth: 端末の設定を戻せない (stty sane で戻す): %v\n", err)
 			}
 		}()
 		fmt.Fprint(out, prompt)

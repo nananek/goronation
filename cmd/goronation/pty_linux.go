@@ -11,9 +11,9 @@ import (
 	"unsafe"
 )
 
-// pty 中継: goro run (ホスト) は、檻専用の pty を作り、master を持つ。ローカルの実端末 (raw モードにする) と
-// master の間を、そのままバイト列で中継する (goro は、その中身を解釈・模倣しない)。エージェントは、pty の
-// slave を、自分の標準入出力として持つ (goro init が、エージェントを起動するときの SysProcAttr で、--set-ctty
+// pty 中継: goronation run (ホスト) は、檻専用の pty を作り、master を持つ。ローカルの実端末 (raw モードにする) と
+// master の間を、そのままバイト列で中継する (goronation は、その中身を解釈・模倣しない)。エージェントは、pty の
+// slave を、自分の標準入出力として持つ (goronation init が、エージェントを起動するときの SysProcAttr で、--set-ctty
 // なら Setsid・Setctty を指定する。エージェント自身の fork の直後・exec の前に、エージェント自身が新しい
 // セッションの leader になり、その制御端末にする)。これにより、エージェントは、ホストの実端末に直結しなく
 // なる (TIOCSTI は、自分専用の pty にしか効かない)。
@@ -41,7 +41,7 @@ func isTTYFile(f *os.File) bool {
 }
 
 // openHostPty は、/dev/ptmx を開いて鍵を外し、対応する slave (/dev/pts/N) を開く。呼び手が、両方を閉じる
-// (bwrap へ slave を渡した後は、この関数を呼んだ側の slave の複製は、goro run 側で閉じてよい)。
+// (bwrap へ slave を渡した後は、この関数を呼んだ側の slave の複製は、goronation run 側で閉じてよい)。
 func openHostPty() (master, slave *os.File, err error) {
 	m, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
@@ -79,7 +79,7 @@ func getWinsize(f *os.File) (winsize, error) {
 
 // setWinsize は、f (端末) の大きさを ws にする。pty の master・slave のどちらに対して呼んでも、両方に効く
 // (1 組で 1 つの大きさを共有する)。slave 側の、その時点のフォアグラウンドの process group に SIGWINCH が届く
-// (大きさが変わったときだけ。kernel が行う。goro は、明示的にシグナルを送らない)。
+// (大きさが変わったときだけ。kernel が行う。goronation は、明示的にシグナルを送らない)。
 func setWinsize(f *os.File, ws winsize) error {
 	return ctlFile(f, func(fd int) error { return ioctl(fd, syscall.TIOCSWINSZ, unsafe.Pointer(&ws)) })
 }

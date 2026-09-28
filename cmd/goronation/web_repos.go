@@ -10,7 +10,7 @@ import (
 )
 
 // listRepos は、reposDir 直下のディレクトリのうち、git repo (直下に .git がある) のものだけを、
-// 名前の昇順で返す (goro-web-plan §4-1: 深い階層はたどらない。1 段だけの一覧)。reposDir が空なら
+// 名前の昇順で返す (goronation-web-plan §4-1: 深い階層はたどらない。1 段だけの一覧)。reposDir が空なら
 // (--repos-dir を指定していない)、常に空を返す。.git の実在確認は、symlink をたどった実体が
 // reposDir の外を指していないことまで確かめる (攻撃者視点レビュー attack-review-d848c34 の B1:
 // os.Stat だけでは、.git 自体が reposDir の外を指す symlink であるディレクトリを、そのまま一覧に

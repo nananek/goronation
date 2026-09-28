@@ -14,18 +14,18 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-const exportUsage = `使い方: goro export [--state-dir DIR] SESSION-ID
+const exportUsage = `使い方: goronation export [--state-dir DIR] SESSION-ID
 
 セッションの clone のコミットを、bundle (1 ファイル) にして取り出し、その path・ブランチ・取り込みのコマンドを表示する。
 bundle は、使い捨ての檻の中で作る。ホストは、clone の中で git を実行せず、bundle も取り込まない:
 表示されたコマンドは、自分の repo で、自分で実行する (transfer.fsckObjects=true で、object を検査する)。
 
-  --state-dir DIR   状態を置く場所 (goro run と同じ。既定は $XDG_STATE_HOME/goro か ~/.local/state/goro)
+  --state-dir DIR   状態を置く場所 (goronation run と同じ。既定は $XDG_STATE_HOME/goronation か ~/.local/state/goronation)
 `
 
-// runExport は goro export の本体で、終了コードを返す。結果は stdout、診断は stderr。
+// runExport は goronation export の本体で、終了コードを返す。結果は stdout、診断は stderr。
 func runExport(args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("goro export", flag.ContinueOnError)
+	flags := flag.NewFlagSet("goronation export", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() { fmt.Fprint(stderr, exportUsage) }
 	stateDir := flags.String("state-dir", "", "")
@@ -36,23 +36,23 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if flags.NArg() != 1 {
-		fmt.Fprintln(stderr, "goro export: セッション ID を 1 つ指定する。一覧: goro sessions")
+		fmt.Fprintln(stderr, "goronation export: セッション ID を 1 つ指定する。一覧: goronation sessions")
 		return exitUsage
 	}
 	id := flags.Arg(0)
 	dir, err := resolveStateDir(*stateDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "goro export: %v\n", err)
+		fmt.Fprintf(stderr, "goronation export: %v\n", err)
 		return 1
 	}
 	store, err := session.NewStore(dir, bwrap.CurrentHost())
 	if err != nil {
-		fmt.Fprintf(stderr, "goro export: %v\n", err)
+		fmt.Fprintf(stderr, "goronation export: %v\n", err)
 		return 1
 	}
 	b, err := store.Export(context.Background(), id)
 	if err != nil {
-		fmt.Fprintf(stderr, "goro export: %v\n", err)
+		fmt.Fprintf(stderr, "goronation export: %v\n", err)
 		return 1
 	}
 	printBundle(stdout, b)

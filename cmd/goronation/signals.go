@@ -11,13 +11,13 @@ import (
 	"syscall"
 )
 
-// sigWatch は、goro run が受けるシグナルの扱い。
+// sigWatch は、goronation run が受けるシグナルの扱い。
 //
 //   - 檻を起動する前 (clone の作成など): SIGINT・SIGTERM・SIGHUP のどれでも、取り消して、後始末に進む。
 //   - 檻の中では (enterCage の後): 端末のシグナル (Ctrl-C の SIGINT・SIGQUIT・リサイズの SIGWINCH) は、フォアグラウンドの
-//     process group 全体に届き、檻の中の claude も直接受ける。ホストの goro run は SIGINT と SIGQUIT を無視し、claude の中断で、
+//     process group 全体に届き、檻の中の claude も直接受ける。ホストの goronation run は SIGINT と SIGQUIT を無視し、claude の中断で、
 //     ホスト側 (bwrap を含む) が落ちて、檻が死なないようにする。無視の設定は、起動する bwrap に引き継がれる
-//     (goro init が、子の claude を起動する前に、自分の側で戻す)。SIGTERM と SIGHUP は、檻を止めて (取り消して)、後始末に進む。
+//     (goronation init が、子の claude を起動する前に、自分の側で戻す)。SIGTERM と SIGHUP は、檻を止めて (取り消して)、後始末に進む。
 type sigWatch struct {
 	ch     chan os.Signal
 	cancel context.CancelFunc
@@ -78,7 +78,7 @@ func (w *sigWatch) stop() {
 	close(w.done)
 }
 
-// exitCodeForSignal は、シグナルで止まったときの、goro run の終了コード (シェルの慣習の 128 + 番号)。
+// exitCodeForSignal は、シグナルで止まったときの、goronation run の終了コード (シェルの慣習の 128 + 番号)。
 func exitCodeForSignal(s os.Signal) int {
 	if sig, ok := s.(syscall.Signal); ok {
 		return 128 + int(sig)

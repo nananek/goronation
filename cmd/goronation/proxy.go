@@ -52,7 +52,7 @@ const (
 
 	// auditQueue は、監査の行を、ファイルに書く前にためておく数。ためきれない分は捨てる。
 	auditQueue = 1024
-	// auditRunBudget は、1 回の goro run が、egress.log に書く量の上限 (バイト)。檻が CONNECT を繰り返して、ホストのディスクを
+	// auditRunBudget は、1 回の goronation run が、egress.log に書く量の上限 (バイト)。檻が CONNECT を繰り返して、ホストのディスクを
 	// 埋めないようにする。
 	auditRunBudget = 8 << 20
 )
@@ -128,7 +128,7 @@ func (a *auditLog) Close() int64 {
 	return a.dropped.Load()
 }
 
-// hostProxy は、goro run が、ホスト側で動かす egress: run dir の UDS で待ち受け、監査を egress.log に書く。
+// hostProxy は、goronation run が、ホスト側で動かす egress: run dir の UDS で待ち受け、監査を egress.log に書く。
 type hostProxy struct {
 	srv      *egress.Server
 	listener net.Listener // egress.ServeBoth の doc の契約: Close は呼び手が l に対して行う (srv.Close は、
@@ -143,7 +143,7 @@ type hostProxy struct {
 	serveErr chan error
 }
 
-// startProxy は、runDir (0700 で、作ってある) の UDS で待ち受ける egress を起こす。同じ runDir を、同時に 2 つの goro run が
+// startProxy は、runDir (0700 で、作ってある) の UDS で待ち受ける egress を起こす。同じ runDir を、同時に 2 つの goronation run が
 // 使うことは、ロックで断る (前の起動が残した UDS は、ロックを持てたときだけ消す)。
 // push が nil でなければ、CONNECT に加えて、git smart-HTTP・PR 作成 (git.PathPrefix・github.PathPrefix) も、
 // 同じ listener で、push から作る gateway.Handler に振り分ける (egress.ServeBoth)。gateway.Handler の監査は、
@@ -154,7 +154,7 @@ func startProxy(runDir string, allow []string, push *pushConfig) (p *hostProxy, 
 	if err := checkSockPath(sock, "egress"); err != nil {
 		return nil, err
 	}
-	lock, err := lockDir(runDir, "同じセッション (--login なら、同じエージェントのログイン) を、別の goro run が使っている。終わってから、もう一度実行する")
+	lock, err := lockDir(runDir, "同じセッション (--login なら、同じエージェントのログイン) を、別の goronation run が使っている。終わってから、もう一度実行する")
 	if err != nil {
 		return nil, err
 	}

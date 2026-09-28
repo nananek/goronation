@@ -9,7 +9,7 @@ import (
 )
 
 // termState は、端末 (fd) の termios。檻は端末に直結するので、檻の中のプロセスは、端末の設定 (raw・-echo・-isig など) を
-// 変えられる。goro run は、檻の起動の前に保存し、檻が終わった後に戻す (壊れた端末を、利用者の手元に残さない)。
+// 変えられる。goronation run は、檻の起動の前に保存し、檻が終わった後に戻す (壊れた端末を、利用者の手元に残さない)。
 type termState struct {
 	fd int
 	t  syscall.Termios
@@ -60,7 +60,7 @@ func (s *termState) restoreFlush() error {
 // restoreTermios は、s を戻し、失敗したら警告を出す。端末が切れた (hangup。EIO) ときは、戻す先が無いので黙る。
 func restoreTermios(s *termState, stderr io.Writer) {
 	if err := s.restore(); err != nil && !errors.Is(err, syscall.EIO) {
-		fmt.Fprintf(stderr, "goro run: 端末の設定を戻せない (stty sane で戻す): %v\n", err)
+		fmt.Fprintf(stderr, "goronation run: 端末の設定を戻せない (stty sane で戻す): %v\n", err)
 	}
 }
 
