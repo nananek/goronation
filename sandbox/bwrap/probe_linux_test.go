@@ -315,10 +315,10 @@ func probeSpec(t *testing.T, host Host, work, home string, args ...string) Spec 
 		Binds: []Bind{
 			{Src: "/usr", Dst: "/usr"},
 			{Src: exe, Dst: "/opt/probe/probe"},
-			{Src: home, Dst: "/home/goro", RW: true},
+			{Src: home, Dst: "/home/goronation", RW: true},
 			{Src: work, Dst: "/work", RW: true},
 		},
-		Env:   []EnvVar{{"HOME", "/home/goro"}, {"PATH", "/usr/bin:/bin"}, {"LANG", "C.UTF-8"}},
+		Env:   []EnvVar{{"HOME", "/home/goronation"}, {"PATH", "/usr/bin:/bin"}, {"LANG", "C.UTF-8"}},
 		Chdir: "/work",
 		Cmd:   append([]string{"/opt/probe/probe", probeArg}, args...),
 	}

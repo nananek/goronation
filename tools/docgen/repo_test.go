@@ -103,7 +103,7 @@ func TestRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"core", "sandbox/bwrap", "cmd/goro", "tools/archtest", "tools/docgen"} {
+	for _, want := range []string{"core", "sandbox/bwrap", "cmd/goronation", "tools/archtest", "tools/docgen"} {
 		if !slices.ContainsFunc(res.Docs, func(d *pkgDoc) bool { return d.Src.Dir == want }) {
 			t.Errorf("package %s の文書が無い", want)
 		}

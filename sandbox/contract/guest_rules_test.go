@@ -40,7 +40,7 @@ func TestValidateSystemReservedPaths(t *testing.T) {
 			t.Errorf("System で Scratch %s: %v, want ErrRejected", guest, err)
 		}
 	}
-	for _, guest := range []string{"/usr/local/bin/goro", "/usr/x", "/libx", "/lib32", "/binx", "/usr2", "/opt/x"} {
+	for _, guest := range []string{"/usr/local/bin/goronation", "/usr/x", "/libx", "/lib32", "/binx", "/usr2", "/opt/x"} {
 		if err := r.Validate(guestSpec(true, guest, false)); err != nil {
 			t.Errorf("System で GuestPath %s: 断った: %v", guest, err)
 		}

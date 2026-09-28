@@ -17,10 +17,10 @@ var testHost = Host{
 
 const (
 	testHome  = "/home/tester"
-	testState = testHome + "/.local/state/goro/s1" // 作業用 dir (clone・檻専用 HOME・run dir) を置く場所
+	testState = testHome + "/.local/state/goronation/s1" // 作業用 dir (clone・檻専用 HOME・run dir) を置く場所
 )
 
-// cageSpec は、goro run の檻の Spec (spike の cage-final.sh と同じ形)。
+// cageSpec は、goronation run の檻の Spec (spike の cage-final.sh と同じ形)。
 func cageSpec() Spec {
 	return Spec{
 		Host: testHost,
@@ -33,19 +33,19 @@ func cageSpec() Spec {
 			{Src: "/usr", Dst: "/usr"},
 			{Src: "/etc/ssl/certs", Dst: "/etc/ssl/certs"},
 			{Src: testHome + "/.local/share/claude/versions/2.1.283", Dst: "/opt/claude/claude", InHome: true},
-			{Src: "/usr/local/bin/goro", Dst: "/opt/goro/goro"},
-			{Src: testState + "/run", Dst: "/run/goro", InHome: true},
-			{Src: testState + "/home", Dst: "/home/goro", RW: true, InHome: true},
+			{Src: "/usr/local/bin/goronation", Dst: "/opt/goronation/goronation"},
+			{Src: testState + "/run", Dst: "/run/goronation", InHome: true},
+			{Src: testState + "/home", Dst: "/home/goronation", RW: true, InHome: true},
 			{Src: testState + "/clone", Dst: "/work", RW: true, InHome: true},
 		},
 		Env: []EnvVar{
-			{"HOME", "/home/goro"}, {"PATH", "/usr/bin:/bin"}, {"TERM", "xterm-256color"}, {"LANG", "C.UTF-8"},
+			{"HOME", "/home/goronation"}, {"PATH", "/usr/bin:/bin"}, {"TERM", "xterm-256color"}, {"LANG", "C.UTF-8"},
 			{"HTTPS_PROXY", "http://127.0.0.1:3128"}, {"HTTP_PROXY", "http://127.0.0.1:3128"},
 			{"NO_PROXY", "127.0.0.1,localhost"}, {"SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt"},
 			{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"}, {"DISABLE_TELEMETRY", "1"},
 		},
 		Chdir: "/work",
-		Cmd: []string{"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock",
+		Cmd: []string{"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock",
 			"--", "/opt/claude/claude"},
 	}
 }
@@ -60,19 +60,19 @@ var cageArgv = []string{
 	"--ro-bind", "/usr", "/usr",
 	"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
 	"--ro-bind", "/home/tester/.local/share/claude/versions/2.1.283", "/opt/claude/claude",
-	"--ro-bind", "/usr/local/bin/goro", "/opt/goro/goro",
-	"--ro-bind", "/home/tester/.local/state/goro/s1/run", "/run/goro",
-	"--bind", "/home/tester/.local/state/goro/s1/home", "/home/goro",
-	"--bind", "/home/tester/.local/state/goro/s1/clone", "/work",
+	"--ro-bind", "/usr/local/bin/goronation", "/opt/goronation/goronation",
+	"--ro-bind", "/home/tester/.local/state/goronation/s1/run", "/run/goronation",
+	"--bind", "/home/tester/.local/state/goronation/s1/home", "/home/goronation",
+	"--bind", "/home/tester/.local/state/goronation/s1/clone", "/work",
 	"--chdir", "/work",
 	"--clearenv",
-	"--setenv", "HOME", "/home/goro", "--setenv", "PATH", "/usr/bin:/bin",
+	"--setenv", "HOME", "/home/goronation", "--setenv", "PATH", "/usr/bin:/bin",
 	"--setenv", "TERM", "xterm-256color", "--setenv", "LANG", "C.UTF-8",
 	"--setenv", "HTTPS_PROXY", "http://127.0.0.1:3128", "--setenv", "HTTP_PROXY", "http://127.0.0.1:3128",
 	"--setenv", "NO_PROXY", "127.0.0.1,localhost", "--setenv", "SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt",
 	"--setenv", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1", "--setenv", "DISABLE_TELEMETRY", "1",
 	"--",
-	"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--", "/opt/claude/claude",
+	"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--", "/opt/claude/claude",
 }
 
 func TestArgvGolden(t *testing.T) {
@@ -273,7 +273,7 @@ func TestArgvRejectsSecretSrc(t *testing.T) {
 		"/", "/root", "/root/.ssh", "/home", "/home/other", "/home/other/.ssh", "/home/tester2/x",
 		"/etc", "/etc/shadow", "/etc/gshadow", "/etc/ssh", "/etc/ssh/ssh_host_ed25519_key", "/etc/sudoers", "/etc/sudoers.d",
 		"/etc/ssl", "/etc/ssl/private", "/etc/ssl/private/x.key",
-		"/run", "/run/user", "/run/user/1000", "/run/user/1000/bus", "/run/user/1000/goro", "/run/docker.sock", "/run/containerd",
+		"/run", "/run/user", "/run/user/1000", "/run/user/1000/bus", "/run/user/1000/goronation", "/run/docker.sock", "/run/containerd",
 		"/var", "/var/run", "/var/run/docker.sock", "/var/lib", "/var/lib/docker", "/var/lib/containerd/x",
 		"/proc", "/proc/1/root", "/sys", "/sys/kernel", "/dev", "/dev/sda", "/dev/mem", "/boot", "/boot/grub",
 	} {
@@ -439,14 +439,14 @@ func expectRejected(t *testing.T, c specCase) {
 // TestArgvAccepts は、正当な Spec を、拒否しすぎないことを確認する (拒否リストが広すぎて、使えなくなる変異を見つける)。
 func TestArgvAccepts(t *testing.T) {
 	binds := []Bind{
-		{Src: "/usr"}, {Src: "/etc/ssl/certs"}, {Src: "/usr/local/bin/goro"}, {Src: "/opt/tool"},
+		{Src: "/usr"}, {Src: "/etc/ssl/certs"}, {Src: "/usr/local/bin/goronation"}, {Src: "/opt/tool"},
 		{Src: "/tmp/work", RW: true}, {Src: "/tmp/x/y/z", RW: true}, {Src: "/var/tmp/work"}, {Src: "/data/work", RW: true},
 		{Src: "/srv/clone", RW: true}, {Src: "/mnt/clone", RW: true},
 		{Src: testHome + "/.local/share/claude/versions/2.1.283", InHome: true},
 		{Src: testHome + "/.opencode/bin/opencode", InHome: true},             // opencode の公式 install script の置き場 (機密ではない)
 		{Src: testHome + "/.local/share/opencode-cli/opencode", InHome: true}, // 名前が .local/share/opencode に似ているだけ
-		{Src: testHome + "/work", RW: true, InHome: true}, {Src: testHome + "/.local/state/goro", RW: true, InHome: true},
-		{Src: testHome + "/.config/goro", InHome: true}, {Src: testHome + "/.cache/goro/x", RW: true, InHome: true},
+		{Src: testHome + "/work", RW: true, InHome: true}, {Src: testHome + "/.local/state/goronation", RW: true, InHome: true},
+		{Src: testHome + "/.config/goronation", InHome: true}, {Src: testHome + "/.cache/goronation/x", RW: true, InHome: true},
 		// 名前が、拒否する path の接頭辞に似ているだけの path は、拒否しない (path の要素の単位で比べる)。
 		{Src: "/runtime/x"}, {Src: "/homework/x"}, {Src: "/rooted/x"}, {Src: "/etc/sshd_config"}, {Src: "/tmp2/x"}, {Src: "/varx/x"},
 		{Src: "/procfs/x"}, {Src: "/sysroot/x"}, {Src: "/devices/x"}, {Src: "/bootstrap/x"},
@@ -468,7 +468,7 @@ func TestArgvAccepts(t *testing.T) {
 		{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"}, {"DISABLE_TELEMETRY", "1"}, {"DISABLE_ERROR_REPORTING", "1"},
 		{"DISABLE_AUTOUPDATER", "1"}, {"OPENCODE_DISABLE_AUTOUPDATE", "1"}, {"OPENCODE_DISABLE_SHARE", "1"},
 		{"OPENCODE_DISABLE_MODELS_FETCH", "1"}, {"OPENCODE_DISABLE_LSP_DOWNLOAD", "1"}, {"TERM", "xterm-256color"}, {"LANG", "C.UTF-8"}, {"_x9", "a=b c"}, {"a", ""},
-		{"NO_PROXY", "127.0.0.1,localhost"}, {"CLAUDE_CONFIG_DIR", "/home/goro/.claude"},
+		{"NO_PROXY", "127.0.0.1,localhost"}, {"CLAUDE_CONFIG_DIR", "/home/goronation/.claude"},
 	} {
 		s := cageSpec()
 		s.Env = []EnvVar{e}

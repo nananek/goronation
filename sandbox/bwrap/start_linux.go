@@ -134,7 +134,7 @@ func checkTIOCSTI() error {
 
 // controllingTerminal は、Start を呼んだプロセスが制御端末を持つか。TIOCSTI が効く相手は、標準入出力ではなく制御端末で、
 // bwrap は --new-session が無いと setsid しないので、檻も同じ制御端末を持つ。標準入出力が pipe やファイルでも、
-// 制御端末を持てば、`goro run > log 2>&1 < /dev/null` の形でも、檻はホストの端末に届く。テストが差し替える。
+// 制御端末を持てば、`goronation run > log 2>&1 < /dev/null` の形でも、檻はホストの端末に届く。テストが差し替える。
 var controllingTerminal = func() bool { return terminalAt("/dev/tty") }
 
 // terminalAt は、path (/dev/tty) を開いて、制御端末を持つかを調べる。開けなくても、理由が ENXIO (制御端末が無い)・

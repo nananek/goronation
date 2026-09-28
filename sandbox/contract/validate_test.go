@@ -22,9 +22,9 @@ func okSpec() sandbox.Spec {
 	return sandbox.Spec{
 		Exec: "/opt/probe/probe", Args: []string{"init"}, Dir: "/work", System: true, Scratch: []string{"/tmp"},
 		Env:      []sandbox.EnvVar{{Key: "HOME", Value: "/work"}, {Key: "PATH", Value: "/usr/bin:/bin"}},
-		Read:     []sandbox.Mount{{HostPath: "/opt/agent/bin", GuestPath: "/opt/probe/probe"}, {HostPath: "/data/run", GuestPath: "/run/goro"}},
+		Read:     []sandbox.Mount{{HostPath: "/opt/agent/bin", GuestPath: "/opt/probe/probe"}, {HostPath: "/data/run", GuestPath: "/run/goronation"}},
 		Write:    []sandbox.Mount{{HostPath: "/data/clone", GuestPath: "/work"}},
-		Egress:   "/run/goro/proxy.sock",
+		Egress:   "/run/goronation/proxy.sock",
 		Loopback: []string{"127.0.0.1:3128"},
 	}
 }
@@ -140,7 +140,7 @@ func TestValidateRejects(t *testing.T) {
 // (檻が、ソケットを差し替えられない)。親が Read で、別の dir が Write のときは通る。
 func TestValidateEgressDirIsReadOnly(t *testing.T) {
 	s := okSpec()
-	s.Write = append(s.Write, sandbox.Mount{HostPath: "/data/run3", GuestPath: "/run/goro"})
+	s.Write = append(s.Write, sandbox.Mount{HostPath: "/data/run3", GuestPath: "/run/goronation"})
 	if err := testRules().Validate(s); err == nil || !strings.Contains(err.Error(), "重複") {
 		t.Errorf("Egress の親ディレクトリを Write でも見せたとき: %v, want 重複", err)
 	}

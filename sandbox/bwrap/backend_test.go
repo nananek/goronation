@@ -15,41 +15,41 @@ import (
 
 var adapterHost = contract.Host{Home: "/home/u"}
 
-// agentSpec は、goro run の檻 (cmd/goro/cage.go の cageSpec) と同じ形の、契約の Spec。ホストの HOME は /home/u。
+// agentSpec は、goronation run の檻 (cmd/goronation/cage.go の cageSpec) と同じ形の、契約の Spec。ホストの HOME は /home/u。
 func agentSpec(name, exe, agentHome string, env []sandbox.EnvVar, args ...string) sandbox.Spec {
-	const run = "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run"
+	const run = "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/run"
 	return sandbox.Spec{
-		Exec: "/opt/goro/goro",
-		Args: append([]string{"init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--", "/opt/" + name + "/" + name}, args...),
+		Exec: "/opt/goronation/goronation",
+		Args: append([]string{"init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--no-forward-tty", "--", "/opt/" + name + "/" + name}, args...),
 		Dir:  "/work",
-		Env: append([]sandbox.EnvVar{{Key: "HOME", Value: "/home/goro"}, {Key: "PATH", Value: "/usr/bin:/bin"},
+		Env: append([]sandbox.EnvVar{{Key: "HOME", Value: "/home/goronation"}, {Key: "PATH", Value: "/usr/bin:/bin"},
 			{Key: "TERM", Value: "xterm-256color"}, {Key: "LANG", Value: "C.UTF-8"}}, env...),
 		System:  true,
 		Scratch: []string{"/tmp"},
 		Read: []sandbox.Mount{
 			{HostPath: "/etc/ssl/certs", GuestPath: "/etc/ssl/certs"},
 			{HostPath: exe, GuestPath: "/opt/" + name + "/" + name, InHome: true},
-			{HostPath: "/home/u/bin/goro", GuestPath: "/opt/goro/goro", InHome: true},
-			{HostPath: run, GuestPath: "/run/goro", InHome: true},
+			{HostPath: "/home/u/bin/goronation", GuestPath: "/opt/goronation/goronation", InHome: true},
+			{HostPath: run, GuestPath: "/run/goronation", InHome: true},
 		},
 		Write: []sandbox.Mount{
-			{HostPath: agentHome, GuestPath: "/home/goro", InHome: true},
-			{HostPath: "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", GuestPath: "/work", InHome: true},
+			{HostPath: agentHome, GuestPath: "/home/goronation", InHome: true},
+			{HostPath: "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/clone", GuestPath: "/work", InHome: true},
 		},
-		Egress:   "/run/goro/proxy.sock",
+		Egress:   "/run/goronation/proxy.sock",
 		Loopback: []string{"127.0.0.1:3128"},
 		Terminal: true,
 	}
 }
 
-// TestBackendPrepareAgentGolden は、goro run の檻 (claude・opencode) を契約の Spec で表して、Prepare に通した argv が、
-// cmd/goro の golden (TestCageSpecGolden・TestCageSpecGoldenOpenCode) と、同一なことを確認する (アダプタは、argv を変えない)。
+// TestBackendPrepareAgentGolden は、goronation run の檻 (claude・opencode) を契約の Spec で表して、Prepare に通した argv が、
+// cmd/goronation の golden (TestCageSpecGolden・TestCageSpecGoldenOpenCode) と、同一なことを確認する (アダプタは、argv を変えない)。
 func TestBackendPrepareAgentGolden(t *testing.T) {
-	claude := agentSpec("claude", "/home/u/.local/share/claude/versions/2.0.0", "/home/u/.local/state/goro/agents/claude/home", []sandbox.EnvVar{
+	claude := agentSpec("claude", "/home/u/.local/share/claude/versions/2.0.0", "/home/u/.local/state/goronation/agents/claude/home", []sandbox.EnvVar{
 		{Key: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", Value: "1"}, {Key: "DISABLE_TELEMETRY", Value: "1"}, {Key: "DISABLE_ERROR_REPORTING", Value: "1"},
 		{Key: "DISABLE_AUTOUPDATER", Value: "1"}, {Key: "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", Value: "1"},
 	}, "--resume", "x y")
-	opencode := agentSpec("opencode", "/home/u/.opencode/bin/opencode", "/home/u/.local/state/goro/agents/opencode/home", []sandbox.EnvVar{
+	opencode := agentSpec("opencode", "/home/u/.opencode/bin/opencode", "/home/u/.local/state/goronation/agents/opencode/home", []sandbox.EnvVar{
 		{Key: "OPENCODE_DISABLE_AUTOUPDATE", Value: "1"}, {Key: "OPENCODE_DISABLE_MODELS_FETCH", Value: "1"},
 		{Key: "OPENCODE_DISABLE_SHARE", Value: "1"}, {Key: "OPENCODE_DISABLE_LSP_DOWNLOAD", Value: "1"},
 	}, "--continue")
@@ -61,13 +61,13 @@ func TestBackendPrepareAgentGolden(t *testing.T) {
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
 		"--ro-bind", "/home/u/.local/share/claude/versions/2.0.0", "/opt/claude/claude",
-		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
-		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/agents/claude/home", "/home/goro",
-		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
+		"--ro-bind", "/home/u/bin/goronation", "/opt/goronation/goronation",
+		"--ro-bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/run", "/run/goronation",
+		"--bind", "/home/u/.local/state/goronation/agents/claude/home", "/home/goronation",
+		"--bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/clone", "/work",
 		"--chdir", "/work",
 		"--clearenv",
-		"--setenv", "HOME", "/home/goro",
+		"--setenv", "HOME", "/home/goronation",
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "TERM", "xterm-256color",
 		"--setenv", "LANG", "C.UTF-8",
@@ -77,7 +77,7 @@ func TestBackendPrepareAgentGolden(t *testing.T) {
 		"--setenv", "DISABLE_AUTOUPDATER", "1",
 		"--setenv", "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1",
 		"--",
-		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
+		"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--no-forward-tty", "--",
 		"/opt/claude/claude", "--resume", "x y",
 	}
 	opencodeWant := []string{
@@ -88,13 +88,13 @@ func TestBackendPrepareAgentGolden(t *testing.T) {
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
 		"--ro-bind", "/home/u/.opencode/bin/opencode", "/opt/opencode/opencode",
-		"--ro-bind", "/home/u/bin/goro", "/opt/goro/goro",
-		"--ro-bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/run", "/run/goro",
-		"--bind", "/home/u/.local/state/goro/agents/opencode/home", "/home/goro",
-		"--bind", "/home/u/.local/state/goro/sessions/20260926-120000-abcdef/clone", "/work",
+		"--ro-bind", "/home/u/bin/goronation", "/opt/goronation/goronation",
+		"--ro-bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/run", "/run/goronation",
+		"--bind", "/home/u/.local/state/goronation/agents/opencode/home", "/home/goronation",
+		"--bind", "/home/u/.local/state/goronation/sessions/20260926-120000-abcdef/clone", "/work",
 		"--chdir", "/work",
 		"--clearenv",
-		"--setenv", "HOME", "/home/goro",
+		"--setenv", "HOME", "/home/goronation",
 		"--setenv", "PATH", "/usr/bin:/bin",
 		"--setenv", "TERM", "xterm-256color",
 		"--setenv", "LANG", "C.UTF-8",
@@ -103,7 +103,7 @@ func TestBackendPrepareAgentGolden(t *testing.T) {
 		"--setenv", "OPENCODE_DISABLE_SHARE", "1",
 		"--setenv", "OPENCODE_DISABLE_LSP_DOWNLOAD", "1",
 		"--",
-		"/opt/goro/goro", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goro/proxy.sock", "--no-forward-tty", "--",
+		"/opt/goronation/goronation", "init", "--listen", "127.0.0.1:3128", "--upstream", "/run/goronation/proxy.sock", "--no-forward-tty", "--",
 		"/opt/opencode/opencode", "--continue",
 	}
 	for name, tc := range map[string]struct {
@@ -123,20 +123,20 @@ func TestBackendPrepareAgentGolden(t *testing.T) {
 // gitContract は、git の檻 (cmd/internal/session/cage.go の gitSpec) と同じ形の、契約の Spec。
 func gitContract(read, write []sandbox.Mount, args ...string) sandbox.Spec {
 	env := []sandbox.EnvVar{
-		{Key: "HOME", Value: "/home/goro"}, {Key: "PATH", Value: "/usr/bin:/bin"}, {Key: "LANG", Value: "C.UTF-8"},
+		{Key: "HOME", Value: "/home/goronation"}, {Key: "PATH", Value: "/usr/bin:/bin"}, {Key: "LANG", Value: "C.UTF-8"},
 		{Key: "GIT_CONFIG_NOSYSTEM", Value: "1"}, {Key: "GIT_CONFIG_GLOBAL", Value: "/dev/null"}, {Key: "GIT_TERMINAL_PROMPT", Value: "0"},
 		{Key: "GIT_CONFIG_COUNT", Value: "3"},
 		{Key: "GIT_CONFIG_KEY_0", Value: "safe.directory"}, {Key: "GIT_CONFIG_VALUE_0", Value: "*"},
 		{Key: "GIT_CONFIG_KEY_1", Value: "core.fsmonitor"}, {Key: "GIT_CONFIG_VALUE_1", Value: "false"},
 		{Key: "GIT_CONFIG_KEY_2", Value: "core.hooksPath"}, {Key: "GIT_CONFIG_VALUE_2", Value: "/dev/null"},
 	}
-	return sandbox.Spec{Exec: "/usr/bin/git", Args: args, Dir: "/tmp", Env: env, System: true, Scratch: []string{"/tmp", "/home/goro"}, Read: read, Write: write}
+	return sandbox.Spec{Exec: "/usr/bin/git", Args: args, Dir: "/tmp", Env: env, System: true, Scratch: []string{"/tmp", "/home/goronation"}, Read: read, Write: write}
 }
 
 // TestBackendPrepareGitGolden は、git の檻 (clone・remote remove・bundle) を契約の Spec で表して、Prepare に通した argv が、
 // cmd/internal/session の gitSpec の argv (実物を、golden にしたもの) と同一なことを確認する。端末を持たない (Terminal = false) 檻は --new-session。
 func TestBackendPrepareGitGolden(t *testing.T) {
-	const sess = "/home/u/.local/state/goro/sessions/20260926-103000-a1b2c3"
+	const sess = "/home/u/.local/state/goronation/sessions/20260926-103000-a1b2c3"
 	m := func(host, guest string) sandbox.Mount {
 		return sandbox.Mount{HostPath: host, GuestPath: guest, InHome: true}
 	}
@@ -145,7 +145,7 @@ func TestBackendPrepareGitGolden(t *testing.T) {
 		want []string
 	}{
 		"clone": {gitContract([]sandbox.Mount{m("/home/u/work/repo", "/src")}, []sandbox.Mount{m(sess+"/clone", "/work")},
-			"clone", "--no-local", "--no-hardlinks", "-c", "user.name=goro", "-c", "user.email=goro@localhost.invalid", "--", "/src", "/work"), []string{
+			"clone", "--no-local", "--no-hardlinks", "-c", "user.name=goronation", "-c", "user.email=goronation@localhost.invalid", "--", "/src", "/work"), []string{
 			"/usr/bin/bwrap",
 			"--unshare-all",
 			"--die-with-parent",
@@ -169,7 +169,7 @@ func TestBackendPrepareGitGolden(t *testing.T) {
 			"--tmpfs",
 			"/tmp",
 			"--tmpfs",
-			"/home/goro",
+			"/home/goronation",
 			"--ro-bind",
 			"/usr",
 			"/usr",
@@ -177,14 +177,14 @@ func TestBackendPrepareGitGolden(t *testing.T) {
 			"/home/u/work/repo",
 			"/src",
 			"--bind",
-			"/home/u/.local/state/goro/sessions/20260926-103000-a1b2c3/clone",
+			"/home/u/.local/state/goronation/sessions/20260926-103000-a1b2c3/clone",
 			"/work",
 			"--chdir",
 			"/tmp",
 			"--clearenv",
 			"--setenv",
 			"HOME",
-			"/home/goro",
+			"/home/goronation",
 			"--setenv",
 			"PATH",
 			"/usr/bin:/bin",
@@ -227,9 +227,9 @@ func TestBackendPrepareGitGolden(t *testing.T) {
 			"--no-local",
 			"--no-hardlinks",
 			"-c",
-			"user.name=goro",
+			"user.name=goronation",
 			"-c",
-			"user.email=goro@localhost.invalid",
+			"user.email=goronation@localhost.invalid",
 			"--",
 			"/src",
 			"/work",
@@ -258,19 +258,19 @@ func TestBackendPrepareGitGolden(t *testing.T) {
 			"--tmpfs",
 			"/tmp",
 			"--tmpfs",
-			"/home/goro",
+			"/home/goronation",
 			"--ro-bind",
 			"/usr",
 			"/usr",
 			"--bind",
-			"/home/u/.local/state/goro/sessions/20260926-103000-a1b2c3/clone",
+			"/home/u/.local/state/goronation/sessions/20260926-103000-a1b2c3/clone",
 			"/work",
 			"--chdir",
 			"/tmp",
 			"--clearenv",
 			"--setenv",
 			"HOME",
-			"/home/goro",
+			"/home/goronation",
 			"--setenv",
 			"PATH",
 			"/usr/bin:/bin",
@@ -316,7 +316,7 @@ func TestBackendPrepareGitGolden(t *testing.T) {
 			"origin",
 		}},
 		"export": {gitContract([]sandbox.Mount{m(sess+"/clone", "/work")}, []sandbox.Mount{m(sess+"/export", "/out")},
-			"-C", "/work", "bundle", "create", "/out/goro.bundle", "--all"), []string{
+			"-C", "/work", "bundle", "create", "/out/goronation.bundle", "--all"), []string{
 			"/usr/bin/bwrap",
 			"--unshare-all",
 			"--die-with-parent",
@@ -340,22 +340,22 @@ func TestBackendPrepareGitGolden(t *testing.T) {
 			"--tmpfs",
 			"/tmp",
 			"--tmpfs",
-			"/home/goro",
+			"/home/goronation",
 			"--ro-bind",
 			"/usr",
 			"/usr",
 			"--ro-bind",
-			"/home/u/.local/state/goro/sessions/20260926-103000-a1b2c3/clone",
+			"/home/u/.local/state/goronation/sessions/20260926-103000-a1b2c3/clone",
 			"/work",
 			"--bind",
-			"/home/u/.local/state/goro/sessions/20260926-103000-a1b2c3/export",
+			"/home/u/.local/state/goronation/sessions/20260926-103000-a1b2c3/export",
 			"/out",
 			"--chdir",
 			"/tmp",
 			"--clearenv",
 			"--setenv",
 			"HOME",
-			"/home/goro",
+			"/home/goronation",
 			"--setenv",
 			"PATH",
 			"/usr/bin:/bin",
@@ -398,7 +398,7 @@ func TestBackendPrepareGitGolden(t *testing.T) {
 			"/work",
 			"bundle",
 			"create",
-			"/out/goro.bundle",
+			"/out/goronation.bundle",
 			"--all",
 		}},
 	} {
@@ -448,8 +448,8 @@ func TestBackendBindOrder(t *testing.T) {
 			spec([]sandbox.Mount{m("/data/x/y", "/x/y"), m("/data/x", "/x")}, nil),
 			[]string{"/usr", "/x", "/x/y"}},
 		"/usr の下の Read": {
-			spec([]sandbox.Mount{m("/usr/local/bin/goro", "/usr/local/bin/goro")}, nil),
-			[]string{"/usr", "/usr/local/bin/goro"}},
+			spec([]sandbox.Mount{m("/usr/local/bin/goronation", "/usr/local/bin/goronation")}, nil),
+			[]string{"/usr", "/usr/local/bin/goronation"}},
 		"名前が似ているだけ (/w2 は /w の下でない)": {
 			spec([]sandbox.Mount{m("/data/w2", "/w2")}, []sandbox.Mount{m("/data/w", "/w")}),
 			[]string{"/usr", "/w2", "/w"}},
@@ -478,7 +478,7 @@ func TestBackendPrepareRejects(t *testing.T) {
 		"GuestPath が /proc の中 (bwrap 固有)": func(s *sandbox.Spec) { s.Read = []sandbox.Mount{{HostPath: "/data/x", GuestPath: "/proc/x"}} },
 		"GuestPath が /dev の中 (bwrap 固有)":  func(s *sandbox.Spec) { s.Read = []sandbox.Mount{{HostPath: "/data/x", GuestPath: "/dev/x"}} },
 		"Scratch が /proc の中 (bwrap 固有)":   func(s *sandbox.Spec) { s.Scratch = []string{"/proc/x"} },
-		"Egress の親が Read に無い (契約のみ)":      func(s *sandbox.Spec) { s.Egress = "/run/goro/proxy.sock" },
+		"Egress の親が Read に無い (契約のみ)":      func(s *sandbox.Spec) { s.Egress = "/run/goronation/proxy.sock" },
 		"loopback でない待ち受け (契約のみ)":         func(s *sandbox.Spec) { s.Loopback = []string{"0.0.0.0:3128"} },
 		"Read と Write の GuestPath の重複":    func(s *sandbox.Spec) { s.Read = []sandbox.Mount{m("/data/a")}; s.Write = []sandbox.Mount{m("/data/b")} },
 	} {
@@ -533,8 +533,8 @@ func TestContractAgreesWithBwrap(t *testing.T) {
 		"/home/tester/.config", "/home/tester/.config/gh", "/home/tester/.config/opencode", "/home/tester/.local", "/home/tester/.local/share",
 		"/home/tester/.local/share/opencode", "/home/tester/.opencode/bin/opencode", "/home/tester/.aws", "/home/tester/.netrc", "/home/tester/.cache",
 		"/root", "/etc", "/etc/ssl/certs", "/etc/shadow", "/etc/ssh", "/etc/ssh/x", "/etc/passwd", "/run", "/run/user/1000", "/run/user/1000/agent.sock",
-		"/run/goro", "/var", "/var/run", "/var/lib/docker", "/var/tmp", "/var/tmp/x", "/proc", "/proc/self", "/sys", "/dev", "/dev/shm", "/boot",
-		"/tmp", "/tmp/x", "/tmp/agent.sock", "/usr", "/usr/bin/git", "/usr/local/bin/goro", "/bin", "/lib", "/opt", "/opt/claude/claude", "/data", "/data/x", "/srv/x",
+		"/run/goronation", "/var", "/var/run", "/var/lib/docker", "/var/tmp", "/var/tmp/x", "/proc", "/proc/self", "/sys", "/dev", "/dev/shm", "/boot",
+		"/tmp", "/tmp/x", "/tmp/agent.sock", "/usr", "/usr/bin/git", "/usr/local/bin/goronation", "/bin", "/lib", "/opt", "/opt/claude/claude", "/data", "/data/x", "/srv/x",
 		"rel", "", "/a/../b", "/a\nb",
 	}
 	n := 0

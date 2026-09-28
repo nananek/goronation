@@ -46,7 +46,7 @@ func TestCageEnvironment(t *testing.T) {
 	s := probeSpec(t, fh.host(), t.TempDir(), t.TempDir())
 	r := runProbe(t, s)
 
-	want := []string{"HOME=/home/goro", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "PWD=/work"}
+	want := []string{"HOME=/home/goronation", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "PWD=/work"}
 	got := slices.Clone(r.Env)
 	slices.Sort(got)
 	slices.Sort(want)
@@ -122,14 +122,14 @@ func TestCageNetwork(t *testing.T) {
 func TestCageFilesystem(t *testing.T) {
 	fh := newFakeHome(t)
 	work, home := t.TempDir(), t.TempDir()
-	writes := []string{"/work/w.txt", "/home/goro/h.txt", "/tmp/t.txt", "/usr/u.txt", "/usr/bin/u.txt"}
+	writes := []string{"/work/w.txt", "/home/goronation/h.txt", "/tmp/t.txt", "/usr/u.txt", "/usr/bin/u.txt"}
 	args := []string{}
 	for _, w := range writes {
 		args = append(args, "-write", w)
 	}
 	r := runProbe(t, probeSpec(t, fh.host(), work, home, args...))
 
-	for _, ok := range []string{"/work/w.txt", "/home/goro/h.txt", "/tmp/t.txt"} {
+	for _, ok := range []string{"/work/w.txt", "/home/goronation/h.txt", "/tmp/t.txt"} {
 		if e := r.Writes[ok]; e != "" {
 			t.Errorf("%s に書けない: %s", ok, e)
 		}
@@ -219,8 +219,8 @@ func TestCageReachesBoundDirectorySocket(t *testing.T) {
 	l1 := echoServer(t, sock, "one")
 
 	fh := newFakeHome(t)
-	s := probeSpec(t, fh.host(), t.TempDir(), t.TempDir(), "-uds-twice", "/run/goro/p.sock")
-	s.Binds = append(s.Binds, Bind{Src: run, Dst: "/run/goro"})
+	s := probeSpec(t, fh.host(), t.TempDir(), t.TempDir(), "-uds-twice", "/run/goronation/p.sock")
+	s.Binds = append(s.Binds, Bind{Src: run, Dst: "/run/goronation"})
 	stdinR, stdinW := io.Pipe()
 	stdoutR, stdoutW := io.Pipe()
 	var stderr strings.Builder
@@ -265,11 +265,11 @@ func TestCageReachesBoundDirectorySocket(t *testing.T) {
 
 	// ro で bind したので、檻の中から、ソケットのディレクトリに書けない。
 	r := runProbe(t, func() Spec {
-		s := probeSpec(t, fh.host(), t.TempDir(), t.TempDir(), "-write", "/run/goro/x")
-		s.Binds = append(s.Binds, Bind{Src: run, Dst: "/run/goro"})
+		s := probeSpec(t, fh.host(), t.TempDir(), t.TempDir(), "-write", "/run/goronation/x")
+		s.Binds = append(s.Binds, Bind{Src: run, Dst: "/run/goronation"})
 		return s
 	}())
-	if e := r.Writes["/run/goro/x"]; !strings.Contains(e, "read-only file system") {
+	if e := r.Writes["/run/goronation/x"]; !strings.Contains(e, "read-only file system") {
 		t.Errorf("ソケットのディレクトリに書けてしまう (error = %q)", e)
 	}
 }
