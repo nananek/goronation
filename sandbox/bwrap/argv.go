@@ -3,6 +3,7 @@ package bwrap
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -44,6 +45,9 @@ var (
 	credEnvParts    = []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "API_KEY", "APIKEY", "PRIVATE_KEY", "ACCESS_KEY"}
 )
 
+// capNameRE は、Spec.CapDrop の要素の形 (CAP_ で始まる、大文字と _ だけ)。
+var capNameRE = regexp.MustCompile(`^CAP_[A-Z_]+$`)
+
 // claimedDst は、Spec の中で使われた、檻の中の path と、その持ち主 (エラーメッセージ用)。
 type claimedDst struct{ what, dst string }
 
@@ -61,6 +65,9 @@ func (s Spec) argv() []string {
 	a := []string{bwrapPath, "--unshare-all", "--die-with-parent"}
 	if s.NewSession {
 		a = append(a, "--new-session")
+	}
+	for _, c := range s.CapDrop {
+		a = append(a, "--cap-drop", c)
 	}
 	for _, l := range s.Symlinks {
 		a = append(a, "--symlink", l.Target, l.Dst)
@@ -137,6 +144,14 @@ func (s Spec) validate() error {
 				return fmt.Errorf("bwrap: %s: Dst %q は、Symlinks[%d] の Dst %q の下 (symlink を辿って、/proc・/dev の規則を迂回できる)",
 					c.what, c.dst, i, l.Dst)
 			}
+		}
+	}
+	for i, cd := range s.CapDrop {
+		if !capNameRE.MatchString(cd) {
+			return fmt.Errorf("bwrap: CapDrop[%d]: %q は CAP_ で始まる大文字と _ だけの形ではない", i, cd)
+		}
+		if slices.Contains(s.CapDrop[:i], cd) {
+			return fmt.Errorf("bwrap: CapDrop[%d]: %q が重複している", i, cd)
 		}
 	}
 	for i, e := range s.Env {

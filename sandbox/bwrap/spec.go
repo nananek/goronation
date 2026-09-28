@@ -28,6 +28,13 @@ type Spec struct {
 	Chdir string
 	// Cmd は、檻の中で実行するコマンド。Cmd[0] は絶対 path (PATH は検索しない)。
 	Cmd []string
+	// CapDrop は、檻の中の全プロセスから落とす Linux capability (bwrap の --cap-drop)。名前は CAP_ で始まる
+	// 大文字と _ だけ (例: "CAP_SYS_PTRACE")。bounding set からも落ちるので、後から (setuid バイナリの実行などで)
+	// 取り戻せない。ただし、CAP_SYS_PTRACE を落とすだけでは、同一 uid の兄弟プロセスからの ptrace・procfs
+	// (/proc/<pid>/fd) 経由のアクセスは防げない (Yama LSM の既定・ptrace_scope=0 は、dumpable なプロセスなら、
+	// 同一 uid 同士に capability なしでもアクセスを許すため)。対象のプロセス自身が prctl(PR_SET_DUMPABLE, 0) を
+	// 設定していることと、セットで初めて効く (この設定は、このパッケージの外・呼び出し側の責務)。
+	CapDrop []string
 	// NewSession は、--new-session (setsid) を付けるか。既定 (false) は付けない。付けると制御端末を失い、
 	// 端末のサイズ変更 (SIGWINCH) が届かない。付けないとき、端末に直結して (標準入出力のどれかが端末か、
 	// 呼び手が制御端末を持つ) 起動するなら、Start は TIOCSTI が無効なことを確かめる。

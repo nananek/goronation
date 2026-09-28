@@ -264,6 +264,9 @@ func TestCageSpecGoldenOpenCode(t *testing.T) {
 	}
 	want := []string{
 		"/usr/bin/bwrap", "--unshare-all", "--die-with-parent",
+		"--cap-drop", "CAP_SYS_PTRACE", "--cap-drop", "CAP_SYS_ADMIN", "--cap-drop", "CAP_SYS_MODULE",
+		"--cap-drop", "CAP_SYS_RAWIO", "--cap-drop", "CAP_SYS_BOOT", "--cap-drop", "CAP_NET_ADMIN",
+		"--cap-drop", "CAP_NET_RAW", "--cap-drop", "CAP_MKNOD",
 		"--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
 		"--proc", "/proc", "--dev", "/dev",
 		"--tmpfs", "/tmp",

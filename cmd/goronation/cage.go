@@ -20,6 +20,22 @@ const (
 	jailProxyAddr = "127.0.0.1:3128"
 )
 
+// defaultCapDrop は、檻の中の全プロセスから落とす、既定の capability。CAP_SYS_PTRACE の除去が主目的
+// (bounding set から落ちるので、後から取り戻せない)。
+//
+// 既知の限界 (要検討・未解決): CAP_SYS_PTRACE を落とすだけでは、Yama LSM の既定 (ptrace_scope=0) の「同一 uid・
+// dumpable なら、capability なしでも通す」規則を迂回できない。エージェント本体プロセス自身が prctl(PR_SET_DUMPABLE, 0)
+// を設定していれば、この規則も閉じられるはずだが、goronation init が __exec-hardened 経由で行うこの設定は、
+// エージェント本体への execve の時点で Linux に無効化される (execve は、特権が変わらない通常の実行では、dumpable を
+// 都度 1 に戻すため。exechardened.go の execHardenedUsage を参照)。そのため、現状、この cap-drop だけでは、
+// 同一檻内の兄弟プロセス (エージェント本体と、そこから fork される bash ツール等の子プロセス) 間の ptrace・procfs
+// (/proc/<pid>/fd) 経由の介入は、まだ防げていない。残りの capability は、コーディングエージェントの通常動作に
+// 不要と判断できる特権的なもの。
+var defaultCapDrop = []string{
+	"CAP_SYS_PTRACE", "CAP_SYS_ADMIN", "CAP_SYS_MODULE", "CAP_SYS_RAWIO", "CAP_SYS_BOOT",
+	"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_MKNOD",
+}
+
 // jailGitBase は、--push のとき、檻の git が https://github.com/ の代わりに使う URL の base
 // (goronation init が中継する loopback + egress/git の受け口)。CONNECT を経由しない、直接の宛先。
 const jailGitBase = "http://" + jailProxyAddr + git.PathPrefix
@@ -103,7 +119,8 @@ func cageSpec(c cageConfig) bwrap.Spec {
 	cmd = append(cmd, mcpArgs...)
 	env := append(cageEnv(c.Agent, c.Term, c.TZ, c.PushRepo, c.PushRefPrefix), mcpEnv...)
 	return bwrap.Spec{
-		Host: c.Host,
+		Host:    c.Host,
+		CapDrop: defaultCapDrop,
 		Symlinks: []bwrap.Symlink{
 			{Target: "usr/lib", Dst: "/lib"}, {Target: "usr/lib64", Dst: "/lib64"},
 			{Target: "usr/bin", Dst: "/bin"}, {Target: "usr/sbin", Dst: "/sbin"},

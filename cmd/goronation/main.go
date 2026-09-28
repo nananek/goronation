@@ -49,6 +49,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return runWeb(args[1:], stdout, stderr)
 	case "init":
 		return runInit(args[1:], stderr)
+	case "__exec-hardened":
+		return runExecHardened(args[1:], stderr)
 	case "-h", "--help":
 		fmt.Fprint(stderr, usage)
 		return 0

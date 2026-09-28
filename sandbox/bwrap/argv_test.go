@@ -102,10 +102,41 @@ func TestArgvNewSession(t *testing.T) {
 	}
 }
 
+// TestArgvCapDrop は、Spec.CapDrop の各要素が、固定フラグの直後・mount より前に、--cap-drop CAP で
+// 指定した順に並ぶことを確認する。
+func TestArgvCapDrop(t *testing.T) {
+	s := cageSpec()
+	s.CapDrop = []string{"CAP_SYS_PTRACE", "CAP_SYS_ADMIN"}
+	argv, err := s.Argv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]string{"/usr/bin/bwrap", "--unshare-all", "--die-with-parent",
+		"--cap-drop", "CAP_SYS_PTRACE", "--cap-drop", "CAP_SYS_ADMIN"}, cageArgv[3:]...)
+	if !reflect.DeepEqual(argv, want) {
+		t.Errorf("CapDrop の argv:\n got %q\nwant %q", argv, want)
+	}
+}
+
+// TestArgvRejectsCapDrop は、CAP_ で始まる大文字と _ だけの形でない CapDrop と、重複を拒否することを確認する。
+func TestArgvRejectsCapDrop(t *testing.T) {
+	cases := []specCase{
+		{"小文字", func(s *Spec) { s.CapDrop = []string{"cap_sys_ptrace"} }, "CapDrop"},
+		{"CAP_ 接頭辞なし", func(s *Spec) { s.CapDrop = []string{"SYS_PTRACE"} }, "CapDrop"},
+		{"数字を含む", func(s *Spec) { s.CapDrop = []string{"CAP_SYS_PTRACE2"} }, "CapDrop"},
+		{"空文字列", func(s *Spec) { s.CapDrop = []string{""} }, "CapDrop"},
+		{"重複", func(s *Spec) { s.CapDrop = []string{"CAP_SYS_PTRACE", "CAP_SYS_PTRACE"} }, "重複"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) { expectRejected(t, c) })
+	}
+}
+
 // flagArity は、Argv が出す bwrap のオプションと、その引数の数。これに無いオプションは、出してはいけない。
 var flagArity = map[string]int{
 	"--unshare-all": 0, "--die-with-parent": 0, "--new-session": 0, "--clearenv": 0,
 	"--symlink": 2, "--proc": 1, "--dev": 1, "--tmpfs": 1, "--ro-bind": 2, "--bind": 2, "--chdir": 1, "--setenv": 2,
+	"--cap-drop": 1,
 }
 
 // parsedArgv は、argv を、Spec の各欄に読み戻したもの。

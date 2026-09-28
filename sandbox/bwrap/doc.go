@@ -20,8 +20,8 @@
 //
 // # 限界
 //
-//   - seccomp・cap-drop・cgroup の制限は未実装 (uid 0 で起動すると、檻の中に capability が残る)。pty 中継も未実装で、
-//     端末に直結する檻は制御端末を共有し、TIOCSTI は kernel の設定に頼る。
+//   - seccomp・cgroup の制限は未実装。cap-drop (Spec.CapDrop) は capability を bounding set から落とすだけで、兄弟
+//     プロセス間の ptrace・procfs 対策には、対象プロセス自身の dumpable=0 化も要る (呼び出し側の責務。pty 中継も未実装)。
 //   - 検証は path の字面と、Start が解決した実体だけ (解決の後の差し替えは見ない)。値の中身は見ない。檻の / は tmpfs で、書けるが揮発する。
 //   - fd を close-on-exec にするのは、呼び手のプロセス全体に効く (後で起動する別の子にも、継承した fd は渡らない)。
 //
