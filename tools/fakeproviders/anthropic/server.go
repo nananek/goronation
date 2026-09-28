@@ -14,6 +14,21 @@ import (
 // 期限が無いとハングすることを確認済み)。var なのは、テストがこの値を縮めるため。
 var readBodyTimeout = 10 * time.Second
 
+// readHeaderTimeout は、リクエストヘッダーを読み取る期限。ヘッダー終端の空行を送り切らずに接続だけ繋ぎ
+// 続ける接続は、readBodyTimeout の姉妹脆弱性として攻撃者視点レビューで確認済み: net/http は、ヘッダー解析が
+// 終わるまで ServeHTTP を呼ばないため、ハンドラの中 (SetReadDeadline) では対処できず、*http.Server 自身に
+// この期限を設定するしかない。NewHTTPServer が、この期限を設定した *http.Server を返す。var なのは、
+// テストがこの値を縮めるため。
+var readHeaderTimeout = 5 * time.Second
+
+// NewHTTPServer は、s を Handler にした *http.Server を、ReadHeaderTimeout・ReadTimeout
+// (readHeaderTimeout・readBodyTimeout) を設定して返す。httptest.NewServer(s) は、これらの期限を設定する
+// 手段が無い (Handler しか渡せない) ため、ネットワークへ実際に listen する側 (cmd/framecapture など) は、
+// httptest.NewServer(s) ではなく、この関数が返す *http.Server を使う。
+func (s *Server) NewHTTPServer() *http.Server {
+	return &http.Server{Handler: s, ReadHeaderTimeout: readHeaderTimeout, ReadTimeout: readBodyTimeout}
+}
+
 // Step は、POST /v1/messages への 1 回の呼び出しに対する応答を 1 つ記述する。
 type Step struct {
 	// Text は、text content block の本文。ToolUse が nil のときは、空文字列でも常にこの block を送る。

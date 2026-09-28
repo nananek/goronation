@@ -346,6 +346,48 @@ func TestSlowBodyTimesOut(t *testing.T) {
 	}
 }
 
+// TestSlowHeaderDoesNotHangForever は、finding 2 の姉妹脆弱性 (finding 4) の再現・回帰確認: リクエスト
+// ヘッダーを送り切らずに接続だけ繋ぎ続ける接続 (本文ではなくヘッダー自体が未完成) は、ServeHTTP 内の
+// SetReadDeadline (readBodyTimeout) では防げない (ハンドラはヘッダー解析が終わるまで呼ばれないため)。
+// httptest.NewServer(handler) には ReadHeaderTimeout を設定する手段が無いので、ここでは
+// httptest.NewUnstartedServer + NewHTTPServer (ReadHeaderTimeout 込み) を使う。
+func TestSlowHeaderDoesNotHangForever(t *testing.T) {
+	old := readHeaderTimeout
+	readHeaderTimeout = 100 * time.Millisecond
+	defer func() { readHeaderTimeout = old }()
+
+	s := httptest.NewUnstartedServer(nil)
+	s.Config = NewServer(Step{Text: "x"}).NewHTTPServer()
+	s.Start()
+	defer s.Close()
+
+	addr := strings.TrimPrefix(s.URL, "http://")
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// リクエストラインとヘッダーの一部だけを送り、ヘッダー終端の空行を送らない。
+	partial := "POST /v1/messages HTTP/1.1\r\nHost: " + addr + "\r\nContent-Type: application/json\r\n"
+	if _, err := conn.Write([]byte(partial)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		buf := make([]byte, 1)
+		conn.Read(buf)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ヘッダーを送り切らない接続が5秒経ってもハンドラに到達せず応答/切断が無い " +
+			"(ReadHeaderTimeout が無いため、readBodyTimeout の修正とは無関係に無期限にハングしうる)")
+	}
+}
+
 func TestNewServerPanicsWithoutSteps(t *testing.T) {
 	defer func() {
 		if recover() == nil {
