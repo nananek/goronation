@@ -157,21 +157,33 @@ func TestWriteBinaryRoundTrip(t *testing.T) {
 
 // TestAcceptRejectsCrossOrigin は、Origin ヘッダが要求の Host と一致しない handshake を、ライブラリの
 // 既定の同一オリジン確認が拒むことを確かめる (doc.go の「same-origin」を参照)。
-func TestAcceptRejectsCrossOrigin(t *testing.T) {
-	srv, conns := newTestServer(t)
-	ctx := t.Context()
-	header := http.Header{"Origin": []string{"https://evil.example"}}
-	_, resp, err := termrelaytest.Dial(ctx, srv.URL, header)
-	if err == nil {
-		t.Fatal("クロスオリジンの handshake が通った")
-	}
-	if resp != nil && resp.StatusCode != http.StatusForbidden {
-		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
-	}
-	select {
-	case <-conns:
-		t.Fatal("Accept が通ってしまった")
-	case <-time.After(200 * time.Millisecond):
+// TestAcceptIgnoresOrigin は、Origin ヘッダの値に関わらず (無い・一致しない・壊れている、のどれでも)
+// Accept が通ることを確かめる (doc.go の「no-origin-check」を参照。UDS 越しの接続の信頼性は、Origin
+// ヘッダとは無関係という設計)。
+func TestAcceptIgnoresOrigin(t *testing.T) {
+	for name, origin := range map[string]string{
+		"無し":    "",
+		"一致しない": "https://evil.example",
+		"壊れている": "://not a url",
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, conns := newTestServer(t)
+			ctx := t.Context()
+			var header http.Header
+			if origin != "" {
+				header = http.Header{"Origin": []string{origin}}
+			}
+			cli, _, err := termrelaytest.Dial(ctx, srv.URL, &termrelaytest.DialOptions{Header: header})
+			if err != nil {
+				t.Fatalf("handshake が拒まれた: %v", err)
+			}
+			defer cli.Close()
+			select {
+			case <-conns:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Accept が通らない")
+			}
+		})
 	}
 }
 

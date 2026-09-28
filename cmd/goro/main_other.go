@@ -30,6 +30,8 @@ func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 func runServe(args []string, stdout, stderr io.Writer) int { return unsupported("serve", stderr) }
 
+func runWeb(args []string, stdout, stderr io.Writer) int { return unsupported("web", stderr) }
+
 func unsupported(sub string, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "goro %s: Linux だけで使える\n", sub)
 	return 1

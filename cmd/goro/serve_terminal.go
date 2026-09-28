@@ -203,14 +203,11 @@ func startServeTermSession(ctx context.Context, stateDir, sessionID, agentFlag, 
 	return startTermSession(ctx, tgt.id, cfg, allowList(agent, nil))
 }
 
-// handleTerminal は、認証済みセッション (requireSession でラップ済み) だけが繋げる、端末ビューの
-// WebSocket endpoint。s.term が nil (--repo も --session も指定せずに起動した) なら 404。
-func (s *server) handleTerminal(w http.ResponseWriter, r *http.Request) {
-	if s.term == nil {
-		http.Error(w, "端末ビューは使えない (--repo か --session なしで起動した)", http.StatusNotFound)
-		return
-	}
-	if s.term.isEnded() {
+// handleTerminal は、端末ビューの WebSocket endpoint。認証は、この関数の責務ではない: goro serve は
+// UDS 専用で、繋いでくるのは goro web の reverse proxy だけという前提 (UDS に繋げること自体が信頼の
+// 境界。goro-web-plan の決定)。
+func handleTerminal(term *termSession, w http.ResponseWriter, r *http.Request) {
+	if term.isEnded() {
 		http.Error(w, "セッションはすでに終わっている", http.StatusGone)
 		return
 	}
@@ -218,5 +215,5 @@ func (s *server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // termrelay (coder/websocket) が、必要な応答をすでに書いている
 	}
-	s.term.attach(conn)
+	term.attach(conn)
 }

@@ -588,10 +588,10 @@ func TestRunRejectsLongSockPathBeforeCreate(t *testing.T) {
 	for name, o := range map[string]runOptions{"--repo": {repo: "x"}, "--session": {session: "x"}, "--login": {login: true}, "--login (opencode)": {login: true, agent: "opencode"}} {
 		probe := sockPathFor("/x", o) // 状態ディレクトリ /x の分 (2 バイト) を除いた長さで、上限に合わせる
 		stateAt := func(total int) string { return "/" + strings.Repeat("a", total-len(probe)+1) }
-		if err := checkSockPath(sockPathFor(stateAt(maxSockPath), o)); err != nil {
+		if err := checkSockPath(sockPathFor(stateAt(maxSockPath), o), "egress"); err != nil {
 			t.Errorf("%s: 上限ちょうど (%d バイト) が通らない: %v", name, maxSockPath, err)
 		}
-		if err := checkSockPath(sockPathFor(stateAt(maxSockPath+1), o)); err == nil {
+		if err := checkSockPath(sockPathFor(stateAt(maxSockPath+1), o), "egress"); err == nil {
 			t.Errorf("%s: 上限を 1 バイト超えても、通る", name)
 		}
 	}
@@ -619,11 +619,11 @@ func TestRunRejectsLongSockPathBeforeCreate(t *testing.T) {
 
 func TestCheckSockPath(t *testing.T) {
 	ok := "/" + strings.Repeat("a", maxSockPath-1)
-	if err := checkSockPath(ok); err != nil {
+	if err := checkSockPath(ok, "egress"); err != nil {
 		t.Errorf("%d バイト: %v (上限ちょうどは通る)", len(ok), err)
 	}
 	long := ok + "a"
-	err := checkSockPath(long)
+	err := checkSockPath(long, "egress")
 	if err == nil {
 		t.Fatalf("%d バイトが通る", len(long))
 	}

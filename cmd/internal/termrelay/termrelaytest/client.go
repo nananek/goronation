@@ -20,9 +20,23 @@ type Conn struct {
 	ws *websocket.Conn
 }
 
-// Dial は、url (http(s):// でよい) へ、header (Cookie など) を添えて WebSocket 接続する。
-func Dial(ctx context.Context, url string, header http.Header) (*Conn, *http.Response, error) {
-	ws, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: header})
+// DialOptions は、Dial の追加の設定。ゼロ値 (nil を渡す) は、素の TCP/TLS ダイヤルで、header 無し。
+type DialOptions struct {
+	// Header は、handshake の要求に添えるヘッダ (Cookie・Origin など)。
+	Header http.Header
+	// HTTPClient は、handshake に使う http.Client (nil なら既定)。goro serve (UDS 専用) に、
+	// TCP を経由せず直接繋ぐテストのために、DialContext をカスタムした Client を渡せるようにする。
+	HTTPClient *http.Client
+}
+
+// Dial は、url (http(s):// でよい) へ、opts (nil でもよい) に従って WebSocket 接続する。
+func Dial(ctx context.Context, url string, opts *DialOptions) (*Conn, *http.Response, error) {
+	var wsOpts websocket.DialOptions
+	if opts != nil {
+		wsOpts.HTTPHeader = opts.Header
+		wsOpts.HTTPClient = opts.HTTPClient
+	}
+	ws, resp, err := websocket.Dial(ctx, url, &wsOpts)
 	if err != nil {
 		return nil, resp, err
 	}

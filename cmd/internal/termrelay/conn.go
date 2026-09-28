@@ -35,11 +35,13 @@ type Conn struct {
 	ws *websocket.Conn
 }
 
-// Accept は、r を WebSocket にアップグレードする。呼び手 (cmd/goro) が、認証 (セッション cookie の検証)
-// をこの呼び出しより前に済ませておく。Origin の検証は、ライブラリの既定 (要求の Host と一致する Origin
-// だけを許す) に任せる (doc.go の「same-origin」を参照)。
+// Accept は、r を WebSocket にアップグレードする。goro serve は UDS 専用 (goro-web-plan の決定) で、
+// この関数の呼び手は常に goro web の reverse proxy だけになる。信頼の境界は、UDS に繋げること自体
+// (ファイルシステムの権限) にあり、HTTP の Origin ヘッダとは無関係なので、ライブラリの Origin 検証は
+// 意図的に無効にする (`InsecureSkipVerify`。ブラウザから直接 TCP で叩かれていた頃の名残の検証を、
+// UDS 越しの接続にそのまま当てはめても意味を持たない。doc.go の「same-origin」を参照)。
 func Accept(w http.ResponseWriter, r *http.Request) (*Conn, error) {
-	ws, err := websocket.Accept(w, r, nil)
+	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return nil, err
 	}
