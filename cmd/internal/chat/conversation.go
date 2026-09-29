@@ -94,7 +94,8 @@ type Conversation struct {
 	// orphans は、会話が先に決着させたが、Stream がまだ未決として持つ request_id (Stop・書き込みの失敗・終了で失効させた分と、
 	// 入力を閉じた後に自動拒否した分)。Stream の後追いの permission.resolved (by=agent) は、これに当たれば配らず、外す
 	// (決着は要求ごとにちょうど 1 つ。spec/v0)。Stream の未決の上限 (64) が、この表の上限になる。
-	orphans  map[string]struct{}
+	// 長い request_id (最大 1 行) でメモリが増えないよう、ID は SHA-256 で持つ (settled と同じ)。
+	orphans  map[[sha256.Size]byte]struct{}
 	stopped  bool
 	lastErr  string // 直前の error イベントの data (同じ error の連続を、まとめる)
 	stopOnce sync.Once
@@ -102,7 +103,7 @@ type Conversation struct {
 
 // NewConversation は、idle の会話を作る。
 func NewConversation(cfg ConversationConfig) *Conversation {
-	return &Conversation{cfg: cfg, pending: map[string]Event{}, settled: map[[sha256.Size]byte]struct{}{}, orphans: map[string]struct{}{}}
+	return &Conversation{cfg: cfg, pending: map[string]Event{}, settled: map[[sha256.Size]byte]struct{}{}, orphans: map[[sha256.Size]byte]struct{}{}}
 }
 
 // State は、今の状態。
@@ -261,8 +262,8 @@ func (c *Conversation) OnLine(line []byte) error {
 				if req, held := c.pending[id]; held {
 					c.settleLocked(id)
 					unpin = append(unpin, req.Seq)
-				} else if _, orphan := c.orphans[id]; orphan {
-					delete(c.orphans, id)
+				} else if _, orphan := c.orphans[sha256.Sum256([]byte(id))]; orphan {
+					delete(c.orphans, sha256.Sum256([]byte(id)))
 					continue // 会話が先に決着させた (Stop・書き込みの失敗・自動拒否)。決着は、要求ごとにちょうど 1 つ (spec/v0)
 				}
 			}
@@ -290,7 +291,7 @@ func (c *Conversation) autoRejectLocked(id string) {
 	c.settleLocked(id)     // 画面に出た要求への、後追いの応答は、404 でなく 409
 	outcome := "cancelled" // 入力を閉じた後は、claude に返せない
 	if c.state == StateClosed || c.stopped {
-		c.orphans[id] = struct{}{} // Stream は、まだ未決として持つ
+		c.orphans[sha256.Sum256([]byte(id))] = struct{}{} // Stream は、まだ未決として持つ
 	} else {
 		data, err := json.Marshal(map[string]string{"request_id": id, "outcome": v0.RejectOnce})
 		if err == nil {
@@ -331,7 +332,7 @@ func (c *Conversation) expireAllLocked() {
 	for _, id := range ids {
 		unpin = append(unpin, c.pending[id].Seq)
 		c.settleLocked(id)
-		c.orphans[id] = struct{}{}
+		c.orphans[sha256.Sum256([]byte(id))] = struct{}{}
 		if e, err := c.cfg.Feed.Emit(v0.TypePermissionResolved, true, map[string]string{"by": "policy", "outcome": "cancelled", "request_id": id}); err == nil {
 			out = append(out, e)
 		}
