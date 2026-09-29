@@ -300,3 +300,19 @@ func (s *webServer) handleChatWrite(op string) http.HandlerFunc {
 		w.Write(out)
 	}
 }
+
+// handleChatPage は、requireSession で保護された GET /s/{id}/chat (構造化チャットの画面。表示だけ)。serve には触れない (起こさない・繋がない):
+// 画面が、EventSource で /s/{id}/events を開く。{id} は形だけ確かめる。
+func (s *webServer) handleChatPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := chatSessionID(w, r); !ok {
+		return
+	}
+	b, err := chatAssets.ReadFile("assets/chat/chat.html")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(b)
+}

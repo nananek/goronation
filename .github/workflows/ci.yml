@@ -15,6 +15,8 @@ permissions:
 env:
   # skip の理由と bwrap の版を、ログに出す。
   GO_TEST_EXTRA: -v
+  # チャット画面の JS の試験 (node --test) を、skip でなく必須にする (ubuntu-24.04 の runner には node が入っている)。
+  GORO_REQUIRE_NODE: "1"
 
 jobs:
   # 基盤なしの leg。bwrap が「無い」ことを保証して回す。

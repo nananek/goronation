@@ -20,6 +20,7 @@
 | [0012](0012-chat-launch-and-stdio-isolation.md) | chat の起動: 標準入出力の隔離・洪水・世代 (M1.5) | 採用 |
 | [0013](0013-chat-serve-api.md) | serve --chat の UDS API と、承認の世代 (M1.5) | 採用 |
 | [0014](0014-chat-web-relay.md) | web の chat の中継: SSE・書き込み・関門・接続の上限 (M1.5) | 採用 |
+| [0015](0015-chat-ui-display.md) | チャット画面の表示 (読む側): textContent だけ・危険な文字の印・再接続・項目の上限 (M1.5) | 採用 |
 
 ## 書き方
 
