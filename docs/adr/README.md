@@ -21,6 +21,7 @@
 | [0013](0013-chat-serve-api.md) | serve --chat の UDS API と、承認の世代 (M1.5) | 採用 |
 | [0014](0014-chat-web-relay.md) | web の chat の中継: SSE・書き込み・関門・接続の上限 (M1.5) | 採用 |
 | [0015](0015-chat-ui-display.md) | チャット画面の表示 (読む側): textContent だけ・危険な文字の印・再接続・項目の上限 (M1.5) | 採用 |
+| [0016](0016-chat-ui-write.md) | チャット画面の書く側: 送信・終了・権限の承認 (M1.5) | 採用 |
 
 ## 書き方
 

@@ -2,7 +2,6 @@
 body { margin: 0; font: 14px/1.5 system-ui, sans-serif; }
 header { position: sticky; top: 0; display: flex; gap: 1em; align-items: baseline; padding: 6px 12px; background: Canvas; border-bottom: 1px solid #8884; }
 #status { font-weight: bold; }
-.readonly { opacity: 0.7; }
 #notices { padding: 0 12px; }
 .notice { margin: 6px 0; padding: 4px 8px; border-left: 3px solid #a80; background: #a802; }
 .notice-end { border-left-color: #888; }
@@ -22,3 +21,19 @@ header { position: sticky; top: 0; display: flex; gap: 1em; align-items: baselin
 .item-usage, .item-turn-end, .item-session { opacity: 0.75; }
 .item-turn-end.is-error { color: #c44; }
 .error-text { color: #c44; }
+
+/* 下の領域: 権限ダイアログ (未決だけ) と送信欄。ダイアログの領域は、高さを限り、中でスクロールする (巨大な input が、送信欄・ボタンを画面外に押し出さない) */
+#bottom { position: sticky; bottom: 0; z-index: 10; background: Canvas; border-top: 2px solid #8886; }
+#dialogs-head { padding: 2px 12px; font-weight: bold; color: #c60; }
+#dialogs-head:empty { display: none; }
+#dialogs { max-height: 40vh; overflow: auto; }
+.dialog { margin: 0; padding: 8px 12px; border-bottom: 1px solid #8886; border-left: 4px solid #c80; background: #c802; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.dialog-tool { font-weight: bold; }
+.dialog-buttons { display: flex; gap: 12px; margin: 6px 0; }
+.dialog-buttons button { min-height: 2.4em; padding: 0 1.2em; }
+.dialog .warn { color: #c44; margin: 4px 0; }
+.dialog pre { white-space: pre-wrap; unicode-bidi: isolate; max-height: 7em; overflow: auto; margin: 4px 0; font-size: 12px; }
+#composer { padding: 8px 12px; }
+#msg { width: 100%; box-sizing: border-box; font: inherit; resize: vertical; }
+.composer-row { display: flex; gap: 12px; align-items: center; margin-top: 4px; }
+#write-status { opacity: 0.8; }

@@ -186,6 +186,9 @@ class FakeEl {
     this.className = '';
     this._text = '';
     this.listeners = {};
+    this.disabled = false;
+    this.value = '';
+    this.open = false;
     this.scrollTop = 0;
     this.scrollHeight = 0;
     this.clientHeight = 0;
@@ -213,7 +216,7 @@ class FakeDoc {
   constructor() {
     this.created = [];
     this.byId = {};
-    for (const id of ['log', 'status', 'notices']) this.byId[id] = new FakeEl('div', this);
+    for (const [id, tag] of [['log', 'main'], ['status', 'span'], ['notices', 'div'], ['dialogs', 'div'], ['dialogs-head', 'div'], ['msg', 'textarea'], ['send', 'button'], ['stop', 'button'], ['write-status', 'span']]) this.byId[id] = new FakeEl(tag, this);
   }
   createElement(tag) { this.created.push(tag); return new FakeEl(tag, this); }
   getElementById(id) { return this.byId[id]; }
@@ -226,15 +229,29 @@ class FakeES {
 }
 FakeES.all = [];
 
+const BASE = '/s/20260101-000000-abcdef';
+
 function harness() {
   FakeES.all = [];
   const doc = new FakeDoc();
   const timers = [];
-  const env = {document: doc, EventSource: FakeES, setTimeout: (f, ms) => { timers.push({f, ms}); return timers.length; }, scroller: null};
+  const calls = []; // fetch の呼び出し: {url, opts, body, respond(status)}
+  const env = {
+    document: doc, EventSource: FakeES, setTimeout: (f, ms) => { timers.push({f, ms}); return timers.length; }, scroller: null,
+    fetch: (url, opts) => new Promise((resolve, reject) => {
+      calls.push({url, opts, body: JSON.parse(opts.body), respond: (status) => resolve({status}), fail: () => reject(new Error('net'))});
+    }),
+    TextEncoder: TextEncoder,
+  };
   const app = ui.create(env);
-  app.start('/s/20260101-000000-abcdef/events');
-  return {doc, timers, app, es: () => FakeES.all[FakeES.all.length - 1],
-    runTimers() { const t = timers.splice(0); for (const x of t) x.f(); }};
+  app.start(BASE + '/events', BASE);
+  return {doc, timers, calls, app, es: () => FakeES.all[FakeES.all.length - 1],
+    runTimers() { const t = timers.splice(0); for (const x of t) x.f(); },
+    // hello を受けて、描画まで進める。
+    hello(gen) { this.es().fire('hello', {first_seq: 0, generation: gen || G1}); this.runTimers(); },
+    fire(e) { this.es().fire('message', e); },
+    click(btn) { for (const f of btn.listeners.click || []) f(); },
+    async tick() { await new Promise((r) => setImmediate(r)); }};
 }
 
 test('UI: hello・イベント・end。描画は textContent と createElement だけ。end で再接続しない', () => {
@@ -458,4 +475,335 @@ test('T-1: 描画を挟みながら流しても、DOM の要素は、実際に�
   assert.ok(n <= core.LIMITS.maxItems + 260 + 1, 'nodes=' + n);
   assert.ok(peak <= core.LIMITS.maxItems + 260 + 1, 'peak=' + peak);
   assert.strictEqual(h.app.elements.size, n, '要素の表と、DOM の子の数が食い違う');
+});
+
+// ---- PR⑦b: 送信欄・終了・権限ダイアログ ----
+
+
+const dialogEls = (h) => h.doc.byId.dialogs.children;
+function findBtn(dlg, cls) {
+  const row = dlg.children.find((c) => c.className === 'dialog-buttons');
+  return row.children.find((c) => c.className === cls);
+}
+function pendingReq(rid, extra) {
+  return Object.assign({request_id: rid, tool_name: 'Write', title: 'new.txt', input: {file_path: '/work/new.txt'}}, extra || {});
+}
+
+test('送信欄: hello 前・ターン中・終了後・空は無効。送ると、指示だけの JSON を、固定の URL へ。turn.started まで次の送信を止める', async () => {
+  const h = harness();
+  const {send, msg} = {send: h.doc.byId.send, msg: h.doc.byId.msg};
+  assert.strictEqual(send.disabled, true, 'hello 前に有効');
+  h.hello();
+  assert.strictEqual(send.disabled, true, '空で有効');
+  msg.value = '  ';
+  h.click(send);
+  assert.strictEqual(h.calls.length, 0);
+  msg.value = 'こんにちは';
+  msg.listeners.input[0]();
+  assert.strictEqual(send.disabled, false);
+  h.click(send);
+  assert.strictEqual(send.disabled, true, '送信中に有効');
+  assert.strictEqual(h.calls.length, 1);
+  assert.strictEqual(h.calls[0].url, BASE + '/message');
+  assert.strictEqual(h.calls[0].opts.method, 'POST');
+  assert.strictEqual(h.calls[0].opts.headers['Content-Type'], 'application/json');
+  assert.deepStrictEqual(h.calls[0].body, {text: 'こんにちは'});
+  h.calls[0].respond(200);
+  await h.tick();
+  assert.strictEqual(msg.value, '', '送れたのに、入力欄が残った');
+  msg.value = 'next';
+  msg.listeners.input[0]();
+  assert.strictEqual(send.disabled, true, 'turn.started の前に、次の送信が有効');
+  h.fire(ev(0, 'turn.started', {text: 'こんにちは'}));
+  h.runTimers();
+  assert.strictEqual(send.disabled, true, 'ターン中に有効');
+  h.fire(ev(1, 'turn.completed', {stop_reason: 'end_turn', is_error: false}));
+  h.runTimers();
+  assert.strictEqual(send.disabled, false, 'ターンが終わっても無効');
+  h.es().fire('end', {exit: 0});
+  h.runTimers();
+  assert.strictEqual(send.disabled, true, '終了後に有効');
+  assert.strictEqual(msg.disabled, true);
+});
+
+test('送信欄: 失敗の status を画面に出し、入力は消さず、また送れる。大きすぎる指示は送らない', async () => {
+  const h = harness();
+  h.hello();
+  const msg = h.doc.byId.msg;
+  const ws = h.doc.byId.write_status || h.doc.byId['write-status'];
+  for (const [status, word] of [[409, '状態が合わない'], [403, '拒否された'], [404, '起動していない'], [400, '不正'], [413, '大きすぎる'], [415, 'Content-Type'], [502, '繋がらない'], [504, '応答しない'], [500, '失敗した']]) {
+    msg.value = 'x';
+    msg.listeners.input[0]();
+    h.click(h.doc.byId.send);
+    h.calls[h.calls.length - 1].respond(status);
+    await h.tick();
+    assert.ok(ws.textContent.includes(word), status + ': ' + ws.textContent);
+    assert.strictEqual(msg.value, 'x');
+    assert.strictEqual(h.doc.byId.send.disabled, false);
+  }
+  msg.value = 'x';
+  h.click(h.doc.byId.send);
+  h.calls[h.calls.length - 1].fail(); // 通信の失敗
+  await h.tick();
+  assert.ok(ws.textContent.includes('通信の失敗'));
+  const n = h.calls.length;
+  msg.value = 'あ'.repeat(30000); // 90,000 バイト
+  msg.listeners.input[0]();
+  h.click(h.doc.byId.send);
+  assert.strictEqual(h.calls.length, n);
+  assert.ok(ws.textContent.includes('大きすぎる'));
+});
+
+test('終了ボタン: 2 回押しで /stop を送る。終了後・要求後は無効', async () => {
+  const h = harness();
+  const stop = h.doc.byId.stop;
+  assert.strictEqual(stop.disabled, true);
+  h.hello();
+  assert.strictEqual(stop.disabled, false);
+  h.click(stop);
+  assert.strictEqual(h.calls.length, 0, '1 回で送った');
+  assert.strictEqual(stop.textContent, '本当に終了する');
+  h.runTimers(); // 猶予が過ぎると、戻る
+  assert.strictEqual(stop.textContent, '終了');
+  h.click(stop);
+  h.click(stop);
+  assert.strictEqual(h.calls.length, 1);
+  assert.strictEqual(h.calls[0].url, BASE + '/stop');
+  assert.deepStrictEqual(h.calls[0].body, {});
+  assert.strictEqual(stop.disabled, true);
+  h.calls[0].respond(200);
+  await h.tick();
+  assert.ok(h.doc.byId['write-status'].textContent.includes('終了を要求'));
+  assert.strictEqual(stop.disabled, true);
+});
+
+test('ダイアログ: 未決の権限要求からだけ作る。許可は、世代・request_id・outcome だけを、固定の URL へ送り、決着の表示は permission.resolved からだけ', async () => {
+  const h = harness();
+  h.hello();
+  assert.strictEqual(dialogEls(h).length, 0);
+  h.fire(ev(0, 'permission.requested', pendingReq('req-1')));
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 1);
+  const dlg = dialogEls(h)[0];
+  assert.ok(dlg.textContent.includes('Write') && dlg.textContent.includes('/work/new.txt'));
+  const approve = findBtn(dlg, 'approve');
+  const deny = findBtn(dlg, 'deny');
+  assert.strictEqual(approve.disabled, false);
+  h.click(approve);
+  assert.strictEqual(approve.disabled, true, '二重クリックを防ぐ');
+  assert.strictEqual(deny.disabled, true);
+  h.click(approve);
+  h.click(deny);
+  assert.strictEqual(h.calls.length, 1);
+  assert.strictEqual(h.calls[0].url, BASE + '/permission');
+  assert.deepStrictEqual(h.calls[0].body, {generation: G1, request_id: 'req-1', outcome: 'allow_once'});
+  h.calls[0].respond(200);
+  await h.tick();
+  const shown = h.doc.byId.log.textContent + h.doc.byId.dialogs.textContent;
+  assert.ok(!shown.includes('決着: allow_once'), '自分のクリックで、先に、決着と表示した');
+  assert.ok(!shown.includes('承認済み'));
+  assert.strictEqual(approve.disabled, true, '200 の後、resolved を待つ間に有効');
+  h.fire(ev(1, 'permission.resolved', {request_id: 'req-1', outcome: 'allow_once', by: 'human'}));
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 0, '決着した要求のダイアログが残った');
+  assert.ok(h.doc.byId.log.textContent.includes('決着: allow_once (human)'));
+});
+
+test('ダイアログ: 拒否は reject_once。409・404 は「決着済み」として、有効に戻さない。ほかの失敗は、もう一度押せる', async () => {
+  const h = harness();
+  h.hello();
+  for (const [i, rid] of ['a', 'b', 'c'].entries()) h.fire(ev(i, 'permission.requested', pendingReq(rid)));
+  h.runTimers();
+  const [da, db, dc] = dialogEls(h);
+  h.click(findBtn(da, 'deny'));
+  assert.deepStrictEqual(h.calls[0].body, {generation: G1, request_id: 'a', outcome: 'reject_once'});
+  h.calls[0].respond(409);
+  await h.tick();
+  assert.ok(da.textContent.includes('すでに決着済み'));
+  assert.strictEqual(findBtn(da, 'deny').disabled, true);
+  assert.strictEqual(findBtn(da, 'approve').disabled, true);
+  h.click(findBtn(db, 'approve'));
+  h.calls[1].respond(404);
+  await h.tick();
+  assert.ok(db.textContent.includes('もう無い'));
+  assert.strictEqual(findBtn(db, 'approve').disabled, true);
+  h.click(findBtn(dc, 'approve'));
+  h.calls[2].respond(504);
+  await h.tick();
+  assert.strictEqual(findBtn(dc, 'approve').disabled, false, '一時的な失敗は、もう一度押せる');
+  h.click(findBtn(dc, 'approve'));
+  h.calls[3].fail();
+  await h.tick();
+  assert.ok(dc.textContent.includes('通信の失敗'));
+});
+
+test('ダイアログ: 複数の要求で、押したものの request_id だけを送る (DOM から読み戻さない)', () => {
+  const h = harness();
+  h.hello();
+  const ids = ['__proto__', 'constructor', 'a"b\'c<d>', 'x'.repeat(300)];
+  for (const [i, rid] of ids.entries()) h.fire(ev(i, 'permission.requested', pendingReq(rid, {title: 'T' + i})));
+  h.runTimers();
+  const dl = dialogEls(h);
+  assert.strictEqual(dl.length, ids.length);
+  for (let i = ids.length - 1; i >= 0; i--) {
+    const btn = findBtn(dl[i], i === 3 ? 'deny' : 'approve'); // 300 文字の ID は、表示で切れる (許可できない) ので、拒否だけ
+    h.click(btn);
+    assert.strictEqual(h.calls[h.calls.length - 1].body.request_id, ids[i]);
+  }
+});
+
+test('ダイアログ: input を全部は表示できないとき・request_id に見えない文字があるときは、許可できない (拒否だけ)。押しても送らない', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'permission.requested', pendingReq('big', {input: {command: 'y'.repeat(50000)}})));
+  h.fire(ev(1, 'permission.requested', pendingReq('x' + cp(0x200b))));
+  h.fire(ev(2, 'permission.requested', pendingReq('x')));
+  h.runTimers();
+  const [big, inv, ok] = dialogEls(h);
+  for (const d of [big, inv]) {
+    assert.strictEqual(findBtn(d, 'approve').disabled, true);
+    assert.strictEqual(findBtn(d, 'deny').disabled, false);
+    assert.ok(d.textContent.includes('許可できない'));
+    h.click(findBtn(d, 'approve')); // 無効なボタンの click (テストからの直接の呼び出し) でも、送らない
+  }
+  assert.strictEqual(h.calls.length, 0);
+  assert.strictEqual(findBtn(ok, 'approve').disabled, false);
+  assert.ok(inv.textContent.includes('<U+200B>'), '見えない文字が、印になっていない');
+  h.click(findBtn(inv, 'deny'));
+  assert.strictEqual(h.calls[0].body.request_id, 'x' + cp(0x200b), '生の request_id を返していない');
+});
+
+test('request_id: 見えない文字だけが違う 2 つの要求は、別の要求として扱う (表示した要求と別の要求を承認させない)', () => {
+  const s = stateWith([ev(0, 'permission.requested', pendingReq('x', {input: {a: 'safe'}})), ev(1, 'permission.requested', pendingReq('x' + cp(0x200b), {input: {a: 'EVIL'}}))]);
+  const p = s.items.filter((i) => i.kind === 'permission');
+  assert.strictEqual(p.length, 2);
+  assert.notStrictEqual(p[0].requestId, p[1].requestId);
+  assert.strictEqual(p[0].idPlain, true);
+  assert.strictEqual(p[1].idPlain, false);
+  core.applyEvent(s, ev(2, 'permission.resolved', {request_id: 'x' + cp(0x200b), outcome: 'reject_once', by: 'human'}));
+  assert.strictEqual(p[0].state, 'pending');
+  assert.strictEqual(p[1].state, 'reject_once');
+  assert.strictEqual(core.applyEvent(s, ev(3, 'permission.requested', pendingReq('z'.repeat(core.LIMITS.maxRequestID + 1)))), false);
+});
+
+test('世代: hello 前・世代の無い hello では、ダイアログを出さず、送らない', () => {
+  const h = harness();
+  h.fire(ev(0, 'permission.requested', pendingReq('early'))); // hello の前の Event は使わない
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 0);
+  assert.strictEqual(h.app.state.items.length, 0, 'hello の前の Event を、状態に入れた');
+  h.es().fire('hello', {first_seq: 0}); // 世代が無い
+  h.fire(ev(0, 'permission.requested', pendingReq('nogen')));
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 0);
+  assert.strictEqual(h.calls.length, 0);
+  assert.strictEqual(h.app.state.generation, null);
+});
+
+test('世代: ダイアログは、見せた時点の世代を持つ。世代が変わる (serve の再起動) と、古いダイアログは消え、その click は何も送らない。新しい世代は、新しい要求だけが使う', () => {
+  const h = harness();
+  h.hello(G1);
+  h.fire(ev(0, 'permission.requested', pendingReq('r')));
+  h.runTimers();
+  const oldDlg = dialogEls(h)[0];
+  const oldApprove = findBtn(oldDlg, 'approve');
+  h.es().fire('error', {}); // serve が落ちた: 接続が切れると、無効
+  h.runTimers();
+  assert.strictEqual(oldApprove.disabled, true, '切断中に有効');
+  h.runTimers(); // 再接続
+  h.es().fire('hello', {first_seq: 0, generation: G2}); // 別の起動 (新しい serve)
+  h.es().fire('message', ev(0, 'permission.requested', pendingReq('r', {input: {file_path: '/etc/passwd'}}))); // 同じ request_id の、別の input
+  h.runTimers();
+  assert.ok(!dialogEls(h).includes(oldDlg), '古いダイアログが残った');
+  assert.strictEqual(dialogEls(h).length, 1);
+  h.click(oldApprove); // 古い画面の click
+  assert.strictEqual(h.calls.length, 0, '古い画面の許可が、送られた');
+  const cur = dialogEls(h)[0];
+  assert.ok(cur.textContent.includes('/etc/passwd'));
+  h.click(findBtn(cur, 'deny'));
+  assert.strictEqual(h.calls[0].body.generation, G2);
+});
+
+test('世代: 同じ世代の繋ぎ直しでは、ダイアログは 1 つのまま (重複しない)。切断中は無効で、繋がると戻る', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'permission.requested', pendingReq('r')));
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  h.es().fire('error', {});
+  h.runTimers();
+  assert.strictEqual(findBtn(dlg, 'deny').disabled, true);
+  h.runTimers();
+  h.es().fire('hello', {first_seq: 0, generation: G1});
+  h.es().fire('message', ev(0, 'permission.requested', pendingReq('r')));
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 1);
+  assert.strictEqual(dialogEls(h)[0], dlg);
+  assert.strictEqual(findBtn(dlg, 'deny').disabled, false);
+});
+
+test('世代: 終了後は、ダイアログを操作できない', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'permission.requested', pendingReq('r')));
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  h.es().fire('end', {exit: 0});
+  h.runTimers();
+  h.click(findBtn(dlg, 'deny'));
+  assert.strictEqual(h.calls.length, 0);
+});
+
+test('敵対的な tool 名・title・input は、ダイアログでも textContent だけ。空白に見える名前は印になる', () => {
+  const h = harness();
+  h.hello();
+  const evil = '<img src=x onerror=alert(1)>' + cp(0x202e);
+  h.fire(ev(0, 'permission.requested', pendingReq('r1', {tool_name: evil, title: evil + '\nAPPROVED', input: {c: evil}})));
+  h.fire(ev(1, 'permission.requested', pendingReq('r2', {tool_name: cp(0x3164) + cp(0x2800), title: ''})));
+  h.runTimers();
+  for (const bad of ['script', 'img', 'iframe', 'a', 'svg', 'style', 'link', 'form', 'input', 'select']) assert.ok(!h.doc.created.includes(bad), bad);
+  const [d1, d2] = dialogEls(h);
+  assert.ok(d1.textContent.includes('<img src=x onerror=alert(1)>'));
+  assert.ok(!d1.textContent.includes(cp(0x202e)));
+  assert.ok(!d1.textContent.includes('\nAPPROVED'), '短い項目の改行が、行を偽造できる');
+  assert.ok(d2.textContent.includes('<U+3164><U+2800>'));
+});
+
+test('N-C: 開いた <details> は、項目の更新で閉じない', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'tool.call', {call_id: 'c', name: 'T', kind: 'other', status: 'in_progress', input: {a: 1}}));
+  h.runTimers();
+  const item = h.doc.byId.log.children[0];
+  let det = item.children.find((c) => c.tagName === 'details');
+  det.open = true;
+  det.listeners.toggle[0]();
+  h.fire(ev(1, 'tool.update', {call_id: 'c', status: 'completed', output: 'ok'}));
+  h.runTimers();
+  det = h.doc.byId.log.children[0].children.find((c) => c.tagName === 'details');
+  assert.strictEqual(det.open, true, '更新で、閉じた');
+});
+
+test('送信欄・ダイアログは、項目の作り直しの外にある (入力途中の指示が消えない)', () => {
+  const h = harness();
+  h.hello();
+  h.doc.byId.msg.value = '入力の途中';
+  for (let i = 0; i < 30; i++) h.fire(ev(i, 'message.text', {text: 'm' + i}));
+  h.es().fire('hello', {first_seq: 0, generation: G2}); // 世代が変わって、表示が全部作り直される
+  h.runTimers();
+  assert.strictEqual(h.doc.byId.msg.value, '入力の途中');
+});
+
+test('未決の件数が、枠の外の見出しに出る', () => {
+  const h = harness();
+  h.hello();
+  assert.strictEqual(h.doc.byId['dialogs-head'].textContent, '');
+  h.fire(ev(0, 'permission.requested', pendingReq('a')));
+  h.fire(ev(1, 'permission.requested', pendingReq('b')));
+  h.runTimers();
+  assert.ok(h.doc.byId['dialogs-head'].textContent.includes('2 件'));
+  h.fire(ev(2, 'permission.resolved', {request_id: 'a', outcome: 'reject_once', by: 'human'}));
+  h.fire(ev(3, 'permission.resolved', {request_id: 'b', outcome: 'reject_once', by: 'human'}));
+  h.runTimers();
+  assert.strictEqual(h.doc.byId['dialogs-head'].textContent, '');
 });

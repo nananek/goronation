@@ -10,6 +10,7 @@
     maxInput: 4000,     // tool の input・出力の、文字数
     maxShort: 300,      // 名前・title・message の、文字数
     maxPending: 64,     // 未決の権限要求の数 (これ以上は、表示しない)
+    maxRequestID: 1000, // request_id の長さ (これより長い要求は、扱えないので、表示しない)
   };
 
   const TRIM_SLACK = 250;
@@ -129,6 +130,8 @@
       dirty: new Map(),   // id → 項目 (描画が要る)
       removed: [],        // 描画から外す項目の id
       reset: false,       // 表示を全部作り直す (世代が変わった)
+      turnActive: false,  // ターンの途中か (turn.started から turn.completed まで。送信欄を無効にする)
+      turnCount: 0,       // 受けた turn.started の数 (送った指示が、受け付けられたかの確認に使う)
     };
   }
 
@@ -189,6 +192,8 @@
       state.trimmed = false;
       state.omitted = false;
       state.ended = null;
+      state.turnActive = false;
+      state.turnCount = 0;
       state.reset = true;
     }
     state.generation = gen;
@@ -221,6 +226,8 @@
         return true;
       }
       case 'turn.started': {
+        state.turnActive = true;
+        state.turnCount++;
         const t = clip(d.text, LIMITS.maxText);
         add(state, {kind: 'user', text: t.text, cut: t.cut, total: t.total});
         return true;
@@ -259,13 +266,17 @@
         return true;
       }
       case 'permission.requested': {
-        const rid = short(d.request_id);
-        if (!rid || state.pending.has(rid) || unresolved(state) >= LIMITS.maxPending) {
+        // request_id は、生の値のまま持つ (承認で、そのまま返す。表示用に、印をつけたり切ったりした値を、返さない: 見えない文字だけが違う
+        // 2 つの要求が、同じ ID に見えて、表示した要求と別の要求を承認させられる)。表示は idShown。
+        const rid = typeof d.request_id === 'string' ? d.request_id : '';
+        if (!rid || rid.length > LIMITS.maxRequestID || state.pending.has(rid) || unresolved(state) >= LIMITS.maxPending) {
           state.ignored++;
           return false;
         }
+        const shown = clip(rid, LIMITS.maxShort, true);
         const it = add(state, {
-          kind: 'permission', requestId: rid, callId: short(d.call_id),
+          kind: 'permission', requestId: rid, idShown: shown.text, idPlain: !shown.cut && shown.text === rid,
+          callId: short(d.call_id),
           toolName: short(d.tool_name), toolKind: short(d.kind),
           title: short(d.title), input: clip(d.input, LIMITS.maxInput),
           state: 'pending', by: '',
@@ -274,7 +285,7 @@
         return true;
       }
       case 'permission.resolved': {
-        const rid = short(d.request_id);
+        const rid = typeof d.request_id === 'string' ? d.request_id : '';
         const it = rid ? state.pending.get(rid) : undefined;
         if (!it) { // 要求が、履歴から省略された (決着だけが残った)。表示しない
           state.ignored++;
@@ -291,6 +302,7 @@
         return true;
       }
       case 'turn.completed': {
+        state.turnActive = false;
         add(state, {kind: 'turn_end', stopReason: short(d.stop_reason), isError: d.is_error === true});
         return true;
       }
@@ -314,7 +326,7 @@
     return out;
   }
 
-  const api = {LIMITS: LIMITS, sanitize: sanitize, clip: clip, createState: createState, applyHello: applyHello, applyEnd: applyEnd, applyEvent: applyEvent, drain: drain};
+  const api = {isGeneration: (g) => typeof g === 'string' && GENERATION_RE.test(g), LIMITS: LIMITS, sanitize: sanitize, clip: clip, createState: createState, applyHello: applyHello, applyEnd: applyEnd, applyEvent: applyEvent, drain: drain};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.GoroChatCore = api;
 })(typeof self !== 'undefined' ? self : this);
