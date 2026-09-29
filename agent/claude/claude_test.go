@@ -188,6 +188,35 @@ func TestRetryable(t *testing.T) {
 	}
 }
 
+// result のフレームの各フィールドが、想定外の型でも、フレームは (error・usage・turn.completed も) raw ごと失われない。
+// (permission_denied の message と同じ、型の不一致で frame 全体の Unmarshal が失敗するバグの再発防止。攻撃者視点レビュー 43a56fa)
+func TestResultFrameFieldTypeMismatchIsNotLost(t *testing.T) {
+	cases := []string{
+		`{"type":"result","is_error":true,"api_error_status":"500","result":"x"}`,
+		`{"type":"result","is_error":true,"api_error_status":500.5,"result":"x"}`,
+		`{"type":"result","is_error":true,"api_error_status":{"code":500},"result":"x"}`,
+		`{"type":"result","is_error":true,"result":123}`,
+		`{"type":"result","is_error":true,"terminal_reason":123}`,
+		`{"type":"result","is_error":"true"}`,
+		`{"type":"system","subtype":"init","session_id":1,"tools":"x","cwd":[]}`,
+		`{"type":"system","subtype":"permission_denied","tool_name":1,"tool_use_id":{}}`,
+		`{"type":"result","usage":"x","modelUsage":[],"total_cost_usd":"x","stop_reason":1}`,
+	}
+	for _, line := range cases {
+		t.Run(line, func(t *testing.T) {
+			envs, err := (&Stream{}).DecodeFrame([]byte(line))
+			if err != nil || len(envs) == 0 {
+				t.Errorf("フレームが失われた: envs=%d err=%v", len(envs), err)
+			}
+			for _, e := range envs {
+				if len(e.Raw) == 0 {
+					t.Errorf("%s の raw が空", e.Type)
+				}
+			}
+		})
+	}
+}
+
 func d2(e v0.Envelope) map[string]any {
 	var m map[string]any
 	_ = json.Unmarshal(e.Data, &m)
