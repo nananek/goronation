@@ -2,7 +2,10 @@
 
 package main
 
-import "embed"
+import (
+	"embed"
+	"html/template"
+)
 
 // xtermVendor は、ビルド済みの xterm.js 6.0.0・@xterm/addon-fit 0.11.0 (どちらも MIT。vendor/xterm/ に
 // LICENSE も置いてある) を、goronation の単一バイナリに埋め込む (ADR 0005・goronation-serve-plan §0-3 の決定)。
@@ -234,14 +237,20 @@ loadSessions().catch((e) => setStatus('セッション一覧を取得できま�
 loadRepos();
 `
 
-// terminalHTML は、端末ビューのページ (requireSession で保護される。/s/<session-id> で出す)。xterm.js
-// 本体・addon-fit は vendor から (/static/vendor/*)、中継の配線は terminal.js (自前) から読む。
+// terminalHTMLTmpl は、端末ビューのページ (requireSession で保護される。/s/<session-id> で出す)。
+// xterm.js 本体・addon-fit は vendor から (/static/vendor/*)、中継の配線は terminal.js (自前) から読む。
 // インライン <script>・<style> は使わない (CSP)。
-const terminalHTML = `<!doctype html>
+//
+// <meta name="csp-nonce"> だけ、handleTerminalPage がリクエストごとに生成する nonce
+// (terminalPageData.Nonce) を埋め込む必要があるため、html/template でレンダリングする
+// (ADR 0007。terminal.js がこの meta タグを読み、xterm.js の cspNonce オプションへ渡す)。
+// html/template は、この 1 箇所以外は静的な HTML なので、自動エスケープの影響は無い。
+const terminalHTMLSrc = `<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csp-nonce" content="{{.Nonce}}">
 <title>goronation web — 端末</title>
 <link rel="stylesheet" href="/static/vendor/xterm.css">
 <link rel="stylesheet" href="/static/terminal.css">
@@ -255,8 +264,15 @@ const terminalHTML = `<!doctype html>
 </html>
 `
 
+var terminalHTMLTmpl = template.Must(template.New("terminal").Parse(terminalHTMLSrc))
+
+// terminalPageData は、terminalHTMLTmpl に渡すデータ。
+type terminalPageData struct {
+	Nonce string // handleTerminalPage が生成した、この応答限りの CSP nonce
+}
+
 // terminalCSS は、端末ビューのページ用のスタイル (自前。CSP の style-src 'self' に従い、
-// terminalHTML からはインラインでなく /static/terminal.css として読む)。
+// terminalHTMLTmpl からはインラインでなく /static/terminal.css として読む)。
 const terminalCSS = `html, body { margin: 0; height: 100%; background: #000; }
 #term { height: 100%; }
 `
@@ -267,8 +283,12 @@ const terminalCSS = `html, body { margin: 0; height: 100%; background: #000; }
 // そのまま WebSocket と往復させるだけ。WebSocket の接続先は、今のページの path (/s/<session-id>) から
 // 組み立てる (/s/<session-id>/ws。ページを複数の session ID で共有できるよう、session ID を JS に
 // 埋め込まない)。
+// cspNonce は、この静的ファイル自身には埋め込めない (全セッションで共有する1つのファイルのため)。
+// terminalHTMLTmpl が応答ごとに埋め込む <meta name="csp-nonce"> から読み、vendor 済み xterm.js の
+// cspNonce オプション (ADR 0007 のローカルパッチ) へそのまま渡す。
 const terminalJS = `
-const term = new Terminal({cursorBlink: true, scrollback: 5000});
+const cspNonceMeta = document.querySelector('meta[name="csp-nonce"]');
+const term = new Terminal({cursorBlink: true, scrollback: 5000, cspNonce: cspNonceMeta ? cspNonceMeta.content : null});
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
 term.open(document.getElementById('term'));

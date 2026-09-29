@@ -330,6 +330,17 @@ type webServer struct {
 
 func hasHTTPSScheme(origin string) bool { return len(origin) >= 8 && origin[:8] == "https://" }
 
+// cspWithoutStyleSrc は、style-src 以外の CSP directive (端末ビューも含め、全ルート共通)。style-src だけ
+// 分けてあるのは、handleTerminalPage が nonce 付きの style-src directive を自分で組み立てるときに、
+// baseContentSecurityPolicy の末尾へ文字列連結する (並びが変わると nonce が別の directive に付いて
+// しまう) のを避けるため: 両方とも、この定数から明示的に directive を組み立てる。
+const cspWithoutStyleSrc = "default-src 'none'; script-src 'self'; connect-src 'self'"
+
+// baseContentSecurityPolicy は、既定で全ルートに付ける CSP。端末ビュー (/s/{id}) だけは、xterm.js が
+// 実行時に動的生成する <style> のために、応答ごとに style-src へ 'nonce-<値>' を足して上書きする
+// (handleTerminalPage 参照。ADR 0007)。他のルートはこの既定のまま変えない。
+const baseContentSecurityPolicy = cspWithoutStyleSrc + "; style-src 'self'"
+
 // securityHeaders は、既定で全ての応答に付ける、最小限のセキュリティヘッダ。インライン script は許さない
 // (フロントエンドの JS は /static/*.js から読む)。
 func securityHeaders(next http.Handler) http.Handler {
@@ -337,7 +348,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
-		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'")
+		h.Set("Content-Security-Policy", baseContentSecurityPolicy)
 		h.Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
