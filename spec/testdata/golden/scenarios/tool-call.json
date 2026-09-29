@@ -1,0 +1,13 @@
+{
+  "description": "モデルがファイル読み取りの tool を呼び、その結果を受けて最終応答を返す (1 ターンの中で、モデルへの要求が 2 往復する)。tool 呼び出しと結果が、フレーム列にどう現れ、どう対応付けられるか (claude は tool_use_id、opencode は callID) を採る。読み取りは承認が要らない tool なので、権限の話とは切り離せる。",
+  "turns": ["hello.txt を読んで、内容を教えてください。"],
+  "files": {"hello.txt": "hello from the work directory\n"},
+  "claude": [
+    {"text": "hello.txt を読みます。", "toolUse": {"id": "toolu_fake_1", "name": "Read", "input": {"file_path": "/work/hello.txt"}}},
+    {"text": "読み取れました。内容は hello from the work directory です。"}
+  ],
+  "opencode": [
+    {"content": "hello.txt を読みます。", "toolCalls": [{"id": "call_fake_1", "name": "read", "arguments": {"filePath": "/work/hello.txt"}}]},
+    {"content": "読み取れました。内容は hello from the work directory です。"}
+  ]
+}

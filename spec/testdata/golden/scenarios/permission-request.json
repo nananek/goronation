@@ -1,0 +1,11 @@
+{
+  "description": "モデルが、承認が要る書き込みの tool を呼ぶ。非対話の実行 (claude -p・opencode run) は、承認を求める相手がいないので拒否する。その拒否が、フレームにどう現れるか (claude は permission_denied と result の permission_denials、opencode は tool の state.error) を採る。書き込みは、claude では作業ディレクトリの中でも承認が要るが、opencode では作業ディレクトリの中なら承認が要らないので、opencode は外 (/tmp) に書かせている。拒否のあと、opencode はそのターンを止める (2 つ目の応答は使われない)。",
+  "turns": ["ファイルを作ってください。"],
+  "claude": [
+    {"text": "作成します。", "toolUse": {"id": "toolu_fake_1", "name": "Write", "input": {"file_path": "/work/new.txt", "content": "new file\n"}}},
+    {"text": "作成できませんでした。"}
+  ],
+  "opencode": [
+    {"content": "作成します。", "toolCalls": [{"id": "call_fake_1", "name": "write", "arguments": {"filePath": "/tmp/outside.txt", "content": "new file\n"}}]}
+  ]
+}
