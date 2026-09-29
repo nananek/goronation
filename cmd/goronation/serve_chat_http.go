@@ -50,13 +50,18 @@ func newChatHandler(s *chatSession) http.Handler {
 	return mux
 }
 
+// isJSONContentType は、Content-Type が application/json か (parameter・大文字小文字は許す)。web (web_chat.go) の関門も、同じ判定を使う。
+func isJSONContentType(ct string) bool {
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(ct)) == "application/json"
+}
+
 // decodeStrict は、本文 (Content-Type: application/json・上限つき) を、v に厳格に読む。本文なし (allowEmpty のとき) は通す。
 func decodeStrict(w http.ResponseWriter, r *http.Request, v any, allowEmpty bool) bool {
 	if ct := r.Header.Get("Content-Type"); ct != "" || !allowEmpty {
-		if i := strings.IndexByte(ct, ';'); i >= 0 {
-			ct = ct[:i]
-		}
-		if strings.ToLower(strings.TrimSpace(ct)) != "application/json" {
+		if !isJSONContentType(ct) {
 			writeError(w, http.StatusUnsupportedMediaType, "content_type")
 			return false
 		}

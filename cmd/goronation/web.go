@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -242,11 +243,16 @@ func (c *limitedConn) Close() error {
 // (実際に生の TCP を張って確かめるもの) の、両方がこれを呼ぶ。同じ設定を、別々に書いて食い違わせない
 // ため)。
 func newWebHTTPServer(handler http.Handler) *http.Server {
+	return newWebHTTPServerWith(handler, webReadTimeout, webWriteTimeout)
+}
+
+// newWebHTTPServerWith は、newWebHTTPServer の、ReadTimeout・WriteTimeout を指定できる形 (テストが、SSE が全体の締め切りを超えて生きることを、短い時間で確かめる)。
+func newWebHTTPServerWith(handler http.Handler, readTimeout, writeTimeout time.Duration) *http.Server {
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       webReadTimeout,
-		WriteTimeout:      webWriteTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       webIdleTimeout,
 	}
 	srv.SetKeepAlivesEnabled(false)
@@ -292,7 +298,12 @@ func runWebToken(args []string, stdout, stderr io.Writer) int {
 
 // newWebMux は、goronation web の HTTP のハンドラをまとめる。
 func newWebMux(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, sessStore *session.Store, reposDir, stateDir, self string) http.Handler {
-	s := &webServer{cfg: cfg, store: store, secure: hasHTTPSScheme(origin), sessions: sessStore, reposDir: reposDir, stateDir: stateDir, self: self}
+	return newWebMuxChat(cfg, store, origin, sessStore, reposDir, stateDir, self, defaultChatRelay)
+}
+
+// newWebMuxChat は、newWebMux の、chat の中継の上限・期限 (chatRelayConfig) を指定できる形 (テストが短くする)。
+func newWebMuxChat(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, sessStore *session.Store, reposDir, stateDir, self string, relay chatRelayConfig) http.Handler {
+	s := &webServer{cfg: cfg, store: store, secure: hasHTTPSScheme(origin), origin: strings.TrimSuffix(origin, "/"), sessions: sessStore, reposDir: reposDir, stateDir: stateDir, self: self, chat: &chatRelay{cfg: relay}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.HandleFunc("GET /static/app.js", s.handleAppJS)
@@ -314,6 +325,11 @@ func newWebMux(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, sess
 	mux.HandleFunc("POST /api/repos/start", s.requireSession(s.handleRepoStart))
 	mux.HandleFunc("GET /s/{id}", s.requireSession(s.handleTerminalPage))
 	mux.HandleFunc("GET /s/{id}/ws", s.requireSession(s.handleTerminalProxy))
+	// 構造化チャット (goronation serve --chat の UDS への中継。serve は起こさない)。書き込みは、requireSession の後に、Origin・Content-Type の関門。
+	mux.HandleFunc("GET /s/{id}/events", s.requireSession(s.handleChatEvents))
+	for _, op := range []string{"message", "permission", "stop"} {
+		mux.HandleFunc("POST /s/{id}/"+op, s.requireSession(s.handleChatWrite(op)))
+	}
 	return securityHeaders(mux)
 }
 
@@ -321,6 +337,8 @@ func newWebMux(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, sess
 type webServer struct {
 	cfg      iwebauthn.Config
 	store    *iwebauthn.Store
+	origin   string // --origin (末尾の / なし。書き込みの Origin ヘッダの検査に使う)
+	chat     *chatRelay
 	secure   bool // origin が https か (cookie の Secure 属性に使う。開発用の http://localhost では false)
 	sessions *session.Store
 	reposDir string // --repos-dir (絶対 path。空なら未設定)
