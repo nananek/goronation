@@ -257,6 +257,8 @@ func (c *Conversation) OnLine(line []byte) error {
 				if req, held := c.pending[id]; held {
 					c.settleLocked(id)
 					unpin = append(unpin, req.Seq)
+				} else if _, done := c.settled[sha256.Sum256([]byte(id))]; done {
+					continue // 会話が先に決着させた (Stop・書き込みの失敗・自動拒否)。決着は、要求ごとにちょうど 1 つ (spec/v0)
 				}
 			}
 		case v0.TypeTurnCompleted:

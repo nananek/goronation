@@ -569,3 +569,38 @@ func TestConversationRace(t *testing.T) {
 	wg.Wait()
 	e.c.Close(0)
 }
+
+// Stop・書き込みの失敗で、会話が先に決着させた要求に、エージェントの最後の result (Stream の後追いの決着) が、
+// 2 つ目の permission.resolved を配ってはいけない (spec/v0・ADR 0010: 決着はちょうど 1 つ。攻撃者視点レビューの B5)。
+func TestNoSecondResolutionAfterConversationSettled(t *testing.T) {
+	count := func(e *convEnv, id string) int {
+		n := 0
+		for _, ev := range e.events(t) {
+			if got, ok := requestID(ev); ev.Type == v0.TypePermissionResolved && ok && got == id {
+				n++
+			}
+		}
+		return n
+	}
+	result := []byte(`{"type":"result","is_error":false,"result":"x"}`)
+
+	e := newConv(t, HubConfig{})
+	_ = e.c.Send("hi")
+	_ = e.c.OnLine(reqFrame("r"))
+	e.c.Stop()
+	_ = e.c.OnLine(result)
+	if n := count(e, "r"); n != 1 {
+		t.Fatalf("Stop 後: permission.resolved が %d 件", n)
+	}
+
+	e = newConv(t, HubConfig{})
+	_ = e.c.Send("hi")
+	_ = e.c.OnLine(reqFrame("a"))
+	_ = e.c.OnLine(reqFrame("b"))
+	e.failW = true
+	_ = e.c.Resolve("a", v0.AllowOnce) // 書き込みの失敗で、b も失効する
+	_ = e.c.OnLine(result)
+	if na, nb := count(e, "a"), count(e, "b"); na != 1 || nb != 1 {
+		t.Fatalf("書き込みの失敗後: a=%d b=%d", na, nb)
+	}
+}
