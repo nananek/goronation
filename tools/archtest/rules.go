@@ -67,7 +67,7 @@ var DefaultRules = Rules{
 		// Stream を触れる場所も、同じ範囲に限る (ADR 0009)。
 		{
 			ID:      "agent-only-in-chat",
-			Imports: mods("core/agent/**", "agent/claude/**", "agent/opencode/**"),
+			Imports: mods("core/agent/**", "agent/**"),
 			OnlyIn:  []string{"agent/**", "core/**", "spec/**", "cmd/internal/chat/**"},
 		},
 
