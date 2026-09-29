@@ -148,12 +148,12 @@ func runClaudeInteractive(o captureOptions, p plan, stdout, stderr io.Writer) in
 	convErr := driveClaudeConversation(p.turns, p.sc.ClaudePermissions, stdinW, io.TeeReader(stdoutR, &raw))
 	stdinW.Close() // 会話を終えたら stdin を閉じる (手動の「終了」に相当。まだ閉じていなければ)。
 	stdoutR.Close()
-	if convErr != nil {
-		fmt.Fprintf(stderr, "framecapture claude: 対話の駆動で問題があった (フレームはここまで採れている): %v\n", convErr)
-	}
-
 	waitErr := c.Wait()
 	code := exitCodeOf(waitErr, stderr)
+	if convErr != nil {
+		// 途中で切れたフレーム (例: 上限超過の行) を --out に書かない (既存の golden の上書きを避ける)。
+		return fail("対話の駆動に失敗した: %v", convErr)
+	}
 	return finish(o, "claude", p, code, raw.Bytes(), stdout, stderr)
 }
 

@@ -1,6 +1,0 @@
-{"part":{"id":"<prt:1>","messageID":"<msg:1>","sessionID":"<ses:1>","type":"step-start"},"sessionID":"<ses:1>","timestamp":0,"type":"step_start"}
-{"part":{"id":"<prt:2>","messageID":"<msg:1>","sessionID":"<ses:1>","text":"了解しました。","time":{"end":0,"start":0},"type":"text"},"sessionID":"<ses:1>","timestamp":0,"type":"text"}
-{"part":{"cost":0,"id":"<prt:3>","messageID":"<msg:1>","reason":"stop","sessionID":"<ses:1>","tokens":{"cache":{"read":0,"write":0},"input":0,"output":0,"reasoning":0},"type":"step-finish"},"sessionID":"<ses:1>","timestamp":0,"type":"step_finish"}
-{"part":{"id":"<prt:4>","messageID":"<msg:2>","sessionID":"<ses:1>","type":"step-start"},"sessionID":"<ses:1>","timestamp":0,"type":"step_start"}
-{"part":{"id":"<prt:5>","messageID":"<msg:2>","sessionID":"<ses:1>","text":"承知しました。","time":{"end":0,"start":0},"type":"text"},"sessionID":"<ses:1>","timestamp":0,"type":"text"}
-{"part":{"cost":0,"id":"<prt:6>","messageID":"<msg:2>","reason":"stop","sessionID":"<ses:1>","tokens":{"cache":{"read":0,"write":0},"input":0,"output":0,"reasoning":0},"type":"step-finish"},"sessionID":"<ses:1>","timestamp":0,"type":"step_finish"}

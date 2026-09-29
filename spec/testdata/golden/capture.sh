@@ -38,6 +38,10 @@ status=0
 for scenario in "$here"/scenarios/*.json; do
 	name="$(basename "$scenario" .json)"
 	for agent in claude opencode; do
+		# claude_only の場面 (権限承認の対話採取など) は、opencode では回さない。
+		if [ "$agent" = opencode ] && grep -q '"claude_only": *true' "$scenario"; then
+			continue
+		fi
 		case "$agent" in
 			claude) bin="$CLAUDE_BIN"; ext=jsonl ;;
 			opencode) bin="$OPENCODE_BIN"; ext=ndjson ;;
