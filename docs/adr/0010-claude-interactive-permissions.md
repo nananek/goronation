@@ -26,7 +26,7 @@
 
 - ルール 11 (檻の中でリッスンしない): `--permission-prompt-tool stdio` は claude の標準入出力を使い、ソケットをリッスンしない。外部の MCP サーバーは介在しない。PR #57 の `net.Listen` は檻の外の connectproxy で、対象外。
 - 権限の判定と応答は、檻の外の goronation が行う。ルール 10 (承認は要求 ID に束縛) は、3〜5 (ID 一意・1 回限り・保持した値だけを許可) で満たす。
-- **ただし、承認フローの完全性は、PR④ で標準入出力を `socketpair` にし、実測で確定するまで保証しない。** 檻の中のプロセスが、標準出力の pipe に (`/proc/<pid>/fd/1` 経由で) 書ける間は、偽の `result`・`control_cancel_request` で未決の要求を全部 cancelled にでき、偽の `can_use_tool` を人間に見せられる。当初書いた「pipe は新しい信頼の委譲ではない」は誤りで、撤回する。アダプタも PR③ の状態機械も、この偽造を完全には塞げない。他の経路 (fd の継承・`pidfd_getfd`・ptrace・`SCM_RIGHTS`) は未検証。詳細と対応計画は `agent/claude` の doc (限界)。
+- **ただし、承認フローの完全性は、PR④ で標準入出力を `socketpair` にし、実測で確定するまで保証しない。** 檻の中のプロセスが、標準出力の pipe に (`/proc/<pid>/fd/1` 経由で) 書ける間は、偽の `result`・`control_cancel_request` で未決の要求を全部 cancelled にでき、偽の `can_use_tool` を人間に見せられる。当初書いた「pipe は新しい信頼の委譲ではない」は誤りで、撤回する。アダプタも PR③ の状態機械も、この偽造を完全には塞げない。他の経路 (fd の継承・`pidfd_getfd`・ptrace・`SCM_RIGHTS`) は未検証。詳細と対応計画は `agent/claude` の `Stream` の doc。
 
 ## 帰結
 

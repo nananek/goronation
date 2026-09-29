@@ -48,13 +48,13 @@ func (Adapter) NewStream() agent.Stream { return &Stream{} }
 // 開いて任意の行を書ける。偽の result・control_cancel_request は、実際の未決の要求を全部 cancelled で閉じ (claude は応答を待ち続け、画面と
 // 実態が食い違う)、偽の can_use_tool は任意の title・input を人間に見せる。フレームの出どころは DecodeFrame の入力から区別できないので、
 // アダプタも、会話の状態機械 (未決の上限・失効・result と cancel の整合の確認) も、この偽造を完全には塞げない。
-// 対応は、起動 (cmd の chatSession) で標準入出力を socketpair にすること。claude 2.1.284 に socketpair を渡して動くこと、
-// /proc/<pid>/fd/1 の再オープンが ENXIO になる (pipe は成功する) ことは、bwrap の外で確かめた。bwrap の檻での拒否は回帰テストで固定し、
+// 対応は、起動側 (cmd。未実装で、計画では PR④) で標準入出力を socketpair にすること。claude 2.1.284 に socketpair を渡して動くこと、
+// /proc/<pid>/fd/1 の再オープンが ENXIO になる (pipe は成功する) ことは、bwrap の外で確かめた。bwrap の檻での拒否は、PR④ で回帰テストとして固定する予定 (まだ無い)。
 // fd の継承・pidfd_getfd と ptrace・SCM_RIGHTS は未検証なので、実測の後に、塞げたものと塞げていないものに分けて確定する
 // (それまで、解消したものとして扱わない)。
 //
 // 上限: 未決は maxPendingRequests まで。超えた can_use_tool は承認できないが (誤って許可はしない)、claude は応答を待ち続けるので、
-// TypeError で知らせる。決着すれば回復する。見た request_id は SHA-256 で maxSeenRequests まで覚え、こちらは回復しない。
+// TypeError で知らせる。決着すれば、以後の新しい要求は通る (落とされた 1 件は戻らない)。見た request_id は SHA-256 で maxSeenRequests まで覚え、こちらは回復しない。
 // 上限を超えた要求に claude へ拒否を返すには、DecodeFrame が呼び手に書かせる戻りの設計が要る (会話の状態機械で決める)。
 type Stream struct {
 	sawInit bool // system/init を、もう見たか (ターンごとに繰り返し出るので、2 回目からは TypeSessionStarted にしない)
@@ -79,7 +79,7 @@ type pendingRequest struct {
 
 // 未決の数の上限と、覚える request_id の数の上限 (メモリを、agent の出す要求の数・ID の長さに比例させない)。
 // 超えた要求は、承認できない (誤って許可はしない) が、claude は応答を待ち続けるので、黙って捨てず、
-// TypeError (permissionLimitMessage) で呼び手・UI に知らせる。未決の上限は、決着すれば回復する。
+// TypeError (permissionLimitMessage) で呼び手・UI に知らせる。未決の上限は、決着すれば以後の新しい要求が通る (落とされた 1 件は戻らない)。
 // 覚える ID の上限は回復しない (長いセッションでも、通常は届かない値)。
 const (
 	maxPendingRequests = 64
