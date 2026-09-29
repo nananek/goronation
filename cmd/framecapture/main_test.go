@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -153,5 +154,18 @@ func TestEmitNormalizesToFile(t *testing.T) {
 	var stdout bytes.Buffer
 	if err := emit(captureOptions{}, raw, &stdout); err != nil || stdout.String() != string(raw) {
 		t.Fatalf("stdout = %q, %v", stdout.String(), err)
+	}
+}
+
+// 期待した終了コードが 1 でも、フレームが 1 つも無ければ (ハーネス自身の失敗と区別できない) 成功にしない。
+func TestFinishRejectsEmptyFramesEvenIfExitMatches(t *testing.T) {
+	p := plan{expectExit: 1}
+	var out, errb bytes.Buffer
+	if got := finish(captureOptions{}, "claude", p, 1, nil, &out, &errb); got != 1 || !strings.Contains(errb.String(), "1 つも採れていない") {
+		t.Errorf("got %d, stderr %q", got, errb.String())
+	}
+	out.Reset()
+	if got := finish(captureOptions{}, "claude", p, 1, []byte("{}\n"), &out, &errb); got != 0 {
+		t.Errorf("フレームがあれば期待どおり成功: got %d", got)
 	}
 }

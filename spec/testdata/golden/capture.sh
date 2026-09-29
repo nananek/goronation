@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# golden fixtures を採取する (README.md 参照)。
+# golden fixtures を採取する (README は置かない。手順はこのコメントと、cmd/framecapture/doc.go、
+# scenarios/*.json の description に書く)。
 #
 #   capture.sh           scenarios/*.json の全場面を、claude・opencode で採取し直して、この directory に書く
 #   capture.sh --check   採取し直して、コミット済みの fixtures と一致するかだけを確かめる (書かない)
@@ -13,10 +14,10 @@
 # 変わると、フレームも変わりうる。その差が、追従すべき変更 (fixture の更新) か、壊れか (直す) かを見る。
 #
 # 必要な環境変数 (すべて絶対 path):
-#   FRAMECAPTURE  cmd/framecapture のビルド結果 (go build -o ... ./cmd/framecapture)
-#   GORONATION    cmd/goronation のビルド結果
+#   FRAMECAPTURE  cmd/framecapture のビルド結果 (go build -o "$FRAMECAPTURE" ./cmd/framecapture)
+#   GORONATION    cmd/goronation のビルド結果 (go build -o "$GORONATION" ./cmd/goronation)
 #   CLAUDE_BIN    claude の実行ファイル (symlink でなく実体)
-#   OPENCODE_BIN  opencode の実行ファイル (ラッパーでなく実体の ELF。README 参照)
+#   OPENCODE_BIN  opencode の実行ファイル (ラッパーでなく実体の ELF。上の npm pack の説明を参照)
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"

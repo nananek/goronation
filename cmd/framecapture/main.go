@@ -167,6 +167,11 @@ func finish(o captureOptions, name string, p plan, code int, raw []byte, stdout,
 		return 1
 	}
 	switch {
+	case code == p.expectExit && len(bytes.TrimSpace(raw)) == 0:
+		// 期待した終了コードが 1 のとき、ハーネス自身の失敗 (檻を起こせない等。終了コード 1) と区別できない。
+		// フレームが 1 つも採れていないなら、成功とはみなさない。
+		fmt.Fprintf(stderr, "framecapture %s: 終了コード %d だが、フレームが 1 つも採れていない\n", name, code)
+		return 1
 	case code == p.expectExit:
 		return 0
 	case code == 0:
