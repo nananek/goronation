@@ -72,7 +72,7 @@ const (
 	// TypeError は、プロバイダーなどの失敗 (durable)。data は status・retryable・message。claude は is_error が true の
 	// result (api_error_status・terminal_reason)。同じ内容の is_api_error_message の assistant フレームは、agent.frame にする。opencode は
 	// type=error のフレーム (error.data の statusCode・isRetryable・message。ステップのフレームは出ない)。どちらも終了コードは 1。
-	// url・応答の本文・ヘッダは、data に載せず raw にだけ残す。
+	// url・ヘッダは、data に載せず raw にだけ残す。message は claude が整えた文で、応答の本文・request_id を含みうる。
 	TypeError = "error"
 	// TypeAgentFrame は、対応する語彙が無いフレーム (durable でない)。data は空で、raw に元のフレームを載せる。
 	TypeAgentFrame = "agent.frame"

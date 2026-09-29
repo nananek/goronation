@@ -224,7 +224,8 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 			if msg == "" {
 				msg = f.TerminalReason
 			}
-			// url・応答の本文・ヘッダは載せない (raw にだけ残る)。message は、claude が整えた 1 文。
+			// url・ヘッダは載せない (raw にだけ残る)。message は claude が result に整えた文をそのまま載せる。実機では
+			// API の応答の本文と request_id を含みうる (fixture は fake の 400 で、この形は未採取)。UI が出す前提の値なので、要約や切り詰めはしない。
 			x, err := ev(v0.TypeError, true, map[string]any{"status": f.APIErrorStatus, "retryable": retryable(f.APIErrorStatus), "message": msg})
 			if err != nil {
 				return nil, err
