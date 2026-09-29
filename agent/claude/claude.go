@@ -2,6 +2,7 @@ package claude
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,9 +49,22 @@ type Stream struct {
 
 	// 未決の can_use_tool の要求 (request_id → 要求時の tool の input)。届いた順に pendingOrder で持つ。
 	// 応答 (permission.resolve) の許可する input は、ここに保持した値だけから作る (クライアントからは受けない)。
-	pending      map[string]json.RawMessage
-	pendingOrder []string
+	pending map[string]pendingRequest
+	// seen は、このストリームで見た request_id の全部 (決着済みも)。ID は一意で、決着した ID の再要求は、
+	// 新しい要求にしない (再送された許可が、人間の見ていない別の input を許可するのを防ぐ)。
+	seen    map[string]struct{}
+	nextSeq uint64 // pendingRequest.seq に振る、届いた順の番号
 }
+
+// pendingRequest は、未決の can_use_tool の要求。seq は届いた順 (result で、順に閉じるため)。
+type pendingRequest struct {
+	input json.RawMessage
+	seq   uint64
+}
+
+// maxSeenRequests は、1 つのストリームで覚える request_id の数の上限 (メモリを、agent の出す要求の数に比例させない)。
+// 超えた要求は、応答できないものとして agent.frame にする (承認できないだけで、誤って許可はしない)。
+const maxSeenRequests = 10000
 
 // lenient は、想定外の型の値を、エラーにせず零値にする。frame を 1 回で読むので、1 つのフィールドの型の不一致で
 // Unmarshal 全体が失敗すると、フレームが raw ごと失われる (そのターンの error・usage・turn.completed も)。
@@ -230,14 +244,15 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 			r.ToolName.Bad || r.ToolName.V == "" || !isObject(r.Input) {
 			return unknown()
 		}
-		if _, dup := s.pending[id]; dup { // 同じ ID の再要求は、上書きせず捨てる (先の要求の input を、後から差し替えさせない)
+		if _, dup := s.seen[id]; dup || len(s.seen) >= maxSeenRequests { // 同じ ID の再要求は、決着済みでも捨てる (先の要求の input を、後から差し替えさせない)
 			return unknown()
 		}
 		if s.pending == nil {
-			s.pending = map[string]json.RawMessage{}
+			s.pending, s.seen = map[string]pendingRequest{}, map[string]struct{}{}
 		}
-		s.pending[id] = bytes.Clone(r.Input)
-		s.pendingOrder = append(s.pendingOrder, id)
+		s.seen[id] = struct{}{}
+		s.nextSeq++
+		s.pending[id] = pendingRequest{input: bytes.Clone(r.Input), seq: s.nextSeq}
 		e, err := ev(v0.TypePermissionRequested, true, map[string]any{
 			"request_id": id, "call_id": r.ToolUseID.V, "tool_name": r.ToolName.V, "kind": toolKind(r.ToolName.V),
 			"input": r.Input, "title": r.Description.V,
@@ -292,7 +307,12 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 	case f.Type.V == "result":
 		// ターンが終わったのに未決のままの要求は、もう答えられない。撤回として先に閉じる (未決のまま残さない)。
 		var out []v0.Envelope
-		for _, id := range append([]string(nil), s.pendingOrder...) {
+		ids := make([]string, 0, len(s.pending))
+		for id := range s.pending {
+			ids = append(ids, id)
+		}
+		slices.SortFunc(ids, func(a, b string) int { return cmp.Compare(s.pending[a].seq, s.pending[b].seq) })
+		for _, id := range ids {
 			s.settle(id)
 			e, err := ev(v0.TypePermissionResolved, true, map[string]any{"by": "agent", "outcome": outcomeCancelled, "request_id": id})
 			if err != nil {
@@ -408,11 +428,11 @@ func (s *Stream) encodePermissionResolve(cmd v0.Command) ([]byte, []v0.Envelope,
 	var behavior map[string]any
 	switch d.Outcome {
 	case v0.AllowOnce:
-		input, ok := s.pending[d.RequestID]
+		p, ok := s.pending[d.RequestID]
 		if !ok {
 			break
 		}
-		behavior = map[string]any{"behavior": "allow", "updatedInput": input}
+		behavior = map[string]any{"behavior": "allow", "updatedInput": p.input}
 	case v0.RejectOnce:
 		behavior = map[string]any{"behavior": "deny", "message": denyMessage}
 	default: // allow_always・reject_always・未知の値 (M1.5 の範囲外)
@@ -442,7 +462,6 @@ func (s *Stream) settle(id string) bool {
 		return false
 	}
 	delete(s.pending, id)
-	s.pendingOrder = slices.DeleteFunc(s.pendingOrder, func(x string) bool { return x == id })
 	return true
 }
 
