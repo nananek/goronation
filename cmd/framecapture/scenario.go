@@ -71,6 +71,13 @@ func loadScenario(path string) (*scenario, error) {
 	if len(s.Turns) == 0 {
 		return nil, fmt.Errorf("%s: turns が空", path)
 	}
+	for i, a := range s.ClaudePermissions {
+		switch a.Outcome {
+		case "allow", "deny", "interrupt":
+		default:
+			return nil, fmt.Errorf("%s: claude_permissions[%d].outcome %q は allow・deny・interrupt のいずれかでなければならない", path, i, a.Outcome)
+		}
+	}
 	for name := range s.Files {
 		if !filepath.IsLocal(name) {
 			return nil, fmt.Errorf("%s: files のキー %q は、work の下の相対 path でなければならない", path, name)
