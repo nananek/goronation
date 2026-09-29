@@ -843,9 +843,8 @@ test('B2: 枠に収まらない input は、末尾までスクロールするま
   h.app.render();
   assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '見えていない行があるのに、許可できる');
   assert.strictEqual(findBtn(dlg, 'deny').disabled, false, '拒否は、いつでもできる');
-  pre.scrollTop = 522 - 84; // 末尾まで
-  for (const f of pre.listeners.scroll || []) f();
-  assert.strictEqual(findBtn(dlg, 'approve').disabled, false, '末尾まで見たのに、許可できない');
+  scrollStepwise(pre, 522 - 84, 80); // 上から下まで、途切れなく
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, false, '全部を見たのに、許可できない');
 });
 
 // ---- レビュー (PR⑦b) の修正 ----
@@ -896,6 +895,14 @@ function scrollable(h, dlg, scrollHeight, clientHeight) {
   return pre;
 }
 
+// 1 歩が step 以下で、scrollTop を target まで動かし、そのたびに scroll を発火する。
+function scrollStepwise(pre, target, step) {
+  while (pre.scrollTop < target) {
+    pre.scrollTop = Math.min(target, pre.scrollTop + step);
+    for (const f of pre.listeners.scroll || []) f();
+  }
+}
+
 test('B2: 枠に収まる input は、そのまま許可できる。収まらないときは、末尾までスクロールするまで許可できず、理由を出す。末尾を見た後は、上に戻しても許可できる', () => {
   const h = harness();
   h.hello();
@@ -908,14 +915,13 @@ test('B2: 枠に収まる input は、そのまま許可できる。収まらな
   h.app.render();
   assert.strictEqual(findBtn(fit, 'approve').disabled, false);
   assert.strictEqual(findBtn(long, 'approve').disabled, true);
-  assert.ok(long.textContent.includes('スクロールすると、許可できる'));
-  pre.scrollTop = 200; // 途中
+  assert.ok(long.textContent.includes('途切れなく'));
+  pre.scrollTop = 40; // 途中
   for (const f of pre.listeners.scroll) f();
   assert.strictEqual(findBtn(long, 'approve').disabled, true);
-  pre.scrollTop = 522 - 84; // 末尾
-  for (const f of pre.listeners.scroll) f();
+  scrollStepwise(pre, 522 - 84, 80); // 途切れなく末尾まで
   assert.strictEqual(findBtn(long, 'approve').disabled, false);
-  assert.ok(!long.textContent.includes('スクロールすると'));
+  assert.ok(!long.textContent.includes('途切れなく'));
   pre.scrollTop = 0;
   for (const f of pre.listeners.scroll) f();
   assert.strictEqual(findBtn(long, 'approve').disabled, false, '一度末尾まで見たのに、戻すと許可できない');
@@ -982,4 +988,62 @@ test('T-1: serve の再起動 (別の世代) で、送信待ちが解除され�
   h.doc.byId.msg.value = 'again';
   h.doc.byId.msg.listeners.input[0]();
   assert.strictEqual(h.doc.byId.send.disabled, false);
+});
+
+test('L-H: 一発のジャンプ (End・フリック・スクロールバーのドラッグ) では、途中を見ていないので、許可できない。間を戻って見ると、許可できる', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'permission.requested', pendingReq('r')));
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  const pre = scrollable(h, dlg, 522, 84);
+  h.app.render();
+  const fire = () => { for (const f of pre.listeners.scroll) f(); };
+  pre.scrollTop = 522 - 84; // 一発で末尾へ (中間の 84〜438 は、一度も画面に出ていない)
+  fire();
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '末尾へのジャンプで、途中を見ないまま許可できる');
+  assert.strictEqual(findBtn(dlg, 'deny').disabled, false);
+  assert.ok(dlg.textContent.includes('途切れなく'));
+  pre.scrollTop = 200; // 途中の一部だけ: まだ隙間がある
+  fire();
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, true);
+  pre.scrollTop = 84; // 隙間の残りを、連続に見る (0〜84・84〜168・200〜284 ... 438〜522)
+  fire();
+  pre.scrollTop = 160;
+  fire();
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '284〜438 が、まだ未表示');
+  scrollStepwise(pre, 354, 80);
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, false, '全部の範囲を画面に出したのに、許可できない');
+  // 大きく飛ばすと、その間は残る (ステップが clientHeight を超える)
+  const dlg2 = (() => {
+    h.fire(ev(1, 'permission.requested', pendingReq('r2')));
+    h.runTimers();
+    return dialogEls(h)[1];
+  })();
+  const pre2 = scrollable(h, dlg2, 1000, 84);
+  h.app.render();
+  for (const y of [0, 100, 200, 300, 400, 500, 600, 700, 800, 916]) { // 100px ごと (clientHeight 84 を超える): 隙間が残る
+    pre2.scrollTop = y;
+    for (const f of pre2.listeners.scroll) f();
+  }
+  assert.strictEqual(findBtn(dlg2, 'approve').disabled, true, 'clientHeight を超える歩幅で、全部見たことになった');
+});
+
+test('L-H: 枠が画面 (下の領域) から外れている間の表示は、見たことにしない', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'permission.requested', pendingReq('r')));
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  const pre = scrollable(h, dlg, 300, 84);
+  pre.getBoundingClientRect = () => ({top: 900, bottom: 984}); // 領域の外 (領域の中で、スクロールされて隠れている)
+  h.doc.byId.dialogs.getBoundingClientRect = () => ({top: 400, bottom: 700});
+  h.app.render();
+  scrollStepwise(pre, 300 - 84, 40);
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '画面に出ていない枠のスクロールで、見たことになった');
+  pre.getBoundingClientRect = () => ({top: 500, bottom: 584}); // 領域の中
+  pre.scrollTop = 0;
+  h.app.render(); // 上端を、画面に出した
+  scrollStepwise(pre, 300 - 84, 40);
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, false);
 });

@@ -246,15 +246,43 @@
 
     // ---- 権限ダイアログ ----
 
-    // reachedEnd は、pre が、末尾までスクロールされているか (2px の余裕)。
-    function reachedEnd(pre) {
-      return pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 2;
+    // 見た範囲の追跡: 枠 (pre) が、スクロールの各位置で、画面に出していた範囲 [scrollTop, scrollTop + clientHeight] の和が、全体 [0, scrollHeight] を
+    // 覆うまで、許可させない。末尾に一度着いただけ (End キー・フリック・スクロールバーのドラッグの一発のジャンプ) では、途中を見ていない。
+    // スクロールの 1 歩が clientHeight を超えると、その間は、未表示のまま残る (戻って見るまで、許可できない)。
+    const SEEN_TOLERANCE = 2;
+
+    // preOnScreen は、枠が、下の領域 (スクロールする) の中で、画面に出ているか。DOM に、位置の API が無い環境 (試験) では、出ているとみなす。
+    function preOnScreen(d) {
+      if (typeof d.pre.getBoundingClientRect !== 'function' || typeof dialogsEl.getBoundingClientRect !== 'function') return true;
+      const r = d.pre.getBoundingClientRect();
+      const c = dialogsEl.getBoundingClientRect();
+      return r.top >= c.top - 1 && r.bottom <= c.bottom + 1;
     }
 
-    // hiddenPart は、input の枠が、スクロールしないと見えない部分を持ち、末尾まで見ていないか。枠の高さは限ってあるので、字数が上限以内でも起きる
-    // (エージェントが、key の順を決められる: 危険な内容を、末尾に置ける)。
+    // recordView は、いまの枠の表示範囲を、見た範囲に足す (連続する・重なる範囲は、まとめる)。
+    function recordView(d) {
+      if (!preOnScreen(d) || d.pre.clientHeight <= 0) return;
+      let a = d.pre.scrollTop;
+      let b = a + d.pre.clientHeight;
+      const rest = [];
+      for (const r of d.seen) {
+        if (r[1] < a - SEEN_TOLERANCE || r[0] > b + SEEN_TOLERANCE) {
+          rest.push(r);
+        } else {
+          a = Math.min(a, r[0]);
+          b = Math.max(b, r[1]);
+        }
+      }
+      rest.push([a, b]);
+      d.seen = rest;
+    }
+
+    // hiddenPart は、input の枠が、スクロールしないと見えない部分を持ち、その全体を、まだ画面に出していないか。枠の高さは限ってあるので、字数が上限以内でも起きる
+    // (エージェントが、key の順を決められる: 危険な内容を、途中や末尾に置ける)。
     function hiddenPart(d) {
-      return d.pre !== null && d.pre.scrollHeight > d.pre.clientHeight + 1 && !d.seenEnd;
+      if (d.pre === null || d.pre.scrollHeight <= d.pre.clientHeight + 1) return false;
+      recordView(d);
+      return !(d.seen.length === 1 && d.seen[0][0] <= SEEN_TOLERANCE && d.seen[0][1] >= d.pre.scrollHeight - SEEN_TOLERANCE);
     }
 
     function approvable(item, d) {
@@ -271,7 +299,7 @@
       const can = dialogCanAnswer(d, item);
       d.approve.disabled = !can || !approvable(item, d);
       d.deny.disabled = !can;
-      if (d.hint) d.hint.textContent = item.input.cut === false && item.idPlain === true && hiddenPart(d) ? 'input が枠に収まらない。末尾までスクロールすると、許可できる' : '';
+      if (d.hint) d.hint.textContent = item.input.cut === false && item.idPlain === true && hiddenPart(d) ? 'input が枠に収まらない。上から下まで、途切れなくスクロールして全部を表示すると、許可できる (一気に飛ばすと、間が未表示のまま残る)' : '';
     }
 
     async function answer(item, d, outcome) {
@@ -298,7 +326,7 @@
     }
 
     function buildDialog(item) {
-      const d = {el: el('div', 'dialog'), gen: state.generation, busy: false, done: false, approve: null, deny: null, note: null, hint: null, pre: null, seenEnd: false};
+      const d = {el: el('div', 'dialog'), gen: state.generation, busy: false, done: false, approve: null, deny: null, note: null, hint: null, pre: null, seen: []};
       d.el.appendChild(el('div', 'label', '権限の要求'));
       d.el.appendChild(el('div', 'dialog-tool', 'tool: ' + (item.toolName || '(名前なし)') + (item.toolKind ? ' (' + item.toolKind + ')' : '')));
       if (item.title) d.el.appendChild(el('div', 'dialog-title', '説明 (エージェントの自己申告。検証されていない): ' + item.title));
@@ -319,8 +347,8 @@
       d.el.appendChild(d.hint);
       d.el.appendChild(el('div', 'meta', 'request_id: ' + item.idShown));
       d.pre = el('pre', 'input', item.input.text + clipNote(item.input));
-      d.pre.addEventListener('scroll', () => { // 末尾までスクロールしたら、全部見たことにする
-        if (reachedEnd(d.pre)) d.seenEnd = true;
+      d.pre.addEventListener('scroll', () => { // スクロールのたびに、見た範囲を足す (一発のジャンプでは、間が残る)
+        recordView(d);
         refreshDialog(item, d);
       });
       d.el.appendChild(d.pre);
