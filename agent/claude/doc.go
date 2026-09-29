@@ -26,6 +26,6 @@
 // # 限界
 //
 //   - 対話の権限要求は、--permission-prompt-tool stdio (隠しフラグ) 付きの起動でだけ出る。採取した版は TestedVersion で、版が上がると
-//     形が変わりうるので、未知は TypeAgentFrame に倒す。未決の要求の数の上限は持たない (会話の状態機械の役目)。
+//     形が変わりうるので、未知は TypeAgentFrame に倒す。承認フローの完全性は、標準出力が pipe の間は保証できない (Stream の doc・ADR 0010)。
 //   - 未採取 (部分メッセージ・推論・ターンの中断・再開・MCP・サブエージェント) は TypeAgentFrame。Grep・Glob・MultiEdit の名前は、組み込みの名前から決めた。
 package claude

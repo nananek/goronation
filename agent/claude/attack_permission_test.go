@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
-	"time"
 
 	v0 "github.com/nananek/goronation/spec/v0"
 )
@@ -44,10 +43,10 @@ func TestSettledRequestIDCannotBeRequestedAgain(t *testing.T) {
 	}
 }
 
-// 覚える request_id の数には上限がある。超えた要求は permission.requested にならない (誤って許可もしない)。
-func TestRequestIDMemoryIsBounded(t *testing.T) {
+// 未決の数の上限を超えた要求は、承認できないが、黙って捨てず error で知らせる。決着すれば回復する。
+func TestPendingLimitIsReportedAndRecovers(t *testing.T) {
 	s := Adapter{}.NewStream()
-	for i := 0; i < maxSeenRequests; i++ {
+	for i := 0; i < maxPendingRequests; i++ {
 		if _, err := s.DecodeFrame(canUseToolFrame(fmt.Sprintf("f%d", i), `{}`)); err != nil {
 			t.Fatal(err)
 		}
@@ -56,33 +55,39 @@ func TestRequestIDMemoryIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if envs[0].Type == v0.TypePermissionRequested {
-		t.Errorf("上限を超えた要求が permission.requested になった")
+	if envs[0].Type != v0.TypeError {
+		t.Errorf("上限を超えた要求が error で知らされなかった: %s", envs[0].Type)
 	}
 	if _, _, err := s.EncodeCommand(resolveCommand(t, "over", v0.AllowOnce)); err == nil {
 		t.Errorf("上限を超えた要求に、許可を返せた")
 	}
+	if _, _, err := s.EncodeCommand(resolveCommand(t, "f0", v0.RejectOnce)); err != nil {
+		t.Fatal(err)
+	}
+	envs, err = s.DecodeFrame(canUseToolFrame("again", `{}`))
+	if err != nil || envs[0].Type != v0.TypePermissionRequested {
+		t.Errorf("決着させた後に、新しい要求が通らない: %v %v", envs, err)
+	}
 }
 
-// 未決の要求が多いときに、result (と control_cancel_request) の処理が、要求の数の 2 乗の時間にならない
-// (agent が出す frame の数で、呼び手の goroutine を長時間止められない)。
-func TestSettlingManyPendingRequestsIsNotQuadratic(t *testing.T) {
-	measure := func(n int) time.Duration {
-		s := Adapter{}.NewStream()
-		for i := 0; i < n; i++ {
-			if _, err := s.DecodeFrame(canUseToolFrame(fmt.Sprintf("f%d", i), `{}`)); err != nil {
-				t.Fatal(err)
-			}
-		}
-		start := time.Now()
-		if _, err := s.DecodeFrame([]byte(`{"type":"result"}`)); err != nil {
+// result は、未決を届いた順に、by=agent・cancelled で閉じる (未決の数は maxPendingRequests で抑えられる)。
+func TestResultClosesPendingInArrivalOrder(t *testing.T) {
+	s := Adapter{}.NewStream()
+	for i := 0; i < maxPendingRequests; i++ {
+		if _, err := s.DecodeFrame(canUseToolFrame(fmt.Sprintf("f%d", i), `{}`)); err != nil {
 			t.Fatal(err)
 		}
-		return time.Since(start)
 	}
-	small, large := measure(maxSeenRequests/4), measure(maxSeenRequests)
-	t.Logf("result の処理: %d 件 %v・%d 件 %v", maxSeenRequests/4, small, maxSeenRequests, large)
-	if large > 9*small+50*time.Millisecond { // 線形なら約 4 倍、2 乗なら約 16 倍
-		t.Errorf("未決 %d 件の result の処理が %d 件の %.1f 倍かかった (2 乗の増え方)", maxSeenRequests, maxSeenRequests/4, float64(large)/float64(small))
+	envs, err := s.DecodeFrame([]byte(`{"type":"result"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxPendingRequests; i++ {
+		var d struct {
+			RequestID string `json:"request_id"`
+		}
+		if envs[i].Type != v0.TypePermissionResolved || json.Unmarshal(envs[i].Data, &d) != nil || d.RequestID != fmt.Sprintf("f%d", i) {
+			t.Fatalf("%d 番目が届いた順の cancelled でない: %s %s", i, envs[i].Type, envs[i].Data)
+		}
 	}
 }

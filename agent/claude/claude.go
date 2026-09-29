@@ -3,6 +3,7 @@ package claude
 import (
 	"bytes"
 	"cmp"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,17 +43,31 @@ func (Adapter) Name() string { return Name }
 func (Adapter) NewStream() agent.Stream { return &Stream{} }
 
 // Stream は、1 回の claude の起動の、状態を持つ変換器。並行には呼べない。
+//
+// 承認フローの完全性 (ADR 0010): claude の標準出力が pipe の間、檻の中のプロセスは /proc/<pid>/fd/1 (bwrap の /proc/1/fd/1 も同じ pipe) を
+// 開いて任意の行を書ける。偽の result・control_cancel_request は、実際の未決の要求を全部 cancelled で閉じ (claude は応答を待ち続け、画面と
+// 実態が食い違う)、偽の can_use_tool は任意の title・input を人間に見せる。フレームの出どころは DecodeFrame の入力から区別できないので、
+// アダプタも、会話の状態機械 (未決の上限・失効・result と cancel の整合の確認) も、この偽造を完全には塞げない。
+// 対応は、起動 (cmd の chatSession) で標準入出力を socketpair にすること。claude 2.1.284 に socketpair を渡して動くこと、
+// /proc/<pid>/fd/1 の再オープンが ENXIO になる (pipe は成功する) ことは、bwrap の外で確かめた。bwrap の檻での拒否は回帰テストで固定し、
+// fd の継承・pidfd_getfd と ptrace・SCM_RIGHTS は未検証なので、実測の後に、塞げたものと塞げていないものに分けて確定する
+// (それまで、解消したものとして扱わない)。
+//
+// 上限: 未決は maxPendingRequests まで。超えた can_use_tool は承認できないが (誤って許可はしない)、claude は応答を待ち続けるので、
+// TypeError で知らせる。決着すれば回復する。見た request_id は SHA-256 で maxSeenRequests まで覚え、こちらは回復しない。
+// 上限を超えた要求に claude へ拒否を返すには、DecodeFrame が呼び手に書かせる戻りの設計が要る (会話の状態機械で決める)。
 type Stream struct {
 	sawInit bool // system/init を、もう見たか (ターンごとに繰り返し出るので、2 回目からは TypeSessionStarted にしない)
 
 	sentInit bool // initialize を、もう送ったか (最初の prompt の前に 1 回だけ)
 
-	// 未決の can_use_tool の要求 (request_id → 要求時の tool の input)。届いた順に pendingOrder で持つ。
+	// 未決の can_use_tool の要求 (request_id → 要求時の tool の input と、届いた順の番号)。
 	// 応答 (permission.resolve) の許可する input は、ここに保持した値だけから作る (クライアントからは受けない)。
 	pending map[string]pendingRequest
-	// seen は、このストリームで見た request_id の全部 (決着済みも)。ID は一意で、決着した ID の再要求は、
-	// 新しい要求にしない (再送された許可が、人間の見ていない別の input を許可するのを防ぐ)。
-	seen    map[string]struct{}
+	// seen は、このストリームで見た request_id の全部 (決着済みも) の SHA-256。ID は一意で、決着した ID の再要求は、
+	// 新しい要求にしない (再送された許可が、人間の見ていない別の input を許可するのを防ぐ)。長い ID でメモリを使わせないよう、
+	// 固定長の要約で覚える。
+	seen    map[[sha256.Size]byte]struct{}
 	nextSeq uint64 // pendingRequest.seq に振る、届いた順の番号
 }
 
@@ -62,9 +77,16 @@ type pendingRequest struct {
 	seq   uint64
 }
 
-// maxSeenRequests は、1 つのストリームで覚える request_id の数の上限 (メモリを、agent の出す要求の数に比例させない)。
-// 超えた要求は、応答できないものとして agent.frame にする (承認できないだけで、誤って許可はしない)。
-const maxSeenRequests = 10000
+// 未決の数の上限と、覚える request_id の数の上限 (メモリを、agent の出す要求の数・ID の長さに比例させない)。
+// 超えた要求は、承認できない (誤って許可はしない) が、claude は応答を待ち続けるので、黙って捨てず、
+// TypeError (permissionLimitMessage) で呼び手・UI に知らせる。未決の上限は、決着すれば回復する。
+// 覚える ID の上限は回復しない (長いセッションでも、通常は届かない値)。
+const (
+	maxPendingRequests = 64
+	maxSeenRequests    = 1 << 17
+)
+
+const permissionLimitMessage = "claude: 権限要求の上限に達したため、この要求は承認できない (claude は応答を待ち続けている)"
 
 // lenient は、想定外の型の値を、エラーにせず零値にする。frame を 1 回で読むので、1 つのフィールドの型の不一致で
 // Unmarshal 全体が失敗すると、フレームが raw ごと失われる (そのターンの error・usage・turn.completed も)。
@@ -244,13 +266,18 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 			r.ToolName.Bad || r.ToolName.V == "" || !isObject(r.Input) {
 			return unknown()
 		}
-		if _, dup := s.seen[id]; dup || len(s.seen) >= maxSeenRequests { // 同じ ID の再要求は、決着済みでも捨てる (先の要求の input を、後から差し替えさせない)
+		key := sha256.Sum256([]byte(id))
+		if _, dup := s.seen[key]; dup { // 同じ ID の再要求は、決着済みでも捨てる (先の要求の input を、後から差し替えさせない)
 			return unknown()
 		}
-		if s.pending == nil {
-			s.pending, s.seen = map[string]pendingRequest{}, map[string]struct{}{}
+		if len(s.pending) >= maxPendingRequests || len(s.seen) >= maxSeenRequests {
+			e, err := ev(v0.TypeError, true, map[string]any{"status": nil, "retryable": false, "message": permissionLimitMessage})
+			return []v0.Envelope{e}, err
 		}
-		s.seen[id] = struct{}{}
+		if s.pending == nil {
+			s.pending, s.seen = map[string]pendingRequest{}, map[[sha256.Size]byte]struct{}{}
+		}
+		s.seen[key] = struct{}{}
 		s.nextSeq++
 		s.pending[id] = pendingRequest{input: bytes.Clone(r.Input), seq: s.nextSeq}
 		e, err := ev(v0.TypePermissionRequested, true, map[string]any{
