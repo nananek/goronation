@@ -2,7 +2,9 @@ package chat
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -32,6 +34,7 @@ var (
 	ErrBadText         = errors.New("chat: text が不正な UTF-8")                       // Send: 400
 	ErrBadOutcome      = errors.New("chat: outcome は allow_once か reject_once だけ") // Resolve: 400
 	ErrUnknownRequest  = errors.New("chat: 未決の request_id ではない (未知・失効)")           // Resolve: 404
+	ErrStaleGeneration = errors.New("chat: 別の起動 (世代) の画面からの応答")                    // ResolveIn: 409
 	ErrAlreadyResolved = errors.New("chat: その request_id は、もう決着している")              // Resolve: 409
 	ErrWriteFailed     = errors.New("chat: エージェントの入力に書けなかった (会話を終了した)")            // Send・Resolve: 500
 )
@@ -86,6 +89,8 @@ type ConversationConfig struct {
 type Conversation struct {
 	cfg ConversationConfig
 
+	generation string // この起動 (会話) を区別する、ランダムな値 (L12)
+
 	mu       sync.Mutex
 	state    State // Idle・Turn・Closed (AwaitingPermission は、Turn と、未決の有無から導く)
 	pending  map[string]Event
@@ -103,7 +108,9 @@ type Conversation struct {
 
 // NewConversation は、idle の会話を作る。
 func NewConversation(cfg ConversationConfig) *Conversation {
-	return &Conversation{cfg: cfg, pending: map[string]Event{}, settled: map[[sha256.Size]byte]struct{}{}, orphans: map[[sha256.Size]byte]struct{}{}}
+	var g [16]byte
+	rand.Read(g[:])
+	return &Conversation{cfg: cfg, generation: hex.EncodeToString(g[:]), pending: map[string]Event{}, settled: map[[sha256.Size]byte]struct{}{}, orphans: map[[sha256.Size]byte]struct{}{}}
 }
 
 // State は、今の状態。
@@ -161,6 +168,18 @@ func (c *Conversation) Send(text string) error {
 	c.state = StateTurn
 	c.cfg.Hub.Update(events, nil, nil)
 	return nil
+}
+
+// Generation は、この起動 (会話) を区別する、ランダムな値。permission.requested を見せた画面が、応答に添える (ResolveIn) ことで、
+// 起動をまたぐ承認の誤適用 (起動 1 の古い画面の allow が、起動 2 の同じ request_id の別の input に通る。L12) を断てる。
+func (c *Conversation) Generation() string { return c.generation }
+
+// ResolveIn は、generation がこの会話のものと一致するときだけ Resolve する (違えば ErrStaleGeneration。未決の表には触れない)。
+func (c *Conversation) ResolveIn(generation, requestID, outcome string) error {
+	if generation != c.generation {
+		return ErrStaleGeneration
+	}
+	return c.Resolve(requestID, outcome)
 }
 
 // Resolve は、未決の権限要求に、人間の応答 (allow_once・reject_once) を返す。

@@ -62,6 +62,9 @@ func (s Spec) argv() []string {
 	if s.NewSession {
 		a = append(a, "--new-session")
 	}
+	if s.AsPID1 {
+		a = append(a, "--as-pid-1")
+	}
 	for _, l := range s.Symlinks {
 		a = append(a, "--symlink", l.Target, l.Dst)
 	}

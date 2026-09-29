@@ -27,6 +27,9 @@ import (
 func init() {
 	switch filepath.Base(os.Args[0]) {
 	case "goronation":
+		if len(os.Args) > 1 && os.Args[1] == "spoof-child" { // 実物の claude の hook から起動される、偽のフレームの書き込みの試み (TestChatStdioRealClaude)
+			syscall.Exit(fakeSpoofChild())
+		}
 		// 実プロセスの goronation (子プロセス) にだけ、テスト用の第 3 の profile を足す (テストの本体のプロセスの agents は、本物の 2 つのまま)。
 		// エージェントを足す作業は、この 1 つの profile を表に足すことだけ (TestRunThirdAgent)。
 		agents = append(agents, testAgentProfile)
@@ -87,12 +90,16 @@ var testAgentProfile = agentProfile{
 //	await NAME OLD        ready を出し、認証用ディレクトリの NAME の中身が、空でも OLD でもなくなるのを待ち、"changed=<引用した中身>" を出す (実行中の檻への伝わり)
 //	sigcount              ready を出し、最初のシグナルから 1 秒間の SIGINT・SIGQUIT の数を出す
 //	hold                  ready を出し、殺されるまで待つ
+//	spoof                 chat の標準入出力への偽のフレームの書き込みを、子プロセスに試させ、結果 (child:...) を出す (chat_stdio_bwrap_linux_test.go)
 //	exit N                終了コード N で終わる
 //	rawtty [hold]         標準入力の端末を raw・-echo・-isig にして、raw-set を出す。hold なら、殺されるまで待つ。そうでなければ、
 //	                      端末から 1 バイト届くまで待って終わる (raw の間に、テストが端末の設定を確かめられるように)
 //	winsize               ready を出し、標準入力 (端末) の大きさを winsize=幅x高さ で出す。SIGWINCH を 1 回受けたら、
 //	                      もう一度出して終わる (pty 中継の、開始時の大きさの反映と、resize の伝わりの確認用)
 func fakeClaude(args []string) int {
+	if len(args) > 0 && args[len(args)-1] == "stderr-spoof" { // chat セッションの、標準エラー出力の転送の確認 (serve_chat_stderr_linux_test.go)
+		return fakeChatStderrSpoof()
+	}
 	// --push owner/repo のとき、claude には --mcp-config <JSON> が、場面の引数より前に入る (goronation run 側。
 	// cmd/goronation/mcp.go の claudeMCPInject)。実物の claude は、これを自分の flag として消費する。偽のエージェントも
 	// 同じに振る舞う (でないと、--push と組み合わせる場面のテストが "--mcp-config" 自体を場面の名前と誤認する)。
@@ -102,6 +109,12 @@ func fakeClaude(args []string) int {
 	if len(args) == 0 {
 		fmt.Println("scenario=none")
 		return 0
+	}
+	if args[len(args)-1] == "tty-probe" { // chat セッションの、制御端末 (/dev/tty) の確認 (chat_tty_bwrap_linux_test.go)
+		return fakeChatTTYProbe()
+	}
+	if args[0] == "-p" { // chat セッション (goronation serve --chat): stream-json で、標準入出力を話す (chat_session_bwrap_linux_test.go)
+		return fakeChat(args)
 	}
 	switch args[0] {
 	case "auth", "login":
@@ -288,6 +301,10 @@ func fakeClaude(args []string) int {
 				return 0
 			}
 		}
+	case "spoof":
+		return fakeSpoof(args[1:])
+	case "spoof-child":
+		return fakeSpoofChild()
 	case "exit":
 		if len(args) == 2 {
 			if n, err := strconv.Atoi(args[1]); err == nil {

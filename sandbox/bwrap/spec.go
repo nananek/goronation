@@ -32,6 +32,10 @@ type Spec struct {
 	// 端末のサイズ変更 (SIGWINCH) が届かない。付けないとき、端末に直結して (標準入出力のどれかが端末か、
 	// 呼び手が制御端末を持つ) 起動するなら、Start は TIOCSTI が無効なことを確かめる。
 	NewSession bool
+	// AsPID1 は、--as-pid-1 (bwrap が、檻の中に、PID 1 の孤児回収の process を挟まず、Cmd 自身を PID 1 にする) を付けるか。既定 (false) は付けない。
+	// 挟まれた PID 1 は bwrap 自身で、標準入出力を持ったまま、dumpable のまま残る (同じ uid の檻の中のプロセスが、その fd を pidfd_getfd で
+	// 奪える)。Cmd 自身が、孤児の回収 (PID 1 の責務) と、自分の dumpable=0 を担う場合 (goronation init --non-dumpable) に付ける。
+	AsPID1 bool
 	// Stdin・Stdout・Stderr は、檻のコマンドの標準入出力。nil なら、入力は空、出力は捨てる。*os.File 以外を渡すと、
 	// os/exec が pipe 越しに中継する (Stdin は、EOF になるまで、Cmd.Wait が戻らない)。
 	Stdin          io.Reader
