@@ -6,6 +6,7 @@ use (
 	./egress
 	./hostfs
 	./sandbox
+	./spec
 	./tools/archtest
 	./tools/docgen
 	./tools/fakeproviders
