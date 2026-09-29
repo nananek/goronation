@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -402,8 +403,9 @@ func TestWebChatSSEUnreadingClientIsCut(t *testing.T) {
 	withTimeout(t, 60*time.Second)
 	cw := newChatWeb(t, fastRelay(), webReadTimeout, webWriteTimeout)
 	upstreamDone := make(chan struct{})
+	var once sync.Once
 	fakeUpstream(t, cw, chatTestID, func(w http.ResponseWriter, r *http.Request) {
-		defer close(upstreamDone)
+		defer once.Do(func() { close(upstreamDone) })
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
 		chunk := "data: " + strings.Repeat("x", 60<<10) + "\n\n"
