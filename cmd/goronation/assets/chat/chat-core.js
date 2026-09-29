@@ -14,6 +14,7 @@
   };
 
   const TRIM_SLACK = 250;
+  const MAX_DEPTH = 40; // 表示する入れ子の深さ (これより深い input は、打ち切る = 全部は表示できない)
   const GENERATION_RE = /^[0-9a-f]{32}$/; // serve の世代 (ADR 0013)
   const OUTCOMES = new Set(['allow_once', 'reject_once', 'cancelled']); // permission.resolved の outcome (これ以外は unknown)
 
@@ -81,9 +82,78 @@
     return last === 0 ? s : out + s.slice(last);
   }
 
-  // clip は、値を文字列にして、n 文字までにする (サロゲートの途中で切らない)。cut は、切ったか (元の長さは total)。
+  // boundedJSON は、v を、JSON.stringify(v, null, 2) と同じ形の文字列にする。ただし、出力が max 文字を超える・入れ子が MAX_DEPTH を超えるところで打ち切る
+  // (cut: true)。JSON.stringify は、深い入れ子で例外を投げ (B1: 例外を「空の input」に化けさせない)、深さの 2 乗の長さの文字列を作る (L-E: CPU の増幅)。
+  // 打ち切った値は、全体の長さが分からない (total: null)。
+  function boundedJSON(v, max) {
+    const out = [];
+    let len = 0;
+    let cut = false;
+    function emit(t) {
+      if (cut) return false;
+      if (len + t.length > max) {
+        out.push(t.slice(0, max - len));
+        len = max;
+        cut = true;
+        return false;
+      }
+      out.push(t);
+      len += t.length;
+      return true;
+    }
+    function quote(t) {
+      const room = max - len + 1;
+      return JSON.stringify(t.length > room ? t.slice(0, room) : t); // 予算を超える分は、切ってから引用する (巨大な文字列を、全部は処理しない)
+    }
+    function walk(x, depth) {
+      if (cut) return;
+      if (x === null || x === undefined) { emit('null'); return; }
+      switch (typeof x) {
+        case 'string': emit(quote(x)); return;
+        case 'number': emit(Number.isFinite(x) ? JSON.stringify(x) : 'null'); return;
+        case 'boolean': emit(x ? 'true' : 'false'); return;
+        case 'object': break;
+        default: emit('null'); return;
+      }
+      if (depth >= MAX_DEPTH) { // 深すぎる: ここから先は、表示しない
+        emit('"..."');
+        cut = true;
+        return;
+      }
+      const pad = '\n' + '  '.repeat(depth + 1);
+      const end = '\n' + '  '.repeat(depth);
+      if (Array.isArray(x)) {
+        if (x.length === 0) { emit('[]'); return; }
+        emit('[');
+        for (let i = 0; i < x.length && !cut; i++) {
+          emit((i === 0 ? '' : ',') + pad);
+          walk(x[i], depth + 1);
+        }
+        if (!cut) emit(end + ']');
+        return;
+      }
+      const keys = Object.keys(x);
+      if (keys.length === 0) { emit('{}'); return; }
+      emit('{');
+      for (let i = 0; i < keys.length && !cut; i++) {
+        emit((i === 0 ? '' : ',') + pad + quote(keys[i]) + ': ');
+        walk(x[keys[i]], depth + 1);
+      }
+      if (!cut) emit(end + '}');
+    }
+    walk(v, 0);
+    return {text: out.join(''), cut: cut, total: cut ? null : len};
+  }
+
+  // clip は、値を文字列にして、n 文字までにする (サロゲートの途中で切らない)。cut は、切ったか (元の長さは total。分からなければ null)。
+  // 文字列以外の値は、boundedJSON (深さ・長さを限る)。
   function clip(v, n, strict) {
-    let s = typeof v === 'string' ? v : (v === null || v === undefined ? '' : safeJSON(v));
+    if (v === null || v === undefined) return {text: '', cut: false, total: 0};
+    if (typeof v !== 'string') {
+      const b = boundedJSON(v, n);
+      return {text: sanitize(b.text, strict), cut: b.cut, total: b.total};
+    }
+    let s = v;
     const total = s.length;
     let cut = false;
     if (s.length > n) {
@@ -101,13 +171,10 @@
     return clip(v, LIMITS.maxShort, true).text;
   }
 
-  function safeJSON(v) {
-    try {
-      const s = JSON.stringify(v, null, 2);
-      return typeof s === 'string' ? s : '';
-    } catch (e) {
-      return '';
-    }
+  // permissionInput は、権限要求の input の表示。input が無い・オブジェクトでない要求は、何を許可するのか見せられないので、「全部は表示できない」(cut) にする。
+  function permissionInput(v) {
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return {text: clip(v, LIMITS.maxInput).text, cut: true, total: null};
+    return clip(v, LIMITS.maxInput);
   }
 
   function obj(v) {
@@ -278,7 +345,7 @@
           kind: 'permission', requestId: rid, idShown: shown.text, idPlain: !shown.cut && shown.text === rid,
           callId: short(d.call_id),
           toolName: short(d.tool_name), toolKind: short(d.kind),
-          title: short(d.title), input: clip(d.input, LIMITS.maxInput),
+          title: short(d.title), input: permissionInput(d.input),
           state: 'pending', by: '',
         });
         state.pending.set(rid, it);

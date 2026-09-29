@@ -68,7 +68,8 @@
     }
 
     function clipNote(c) {
-      return c.cut ? '\n… (全体 ' + c.total + ' 文字のうち、先頭だけ表示)' : '';
+      if (!c.cut) return '';
+      return c.total === null ? '\n… (以降は表示しない)' : '\n… (全体 ' + c.total + ' 文字のうち、先頭だけ表示)';
     }
 
     function safeClass(v) {
@@ -245,9 +246,20 @@
 
     // ---- 権限ダイアログ ----
 
-    function approvable(item) {
-      // input を全部は表示できない・request_id が見た目どおりでない (見えない文字・長さ) ときは、許可させない (拒否だけ)。
-      return item.input.cut === false && item.idPlain === true;
+    // reachedEnd は、pre が、末尾までスクロールされているか (2px の余裕)。
+    function reachedEnd(pre) {
+      return pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 2;
+    }
+
+    // hiddenPart は、input の枠が、スクロールしないと見えない部分を持ち、末尾まで見ていないか。枠の高さは限ってあるので、字数が上限以内でも起きる
+    // (エージェントが、key の順を決められる: 危険な内容を、末尾に置ける)。
+    function hiddenPart(d) {
+      return d.pre !== null && d.pre.scrollHeight > d.pre.clientHeight + 1 && !d.seenEnd;
+    }
+
+    function approvable(item, d) {
+      // input を全部は表示できない (打ち切った・枠の見えない部分を見ていない)・request_id が見た目どおりでない (見えない文字・長さ) ときは、許可させない (拒否だけ)。
+      return item.input.cut === false && item.idPlain === true && !hiddenPart(d);
     }
 
     function dialogCanAnswer(d, item) {
@@ -257,14 +269,15 @@
 
     function refreshDialog(item, d) {
       const can = dialogCanAnswer(d, item);
-      d.approve.disabled = !can || !approvable(item);
+      d.approve.disabled = !can || !approvable(item, d);
       d.deny.disabled = !can;
+      if (d.hint) d.hint.textContent = item.input.cut === false && item.idPlain === true && hiddenPart(d) ? 'input が枠に収まらない。末尾までスクロールすると、許可できる' : '';
     }
 
     async function answer(item, d, outcome) {
       // クロージャの item (JS のオブジェクト) の値だけを使う。世代は、ダイアログを見せた時点の写し (d.gen)。それが、いまの検証済みの世代と違えば送らない。
       if (!dialogCanAnswer(d, item)) return;
-      if (outcome === 'allow_once' && !approvable(item)) return;
+      if (outcome === 'allow_once' && !approvable(item, d)) return;
       const gen = d.gen;
       const requestId = item.requestId;
       d.busy = true;
@@ -285,25 +298,32 @@
     }
 
     function buildDialog(item) {
-      const d = {el: el('div', 'dialog'), gen: state.generation, busy: false, done: false, approve: null, deny: null, note: null};
+      const d = {el: el('div', 'dialog'), gen: state.generation, busy: false, done: false, approve: null, deny: null, note: null, hint: null, pre: null, seenEnd: false};
       d.el.appendChild(el('div', 'label', '権限の要求'));
       d.el.appendChild(el('div', 'dialog-tool', 'tool: ' + (item.toolName || '(名前なし)') + (item.toolKind ? ' (' + item.toolKind + ')' : '')));
-      if (item.title) d.el.appendChild(el('div', 'dialog-title', item.title));
+      if (item.title) d.el.appendChild(el('div', 'dialog-title', '説明 (エージェントの自己申告。検証されていない): ' + item.title));
       d.approve = el('button', 'approve', '許可 (今回だけ)');
       d.deny = el('button', 'deny', '拒否');
       d.approve.addEventListener('click', () => { answer(item, d, 'allow_once'); });
       d.deny.addEventListener('click', () => { answer(item, d, 'reject_once'); });
       const row = el('div', 'dialog-buttons');
+      row.appendChild(d.deny); // 拒否が先 (左)。許可は、離して置く (誤クリックを減らす)
       row.appendChild(d.approve);
-      row.appendChild(d.deny);
       d.el.appendChild(row); // ボタンは、input より上 (巨大な input が、ボタンを押し出さない)
       d.note = el('div', 'meta', '');
       d.el.appendChild(d.note);
-      if (!approvable(item)) {
-        d.el.appendChild(el('div', 'warn', item.input.cut ? 'input が長く、全部は表示できないので、許可できない (拒否だけ)' : 'request_id に見えない文字・長さがあり、許可できない (拒否だけ)'));
+      if (item.input.cut || item.idPlain !== true) {
+        d.el.appendChild(el('div', 'warn', item.input.cut ? 'input が長すぎる・深すぎる・形が不正で、全部は表示できないので、許可できない (拒否だけ)' : 'request_id に見えない文字・長さがあり、許可できない (拒否だけ)'));
       }
+      d.hint = el('div', 'warn', '');
+      d.el.appendChild(d.hint);
       d.el.appendChild(el('div', 'meta', 'request_id: ' + item.idShown));
-      d.el.appendChild(el('pre', 'input', item.input.text + clipNote(item.input)));
+      d.pre = el('pre', 'input', item.input.text + clipNote(item.input));
+      d.pre.addEventListener('scroll', () => { // 末尾までスクロールしたら、全部見たことにする
+        if (reachedEnd(d.pre)) d.seenEnd = true;
+        refreshDialog(item, d);
+      });
+      d.el.appendChild(d.pre);
       return d;
     }
 
@@ -427,6 +447,7 @@
         failures = 0;
         retryMs = RETRY_FIRST_MS;
         connected = true;
+        awaitTurn = -1; // 繋ぎ直した: turn.started を取りこぼしていても、送信欄が固まらない (Snapshot が、状態を作り直す)
         setStatus('接続済み');
         scheduleRender();
       });

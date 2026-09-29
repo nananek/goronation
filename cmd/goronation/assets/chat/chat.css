@@ -31,6 +31,7 @@ header { position: sticky; top: 0; display: flex; gap: 1em; align-items: baselin
 .dialog-tool { font-weight: bold; }
 .dialog-buttons { display: flex; gap: 12px; margin: 6px 0; }
 .dialog-buttons button { min-height: 2.4em; padding: 0 1.2em; }
+.dialog-buttons .approve { margin-left: auto; } /* 許可は、拒否から離す */
 .dialog .warn { color: #c44; margin: 4px 0; }
 .dialog pre { white-space: pre-wrap; unicode-bidi: isolate; max-height: 7em; overflow: auto; margin: 4px 0; font-size: 12px; }
 #composer { padding: 8px 12px; }
