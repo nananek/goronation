@@ -83,6 +83,30 @@ func (f *Feed) Encode(cmd v0.Command) (raw []byte, events []Event, err error) {
 	return raw, events, nil
 }
 
+// EncodeQuiet は、Encode と同じだが、Stream が合成するイベント (permission.resolved の by=human など) を捨てる (seq を進めない)。
+// 状態機械が、自分で理由 (by=policy など) を付けた Event を Emit するときに使う。
+func (f *Feed) EncodeQuiet(cmd v0.Command) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	raw, _, err := f.stream.EncodeCommand(cmd)
+	return raw, err
+}
+
+// Emit は、エージェントのフレームを介さない Event (会話の状態機械が作る、権限要求の失効など) を、Data (JSON にできる値) から作る。
+func (f *Feed) Emit(typ string, durable bool, data any) (Event, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, err := marshalLine(data)
+	if err != nil {
+		return Event{}, err
+	}
+	evs, err := f.events([]v0.Envelope{{V: v0.Version, Type: typ, Durable: durable, Data: b}})
+	if err != nil {
+		return Event{}, err
+	}
+	return evs[0], nil
+}
+
 func (f *Feed) events(envs []v0.Envelope) ([]Event, error) {
 	out := make([]Event, 0, len(envs))
 	ts := f.now().UTC().Format("2006-01-02T15:04:05.000Z")
