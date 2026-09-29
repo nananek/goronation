@@ -87,6 +87,7 @@ var testAgentProfile = agentProfile{
 //	await NAME OLD        ready を出し、認証用ディレクトリの NAME の中身が、空でも OLD でもなくなるのを待ち、"changed=<引用した中身>" を出す (実行中の檻への伝わり)
 //	sigcount              ready を出し、最初のシグナルから 1 秒間の SIGINT・SIGQUIT の数を出す
 //	hold                  ready を出し、殺されるまで待つ
+//	spoof                 chat の標準入出力への偽のフレームの書き込みを、子プロセスに試させ、結果 (child:...) を出す (chat_stdio_bwrap_linux_test.go)
 //	exit N                終了コード N で終わる
 //	rawtty [hold]         標準入力の端末を raw・-echo・-isig にして、raw-set を出す。hold なら、殺されるまで待つ。そうでなければ、
 //	                      端末から 1 バイト届くまで待って終わる (raw の間に、テストが端末の設定を確かめられるように)
@@ -288,6 +289,10 @@ func fakeClaude(args []string) int {
 				return 0
 			}
 		}
+	case "spoof":
+		return fakeSpoof()
+	case "spoof-child":
+		return fakeSpoofChild()
 	case "exit":
 		if len(args) == 2 {
 			if n, err := strconv.Atoi(args[1]); err == nil {
