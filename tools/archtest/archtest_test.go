@@ -107,11 +107,18 @@ func TestFixtures(t *testing.T) {
 		}},
 		{"dep-agent-sandbox", 2, []string{
 			"agent/x/x.go:3: dep-agent-sandbox",
+			"sandbox/z/z.go:3: agent-only-in-chat",
 			"sandbox/z/z.go:3: dep-agent-sandbox",
 		}},
 		{"impl-only-from-cmd", 3, []string{
+			"control/y.go:3: agent-only-in-chat",
 			"control/y.go:3: impl-only-from-cmd",
 			"egress/x.go:3: impl-only-from-cmd",
+		}},
+		// spec/v0 の import は、変換の側 (agent・core・spec) と cmd/internal/chat だけ。cmd/goronation (web など) と egress は違反。
+		{"v0-only-in-chat", 6, []string{
+			"cmd/goronation/main.go:3: v0-only-in-chat",
+			"egress/x.go:3: v0-only-in-chat",
 		}},
 		// 走査しないディレクトリ (.hidden / _hidden / testdata / vendor) は、明示的に import されると
 		// go tool は build する。その import を違反にする。scanned = 1 は、それらを走査していない確認。
