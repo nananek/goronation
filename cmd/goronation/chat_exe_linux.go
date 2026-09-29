@@ -88,11 +88,11 @@ func unreadableExeCopy(dir, exe string) (string, error) {
 	return dst, nil
 }
 
-// sweepExeCopies は、dir の、keep 以外の複製のうち、最後に使われてから exeCopyGrace 過ぎたものを消す (. で始まる名前は、lock・一時ファイル)。
+// sweepExeCopies は、dir の、keep 以外の複製のうち、最後に使われてから exeCopyGrace 過ぎたものを消す (lock は消さない。途中で kill された作成の一時ファイル .tmp-* も、猶予を過ぎれば消す)。
 func sweepExeCopies(dir, keep string, now time.Time) {
 	ents, _ := os.ReadDir(dir)
 	for _, e := range ents {
-		if e.Name() == keep || e.Name()[0] == '.' {
+		if e.Name() == keep || e.Name() == ".lock" {
 			continue
 		}
 		if fi, err := e.Info(); err == nil && now.Sub(fi.ModTime()) > exeCopyGrace {
