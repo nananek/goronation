@@ -5,7 +5,8 @@ import "encoding/json"
 // Version は、封筒の v の値。この package が定める仕様の版。
 const Version = 0
 
-// Envelope は、goronation がセッションごとに振る、イベントの封筒。
+// Envelope は、goronation がセッションごとに振る、イベントの封筒。イベントストア・監査ログ向けの内部の表現。
+// Raw を含むので、UI・API にそのまま返さない。返すときは Public() を使う (限界は Public の doc)。
 // Session は goronation のセッション ID で、エージェント自身の ID (claude の session_id・opencode の
 // sessionID) は、TypeSessionStarted の data に載せる。TS は RFC 3339 (UTC・ミリ秒) の、goronation が受け取った時刻。
 type Envelope struct {
