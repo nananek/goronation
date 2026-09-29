@@ -104,7 +104,7 @@ func TestArgvNewSession(t *testing.T) {
 
 // flagArity は、Argv が出す bwrap のオプションと、その引数の数。これに無いオプションは、出してはいけない。
 var flagArity = map[string]int{
-	"--unshare-all": 0, "--die-with-parent": 0, "--new-session": 0, "--clearenv": 0,
+	"--unshare-all": 0, "--die-with-parent": 0, "--new-session": 0, "--as-pid-1": 0, "--clearenv": 0,
 	"--symlink": 2, "--proc": 1, "--dev": 1, "--tmpfs": 1, "--ro-bind": 2, "--bind": 2, "--chdir": 1, "--setenv": 2,
 }
 
@@ -176,6 +176,7 @@ func TestArgvStructure(t *testing.T) {
 	odd.Symlinks = append(odd.Symlinks, Symlink{Target: "--dev-bind", Dst: "/weird"})
 	odd.Cmd = append(odd.Cmd, "--unshare-all", "--share-net", "--ro-bind", "/", "/")
 	odd.NewSession = true
+	odd.AsPID1 = true
 	for name, s := range map[string]Spec{"cage": cageSpec(), "odd": odd} {
 		t.Run(name, func(t *testing.T) {
 			argv, err := s.Argv()
@@ -186,6 +187,9 @@ func TestArgvStructure(t *testing.T) {
 			wantFlags := []string{"--unshare-all", "--die-with-parent", "--clearenv"}
 			if s.NewSession {
 				wantFlags = []string{"--unshare-all", "--die-with-parent", "--new-session", "--clearenv"}
+			}
+			if s.AsPID1 {
+				wantFlags = slices.Insert(wantFlags, len(wantFlags)-1, "--as-pid-1")
 			}
 			if !reflect.DeepEqual(p.flags, wantFlags) {
 				t.Errorf("引数の無いオプション = %q, want %q (--unshare-all・--die-with-parent・--clearenv は常に 1 個ずつ)", p.flags, wantFlags)
@@ -525,5 +529,22 @@ func TestCurrentHost(t *testing.T) {
 		if s == "agent.sock" || s == "" || s == "." {
 			t.Errorf("Secrets に、絶対 path でない値 %q がある", s)
 		}
+	}
+}
+
+// AsPID1 は、既定で付かず、付けると --new-session の後ろ (mount より前) に 1 個だけ付く。
+func TestArgvAsPID1(t *testing.T) {
+	s := cageSpec()
+	if a, _ := s.Argv(); slices.Contains(a, "--as-pid-1") {
+		t.Errorf("既定で --as-pid-1 が付いている: %q", a)
+	}
+	s.AsPID1 = true
+	a, err := s.Argv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]string{"/usr/bin/bwrap", "--unshare-all", "--die-with-parent", "--as-pid-1"}, cageArgv[3:]...)
+	if !reflect.DeepEqual(a, want) {
+		t.Errorf("AsPID1 の argv:\n got %q\nwant %q", a, want)
 	}
 }

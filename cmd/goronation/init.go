@@ -38,6 +38,8 @@ init は、檻を作らず、自分が檻の中にいることも確かめない
   --upstream PATH   中継先の Unix ドメインソケットの絶対 path
   --no-proxy-env    子に HTTPS_PROXY などを設定しない
   --no-forward-tty  端末のシグナル (SIGINT・SIGQUIT・SIGWINCH) を、子に転送しない (子が端末を共有し、直接受けるとき。二重に届かない)
+  --non-dumpable    init 自身を dumpable=0 にする (同じ uid の檻の中のプロセスが、init の fd を pidfd_getfd で奪う・/proc/<pid>/mem を
+                    書き換える・ptrace することを、kernel の許可検査で断る。子には、fork で引き継がれるが、exec で dumpable に戻る)
   --set-ctty        子を、新しいセッションの leader にし、標準入力 (pty の slave) を、その制御端末にする
                     (goronation run が、専用の pty を中継するときに渡す)
 `
@@ -68,6 +70,7 @@ type initConfig struct {
 	noProxyEnv bool
 	argv       []string // 子のコマンドと引数
 	noFwdTTY   bool     // 端末のシグナル (ttySignals) を、子に転送しない
+	nonDump    bool     // init 自身を dumpable=0 にする
 	setCtty    bool     // 子を、標準入力 (pty の slave) を制御端末にする、新しいセッションの leader にする
 }
 
@@ -83,6 +86,7 @@ func parseInitArgs(args []string, stderr io.Writer) (initConfig, error) {
 	flags.BoolVar(&cfg.noProxyEnv, "no-proxy-env", false, "")
 	flags.BoolVar(&cfg.noFwdTTY, "no-forward-tty", false, "")
 	flags.BoolVar(&cfg.setCtty, "set-ctty", false, "")
+	flags.BoolVar(&cfg.nonDump, "non-dumpable", false, "")
 	if err := flags.Parse(args); err != nil {
 		return cfg, err // flag が、理由と使い方を出している
 	}
@@ -119,6 +123,12 @@ func runInit(args []string, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	if cfg.nonDump {
+		if err := setNonDumpable(); err != nil {
+			fmt.Fprintf(stderr, "goronation init: dumpable を 0 にできない: %v\n", err)
+			return exitInit
+		}
+	}
 	l, err := net.Listen("tcp", cfg.listen)
 	if err != nil {
 		fmt.Fprintf(stderr, "goronation init: 待ち受けられない: %v\n", err)

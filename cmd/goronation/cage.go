@@ -65,6 +65,10 @@ type cageConfig struct {
 	// き、エージェント自身が新しいセッションの leader になり、渡された pty を自分の制御端末にする。false
 	// (既定) なら、これまでどおり、ホストの端末に直結する。
 	PTY bool
+	// NonDumpable は、goronation init を PID 1 (bwrap --as-pid-1。bwrap 自身の PID 1 を挟まない) にして、--non-dumpable を渡す
+	// (chat セッション: エージェントの標準入出力の socket を持つ、init の fd を、檻の中の同じ uid のプロセスに、pidfd_getfd・
+	// ptrace・/proc/<pid>/mem で奪わせない)。エージェント自身も dumpable=0 にする方法は、chat_exe_linux.go。
+	NonDumpable bool
 }
 
 // cageSpec は、c の檻の Spec を作る。標準入出力は、呼び手が足す。
@@ -92,6 +96,9 @@ func cageSpec(c cageConfig) bwrap.Spec {
 	if c.PTY {
 		cmd = append(cmd, "--set-ctty")
 	}
+	if c.NonDumpable {
+		cmd = append(cmd, "--non-dumpable")
+	}
 	cmd = append(cmd, "--", c.Agent.jailExe())
 	// MCP サーバー (goronation mcp) の登録: エージェントごとの変換 (Agent.mcp) が、起動時の引数・環境変数のどちらに
 	// するかを決める (claude は引数、opencode は環境変数。cageSpec は、その違いを知らない)。
@@ -118,6 +125,7 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		// 直結するとき) は付けない: 端末のシグナル (Ctrl-C・リサイズ) が、フォアグラウンドの process group
 		// ごと、檻の中のエージェントにも届く、これまでの形のまま。
 		NewSession: c.PTY,
+		AsPID1:     c.NonDumpable,
 	}
 }
 

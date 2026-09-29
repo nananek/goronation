@@ -27,6 +27,9 @@ import (
 func init() {
 	switch filepath.Base(os.Args[0]) {
 	case "goronation":
+		if len(os.Args) > 1 && os.Args[1] == "spoof-child" { // 実物の claude の hook から起動される、偽のフレームの書き込みの試み (TestChatStdioRealClaude)
+			syscall.Exit(fakeSpoofChild())
+		}
 		// 実プロセスの goronation (子プロセス) にだけ、テスト用の第 3 の profile を足す (テストの本体のプロセスの agents は、本物の 2 つのまま)。
 		// エージェントを足す作業は、この 1 つの profile を表に足すことだけ (TestRunThirdAgent)。
 		agents = append(agents, testAgentProfile)
@@ -290,7 +293,7 @@ func fakeClaude(args []string) int {
 			}
 		}
 	case "spoof":
-		return fakeSpoof()
+		return fakeSpoof(args[1:])
 	case "spoof-child":
 		return fakeSpoofChild()
 	case "exit":
