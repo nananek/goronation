@@ -42,10 +42,12 @@ type frame struct {
 
 	// assistant・user
 	IsAPIErrorMessage bool `json:"is_api_error_message"`
-	Message           struct {
-		ID      string  `json:"id"`
-		Content []block `json:"content"`
-	} `json:"message"`
+	// message は、assistant・user ではオブジェクト、system/permission_denied では文字列なので、型を見てから読む (msg)。
+	Message json.RawMessage `json:"message"`
+
+	// system/permission_denied
+	ToolName  string `json:"tool_name"`
+	ToolUseID string `json:"tool_use_id"`
 
 	// result
 	IsError      bool                  `json:"is_error"`
@@ -53,6 +55,18 @@ type frame struct {
 	TotalCostUSD float64               `json:"total_cost_usd"`
 	Usage        usage                 `json:"usage"`
 	ModelUsage   map[string]modelUsage `json:"modelUsage"`
+}
+
+// message は、assistant・user のフレームの message。
+type message struct {
+	ID      string  `json:"id"`
+	Content []block `json:"content"`
+}
+
+// msg は、f.Message を、オブジェクトとして読む。
+// オブジェクトでなければ ok=false (呼び手は、捨てずに TypeAgentFrame にする。error にすると、フレームが raw ごと失われる)。
+func (f frame) msg() (m message, ok bool) {
+	return m, json.Unmarshal(f.Message, &m) == nil
 }
 
 // block は、message.content の 1 要素 (text・tool_use・tool_result)。
@@ -116,13 +130,17 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		return []v0.Envelope{e}, err
 
 	case f.Type == "assistant" && !f.IsAPIErrorMessage: // API の失敗は PR③
+		m, ok := f.msg()
+		if !ok {
+			return unknown()
+		}
 		var out []v0.Envelope
-		for _, b := range f.Message.Content {
+		for _, b := range m.Content {
 			var e v0.Envelope
 			var err error
 			switch b.Type {
 			case "text":
-				e, err = ev(v0.TypeMessageText, true, map[string]any{"message_id": f.Message.ID, "text": b.Text})
+				e, err = ev(v0.TypeMessageText, true, map[string]any{"message_id": m.ID, "text": b.Text})
 			case "tool_use":
 				e, err = ev(v0.TypeToolCall, true, map[string]any{
 					"call_id": b.ID, "name": b.Name, "kind": toolKind(b.Name), "input": orNull(b.Input), "status": v0.ToolInProgress,
@@ -140,9 +158,21 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		}
 		return out, nil
 
+	case f.Type == "system" && f.Subtype == "permission_denied":
+		// 非対話の拒否 (claude -p は、要求のフレームを出さず、拒否の結果だけを出す)。同じ事実を指す tool_result の is_error・
+		// tool_result_meta・result の permission_denials からは、二重に出さない。message (文) は、path を含むので data に載せない。
+		e, err := ev(v0.TypePermissionResolved, true, map[string]any{
+			"by": "policy", "outcome": v0.RejectOnce, "call_id": f.ToolUseID, "tool_name": f.ToolName,
+		})
+		return []v0.Envelope{e}, err
+
 	case f.Type == "user":
+		m, ok := f.msg()
+		if !ok {
+			return unknown()
+		}
 		var out []v0.Envelope
-		for _, b := range f.Message.Content {
+		for _, b := range m.Content {
 			if b.Type != "tool_result" {
 				continue
 			}

@@ -17,6 +17,11 @@
 //   - tool-result: user の content の tool_result は TypeToolUpdate (人間の発言ではない。is_error が true なら failed)。
 //   - result: result は TypeUsage と TypeTurnCompleted (この順)。subtype は、失敗でも success になるので見ない。
 //   - prompt: prompt (Command) は標準入力の 1 行。フレームの無い TypeTurnStarted は、このときに合成する。
+//   - permission-denied: system/permission_denied は TypePermissionResolved (by=policy・outcome=reject_once・call_id・tool_name)。
+//     message は、実物では文字列で (assistant・user ではオブジェクト)、path を含むので data に載せない。同じ事実を指す tool_result の
+//     is_error・result の permission_denials からは、二重に出さない (tool_result は tool.update の failed になる)。
+//     claude は、拒否があったターンも result の is_error=false で終わるので、turn.completed の is_error は false のまま。
+//     拒否は、permission.resolved と、failed の tool.update で分かる。
 //   - unknown-kept: 上に無いフレームは、捨てずに TypeAgentFrame にする (data は空、raw に元のフレーム)。
 //   - data-allowlist: data は UI・API に出る (Envelope.Public は Raw だけを落とす)。封筒の語彙が必要とする値だけを、名前を付けて写し、
 //     frame を丸ごと・部分木ごと写さない。書き換えずに載せる約束の値は、tool の input・tool_result の content・テキスト。
@@ -24,8 +29,9 @@
 //
 // # 限界
 //
-//   - 権限の拒否 (system/permission_denied) と、API の失敗 (is_api_error_message が true の assistant フレーム・is_error が
-//     true の result) は未対応 (PR③)。TypeAgentFrame のままで、ターンの終わりが出ないので、それまで、失敗のターンを完了と見なせない。
+//   - API の失敗 (is_api_error_message が true の assistant フレーム・is_error が true の result) は未対応 (PR③)。
+//     TypeAgentFrame になり、失敗のターンの turn.completed は出ない。
+//   - message がオブジェクトでない assistant・user のフレームは、error にせず TypeAgentFrame にする (error にすると、フレームが raw ごと失われる)。
 //   - 未採取のフレーム (部分メッセージ・推論・対話での権限要求・中断・再開・MCP・サブエージェント) は、TypeAgentFrame になる。
 //   - Grep・Glob・MultiEdit の tool の名前は、採取した system/init の tools に無く、claude の組み込みの名前から決めた。
 package claude

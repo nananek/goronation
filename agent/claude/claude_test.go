@@ -136,6 +136,30 @@ func TestMultiTurn(t *testing.T) {
 	}
 }
 
+// permission-request: 実際の system/permission_denied は message が文字列。拒否は permission.resolved として明示され、
+// tool.update は failed、ターンは (claude の result どおり) is_error=false で終わる。拒否が成功に見えないことを固定する。
+func TestPermissionDenied(t *testing.T) {
+	es := decodeAll(t, "permission-request")
+	wantTypes(t, es, v0.TypeSessionStarted, v0.TypeMessageText, v0.TypeToolCall, v0.TypePermissionResolved, v0.TypeToolUpdate,
+		v0.TypeMessageText, v0.TypeUsage, v0.TypeTurnCompleted)
+	d := data(t, es[3])
+	if d["by"] != "policy" || d["outcome"] != v0.RejectOnce || d["call_id"] != "toolu_fake_1" || d["tool_name"] != "Write" || !es[3].Durable {
+		t.Errorf("permission.resolved の data = %v", d)
+	}
+	if d := data(t, es[4]); d["status"] != v0.ToolFailed || d["call_id"] != "toolu_fake_1" {
+		t.Errorf("tool.update の data = %v", d)
+	}
+	if d := data(t, es[2]); d["call_id"] != d2(es[3])["call_id"] {
+		t.Errorf("tool.call と permission.resolved の call_id が合わない")
+	}
+}
+
+func d2(e v0.Envelope) map[string]any {
+	var m map[string]any
+	_ = json.Unmarshal(e.Data, &m)
+	return m
+}
+
 func TestUnknownFramesAreKept(t *testing.T) {
 	s := Adapter{}.NewStream()
 	for _, line := range []string{
@@ -146,6 +170,9 @@ func TestUnknownFramesAreKept(t *testing.T) {
 		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"x"}]}}`,
 		`{"type":"assistant","is_api_error_message":true,"message":{"id":"m","content":[{"type":"text","text":"x"}]}}`, // PR③
 		`{"type":"result","is_error":true,"stop_reason":"end_turn"}`,                                                   // PR③
+		`{"type":"assistant"}`,
+		`{"type":"assistant","message":"x"}`,
+		`{"type":"user","message":"x"}`,
 		`{}`,
 	} {
 		es, err := s.DecodeFrame([]byte(line))

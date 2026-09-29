@@ -34,10 +34,11 @@ func leaves(v any, path string, out *[]leaf) {
 // allowedPaths は、type ごとに、data に載せてよい frame の値の path (接頭辞)。
 // 書き換えずに載せると約束した値 (tool の input・tool_result の content・テキスト) と、封筒の語彙が必要とする識別子だけ。
 var allowedPaths = map[string][]string{
-	"system/init": {".session_id", ".cwd", ".model", ".tools"},
-	"assistant":   {".message.id", ".message.content.*.text", ".message.content.*.id", ".message.content.*.name", ".message.content.*.input"},
-	"user":        {".message.content.*.tool_use_id", ".message.content.*.content"},
-	"result":      {".stop_reason"},
+	"system/permission_denied": {".tool_name", ".tool_use_id"},
+	"system/init":              {".session_id", ".cwd", ".model", ".tools"},
+	"assistant":                {".message.id", ".message.content.*.text", ".message.content.*.id", ".message.content.*.name", ".message.content.*.input"},
+	"user":                     {".message.content.*.tool_use_id", ".message.content.*.content"},
+	"result":                   {".stop_reason"},
 }
 
 func allowed(kind, path string) bool {
@@ -57,7 +58,7 @@ func kindOf(f map[string]any) string {
 }
 
 func TestDataDoesNotCarryUnintendedFrameValues(t *testing.T) {
-	for _, name := range []string{"simple-text", "tool-call", "multi-turn"} {
+	for _, name := range []string{"simple-text", "tool-call", "multi-turn", "permission-request"} {
 		s := Adapter{}.NewStream()
 		for i, line := range readLines(t, name) {
 			var f map[string]any
@@ -115,25 +116,30 @@ func containedInAllowed(x, l string, ok []leaf) bool {
 // TestDataKeysAreFixed は、data のキーが、語彙 (spec/v0 の doc) の名前だけであることを固定する。値の漏れを、キーの側から見る。
 func TestDataKeysAreFixed(t *testing.T) {
 	want := map[string][]string{
-		v0.TypeSessionStarted: {"agent", "agent_session", "cwd", "model", "tools"},
-		v0.TypeMessageText:    {"message_id", "text"},
-		v0.TypeToolCall:       {"call_id", "input", "kind", "name", "status"},
-		v0.TypeToolUpdate:     {"call_id", "output", "status"},
+		v0.TypeSessionStarted:     {"agent", "agent_session", "cwd", "model", "tools"},
+		v0.TypeMessageText:        {"message_id", "text"},
+		v0.TypeToolCall:           {"call_id", "input", "kind", "name", "status"},
+		v0.TypeToolUpdate:         {"call_id", "output", "status"},
+		v0.TypePermissionResolved: {"by", "call_id", "outcome", "tool_name"},
 		v0.TypeUsage: {"cache_creation_input_tokens", "cache_read_input_tokens", "context_window", "cost_usd", "input_tokens",
 			"max_output_tokens", "output_tokens", "scope"},
 		v0.TypeTurnCompleted: {"is_error", "stop_reason"},
 		v0.TypeAgentFrame:    nil,
 	}
 	seen := map[string]bool{}
-	for _, name := range []string{"simple-text", "tool-call", "multi-turn"} {
+	for _, name := range []string{"simple-text", "tool-call", "multi-turn", "permission-request"} {
 		for _, e := range decodeAll(t, name) {
 			seen[e.Type] = true
 			var keys []string
 			for k := range data(t, e) {
 				keys = append(keys, k)
 			}
-			if !sameSet(keys, want[e.Type]) {
-				t.Errorf("%s の data のキー = %v, want %v", e.Type, keys, want[e.Type])
+			w := want[e.Type]
+			if e.Type == v0.TypeToolUpdate && data(t, e)["status"] == v0.ToolFailed { // 失敗は、output の代わりに error
+				w = []string{"call_id", "error", "status"}
+			}
+			if !sameSet(keys, w) {
+				t.Errorf("%s の data のキー = %v, want %v", e.Type, keys, w)
 			}
 		}
 	}
