@@ -1,0 +1,15 @@
+{
+  "description": "PR⓪ スパイク (Issue #1): can_use_tool の control_request には答えず、host (この harness) 発の control_request (subtype interrupt) と、その request_id への control_cancel_request で、進行中のターンを中断する。実測: claude は自分から (別の request_id で) can_use_tool 自身への control_cancel_request を host に返し、tool_result を「ユーザーがこの tool 使用を望まなかった」という定型文にし、result は stop_reason:\"tool_use\"・terminal_reason:\"aborted_tools\"・subtype:\"error_during_execution\" になり、終了コードは 1。",
+  "expect_exit": {"claude": 1, "opencode": 0},
+  "turns": ["ファイルを作ってください。"],
+  "claude": [
+    {"text": "作成します。", "toolUse": {"id": "toolu_fake_1", "name": "Write", "input": {"file_path": "/work/new.txt", "content": "new file\n"}}},
+    {"text": "(中断されるはずなので、ここには来ない)"}
+  ],
+  "opencode": [
+    {"content": "了解しました。"}
+  ],
+  "claude_permissions": [
+    {"outcome": "interrupt"}
+  ]
+}

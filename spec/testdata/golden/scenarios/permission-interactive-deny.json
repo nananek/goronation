@@ -1,0 +1,15 @@
+{
+  "description": "PR⓪ スパイク (Issue #1): host モードで、can_use_tool の control_request に、人間向けの理由 (message) 付きで deny する。既存の permission-request.json (非対話。誰も答えないので即時 permission_denied になり、tool_result の文言は claude 自身の定型文) と違い、こちらは host (この harness) が明示的に control_response を返す経路: tool_result の中身が、CLI の定型文ではなく control_response.message そのものになり、tool_result_meta.non_execution_kind も \"permission-rule\" になる (非対話パスの \"user-rejected\" とは別の値)。system/permission_denied のフレームも出ない (あれは、誰も答えなかったときだけの現れ方)。",
+  "expect_exit": {"claude": 0, "opencode": 0},
+  "turns": ["ファイルを作ってください。"],
+  "claude": [
+    {"text": "作成します。", "toolUse": {"id": "toolu_fake_1", "name": "Write", "input": {"file_path": "/work/new.txt", "content": "new file\n"}}},
+    {"text": "承知しました。作成しません。"}
+  ],
+  "opencode": [
+    {"content": "了解しました。"}
+  ],
+  "claude_permissions": [
+    {"outcome": "deny", "message": "このファイルへの書き込みは却下します。"}
+  ]
+}

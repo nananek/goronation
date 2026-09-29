@@ -37,6 +37,8 @@ var volatileKeys = map[string]bool{
 	"costUSD":         true,
 	// claude の init フレームの、実行ごとに番号が変わる UDS の path。
 	"messaging_socket_path": true,
+	// PR⓪ の対話採取: control_response (initialize の応答) に載る、檻の中での claude の実際の OS pid。
+	"pid": true,
 }
 
 // isVolatileKey は、key の値が実行ごとに変わるか。volatileKeys のほか、"_ms" で終わるキー

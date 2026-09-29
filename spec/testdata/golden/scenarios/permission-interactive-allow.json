@@ -1,0 +1,16 @@
+{
+  "description": "PR⓪ スパイク (Issue #1): host モード (--permission-prompt-tool stdio) で、claude が出す can_use_tool の control_request に allow で答える。tool (Write) が実際に実行されること、非対話の permission-request.json と違い permission_denials が空のまま完了すること、そして 1 ターン目の result を見てから開いた stdin に 2 ターン目 (追いプロンプト) を書いても続くことを採る。opencode はこの場面の対話 (control_request) には関わらない (claude_permissions を見ない) ので、素朴な 2 ターンの会話にしてある。",
+  "turns": ["ファイルを作ってください。", "ありがとう。中身を教えて。"],
+  "claude": [
+    {"text": "作成します。", "toolUse": {"id": "toolu_fake_1", "name": "Write", "input": {"file_path": "/work/new.txt", "content": "new file\n"}}},
+    {"text": "作成しました。"},
+    {"text": "中身は 'new file' です。"}
+  ],
+  "opencode": [
+    {"content": "了解しました。"},
+    {"content": "承知しました。"}
+  ],
+  "claude_permissions": [
+    {"outcome": "allow"}
+  ]
+}

@@ -33,6 +33,27 @@ type scenario struct {
 		Claude   int `json:"claude"`
 		Opencode int `json:"opencode"`
 	} `json:"expect_exit"`
+	// ClaudePermissions が 1 つ以上あれば、framecapture claude はこの場面を、対話 (host モード) の採取
+	// (runClaudeInteractive、claudeInteractiveArgs の --permission-prompt-tool stdio 付きで起動) で
+	// 動かす: claude が出す can_use_tool の control_request に、出現順にこの列で答え (尽きたら最後を
+	// 繰り返す)、ターンの result を見てから次のターンを stdin に書く (追いプロンプト。stdin は閉じない)。
+	// 空ならこのフィールドは無視され、既存の非対話 (全ターンを起動前に書いて stdin を閉じる) 経路を使う。
+	// opencode はこのフィールドを見ない。
+	ClaudePermissions []claudePermissionAnswer `json:"claude_permissions"`
+}
+
+// claudePermissionAnswer は、1 回の can_use_tool control_request への応答 (PR⓪ スパイクの範囲。
+// 内容ハッシュ束縛などの本実装は M2)。
+type claudePermissionAnswer struct {
+	// Outcome は "allow"・"deny"・"interrupt" のいずれか。
+	//   allow:     control_response で {"behavior":"allow"} を返す。
+	//   deny:      control_response で {"behavior":"deny","message":Message} を返す。
+	//   interrupt: この can_use_tool には答えず、代わりに host 発の control_request
+	//              (subtype "interrupt") を送り、続けてこの request_id への
+	//              control_cancel_request を送る (中断の実フレームを採る狙い)。
+	Outcome string `json:"outcome"`
+	// Message は、Outcome が "deny" のときの control_response の message (人間向けの却下理由)。
+	Message string `json:"message"`
 }
 
 // loadScenario は、path の JSON を読んで検証する (未知のキーは、綴りの誤りとして error にする)。
