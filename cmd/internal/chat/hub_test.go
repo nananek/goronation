@@ -195,7 +195,13 @@ func TestSubscriptionNextHonorsContextAndClose(t *testing.T) {
 func TestHubSubscriberByteLimit(t *testing.T) {
 	h := NewHub(HubConfig{SubBytes: 1000})
 	s, _ := h.Subscribe()
+	// 1 件だけで上限を超えても、キューが空なら受ける (追いついている購読者を外さない)。
 	h.Publish(Event{Seq: 0, JSON: make([]byte, 2000)})
+	if e, err := s.Next(context.Background()); err != nil || e.Seq != 0 {
+		t.Fatalf("e=%v err=%v", e.Seq, err)
+	}
+	// 読まないうちに次が積まれて上限を超えたら外す。
+	h.Publish(Event{Seq: 1, JSON: make([]byte, 600)}, Event{Seq: 2, JSON: make([]byte, 600)})
 	if _, err := s.Next(context.Background()); !errors.Is(err, ErrSlowSubscriber) {
 		t.Fatalf("err=%v", err)
 	}

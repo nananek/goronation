@@ -35,7 +35,8 @@ type Hub struct {
 	cfg HubConfig
 
 	mu       sync.Mutex
-	ring     []Event
+	ring     []Event // ring[head:] が有効。head までは捨てた分 (Event{} に潰してある)
+	head     int
 	bytes    int
 	nextSeq  uint64 // 次に受ける Event の Seq (連続していなくても、最後の Seq + 1 まで進める)
 	subs     map[*Subscription]struct{}
@@ -73,14 +74,15 @@ func (h *Hub) Publish(events ...Event) {
 			s.push(e, h.cfg)
 		}
 	}
-	drop := 0
-	for drop < len(h.ring)-1 && h.bytes > h.cfg.MaxBytes {
-		h.bytes -= h.ring[drop].size()
-		h.ring[drop] = Event{} // 捨てた Event の JSON を、スライスの裏に残さない
-		drop++
+	for h.head < len(h.ring)-1 && h.bytes > h.cfg.MaxBytes {
+		h.bytes -= h.ring[h.head].size()
+		h.ring[h.head] = Event{} // 捨てた Event の JSON を、スライスの裏に残さない
+		h.head++
 	}
-	if drop > 0 {
-		h.ring = append(h.ring[:0:0], h.ring[drop:]...) // 新しい配列に写し、古い配列を解放できるようにする
+	// 捨てるたびに全体を写すと、小さな行を大量に出すエージェントで 1 件ごとに O(バッファ) になる。捨てた分が半分を超えたときだけ詰める。
+	if h.head > 0 && h.head >= len(h.ring)/2 {
+		h.ring = append([]Event(nil), h.ring[h.head:]...)
+		h.head = 0
 	}
 	for s := range h.subs {
 		if s.isDone() {
@@ -131,7 +133,7 @@ func (h *Hub) Subscribe() (*Subscription, error) {
 	if len(h.subs) >= hubSubscribersHardLimit {
 		return nil, ErrTooManySubscribers
 	}
-	s := &Subscription{hub: h, Snapshot: append([]Event(nil), h.ring...), FirstSeq: h.nextSeq, notify: make(chan struct{}, 1)}
+	s := &Subscription{hub: h, Snapshot: append([]Event(nil), h.ring[h.head:]...), FirstSeq: h.nextSeq, notify: make(chan struct{}, 1)}
 	if len(s.Snapshot) > 0 {
 		s.FirstSeq = s.Snapshot[0].Seq
 	}
@@ -149,7 +151,8 @@ func (s *Subscription) push(e Event, cfg HubConfig) {
 	if s.done {
 		return
 	}
-	if len(s.queue)+1 > cfg.SubEvents || s.bytes+e.size() > cfg.SubBytes {
+	// キューが空なら、1 件は必ず受ける (1 件だけで上限を超える大きなイベントで、追いついている購読者を外さない。リングの「直近の 1 件は残す」と同じ)。
+	if len(s.queue) > 0 && (len(s.queue)+1 > cfg.SubEvents || s.bytes+e.size() > cfg.SubBytes) {
 		s.queue, s.bytes = nil, 0
 		s.done, s.err = true, ErrSlowSubscriber
 		s.wake()
