@@ -25,4 +25,7 @@
 //   - opencode の複数ターンは、起動を分けて --continue でつなぐ。opencode が最初のターンに別に投げる
 //     タイトル生成のリクエストには、場面の応答を使わず、固定の題を返す。
 //   - --normalize は、JSON のキーの順序を保たない (キー名の辞書順になる)。
+//   - claude の init フレームの tools/skills/slash_commands/agents の一覧は、採取に使った claude (2.1.284) の
+//     組み込みの一覧で、この採取環境固有の情報ではない (檻は空の HOME・空の /work で動く)。claude のバージョンが
+//     変われば、これらの一覧も変わりうる。
 package main
