@@ -63,7 +63,7 @@ type ConversationConfig struct {
 	// 長く待たない (呼び手が、有界のキューに積むだけにする。詰まったら error を返す)。Conversation を呼び返してはいけない。
 	// error は、ErrWriteFailed として扱い、会話を終了する。
 	Write func(line []byte) error
-	// OnStop は、Stop の最初の 1 回だけ、Mutex の外で呼ぶ (エージェントの入力を閉じ、檻を止める)。nil でもよい。
+	// OnStop は、Stop (または書き込みの失敗) の最初の 1 回だけ、Mutex の外で呼ぶ (エージェントの入力を閉じ、檻を止める)。nil でもよい。
 	OnStop func()
 }
 
@@ -329,8 +329,13 @@ func (c *Conversation) expireAllLocked() {
 }
 
 // failLocked は、書き込みの失敗で、会話を終える (Hub は Close しない。エージェントの終了を、呼び手が Close で記録する)。
+// 入力が壊れたエージェントを置き去りにしないよう、OnStop も (Mutex を離れた goroutine で、1 回だけ) 呼ぶ。
 func (c *Conversation) failLocked(cause error) {
 	c.state = StateClosed
+	c.stopped = true
+	if c.cfg.OnStop != nil {
+		go c.stopOnce.Do(c.cfg.OnStop)
+	}
 	c.expireAllLocked()
 	if e, err := c.cfg.Feed.Emit(v0.TypeError, true, map[string]any{"status": nil, "retryable": false, "message": "chat: エージェントの入力に書けなかった: " + cause.Error()}); err == nil {
 		c.cfg.Hub.Update([]Event{e}, nil, nil)

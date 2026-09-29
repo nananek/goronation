@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nananek/goronation/agent/claude"
 	v0 "github.com/nananek/goronation/spec/v0"
@@ -434,6 +435,18 @@ func TestWriteFailure(t *testing.T) {
 	}
 	if err := e.c.Send("again"); !errors.Is(err, ErrClosed) {
 		t.Fatal(err)
+	}
+	for i := 0; ; i++ { // OnStop は goroutine で呼ばれる。書き込みの失敗でも、エージェントを止める
+		e.mu.Lock()
+		n := e.stops
+		e.mu.Unlock()
+		if n == 1 {
+			break
+		}
+		if i > 200 {
+			t.Fatalf("OnStop が %d 回", n)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	e = newConv(t, HubConfig{})
