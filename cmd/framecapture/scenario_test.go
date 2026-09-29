@@ -46,10 +46,13 @@ func TestLoadScenarioDecodesFakeSteps(t *testing.T) {
 
 func TestLoadScenarioRejects(t *testing.T) {
 	for name, tc := range map[string]struct{ body, want string }{
-		"未知のキー (綴りの誤り)": {`{"turns":["a"],"claude":[{"tool_use":{}}]}`, "unknown field"},
-		"turns が空":      {`{"turns":[]}`, "turns が空"},
-		"絶対 path":       {`{"turns":["a"],"files":{"/etc/x":"y"}}`, "相対 path"},
-		"親を辿る path":     {`{"turns":["a"],"files":{"../x":"y"}}`, "相対 path"},
+		"未知のキー (綴りの誤り)":                 {`{"turns":["a"],"claude":[{"tool_use":{}}]}`, "unknown field"},
+		"turns が空":                      {`{"turns":[]}`, "turns が空"},
+		"絶対 path":                       {`{"turns":["a"],"files":{"/etc/x":"y"}}`, "相対 path"},
+		"親を辿る path":                     {`{"turns":["a"],"files":{"../x":"y"}}`, "相対 path"},
+		"未知の outcome":                   {`{"turns":["a"],"claude_only":true,"claude_permissions":[{"outcome":"Deny"}]}`, "outcome"},
+		"権限の場面が claude_only でない":        {`{"turns":["a"],"claude_permissions":[{"outcome":"allow"}]}`, "claude_only"},
+		"claude_only が opencode の応答を持つ": {`{"turns":["a"],"claude_only":true,"opencode":[{"content":"x"}]}`, "opencode"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := loadScenario(writeScenario(t, tc.body))
@@ -86,8 +89,16 @@ func TestCommittedScenariosLoad(t *testing.T) {
 			t.Errorf("%s: %v", f, err)
 			continue
 		}
-		if s.Description == "" || len(s.Claude) == 0 || len(s.Opencode) == 0 {
+		if s.Description == "" || len(s.Claude) == 0 || (!s.ClaudeOnly && len(s.Opencode) == 0) {
 			t.Errorf("%s: description・claude・opencode のどれかが空", f)
+		}
+		// 宣言と実態の食い違いの回帰: claude_only の場面に opencode の fixture が残っていない
+		// (opencode が権限承認を観察していないのに、観察したように見える fixture を作らない)。
+		if s.ClaudeOnly {
+			name := strings.TrimSuffix(filepath.Base(f), ".json")
+			if _, err := os.Stat("../../spec/testdata/golden/opencode/" + name + ".ndjson"); err == nil {
+				t.Errorf("%s: claude_only の場面なのに opencode の fixture がある", f)
+			}
 		}
 	}
 }

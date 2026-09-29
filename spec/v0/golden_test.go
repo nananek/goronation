@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -179,6 +180,125 @@ func TestOpencodeErrorIsASingleFrame(t *testing.T) {
 	data := sub(sub(fs[0], "error"), "data")
 	if data["statusCode"] != float64(400) || data["isRetryable"] != false {
 		t.Errorf("error.data = %v", data)
+	}
+}
+
+// PR⓪ スパイク (Issue #1) の所見: 非対話 (TestClaudePermissionDeniedIsAfterTheFact) と違い、
+// `--permission-prompt-tool stdio` を付けた host モードでは、claude は can_use_tool の
+// control_request (agent → host) を出し、host の control_response を待つ。以下 3 つは、その
+// フレームの形を固定する (アダプタの対応を書く前の、実測の記録)。
+
+// allow で答えると、tool が実際に実行され (tool_result に is_error が無い)、result の
+// permission_denials が空で終わり、result を見てから開いた stdin に書いた 2 ターン目 (追いプロンプト)
+// も、同じ session_id のまま続く。
+func TestClaudeInteractiveAllowRunsToolAndContinues(t *testing.T) {
+	fs := readFrames(t, "claude", "permission-interactive-allow.jsonl")
+	if n := count(fs, "control_request", ""); n != 1 {
+		t.Errorf("control_request の数 = %d, want 1", n)
+	}
+	var toolResult frame
+	for _, f := range fs {
+		if str(f, "type") != "user" {
+			continue
+		}
+		content, _ := sub(f, "message")["content"].([]any)
+		for _, c := range content {
+			if b, _ := c.(map[string]any); b["type"] == "tool_result" {
+				toolResult = f
+			}
+		}
+	}
+	if toolResult == nil {
+		t.Fatal("tool_result のフレームが無い")
+	}
+	if tr, _ := toolResult["tool_use_result"].(map[string]any); tr == nil || tr["type"] != "create" {
+		t.Errorf("tool_use_result = %v, want type=create (実際に書き込みが実行されたはず)", toolResult["tool_use_result"])
+	}
+	var results []frame
+	for _, f := range fs {
+		if str(f, "type") == "result" {
+			results = append(results, f)
+		}
+	}
+	if len(results) != 2 {
+		t.Fatalf("result の数 = %d, want 2 (2 ターン)", len(results))
+	}
+	if d, _ := results[0]["permission_denials"].([]any); len(d) != 0 {
+		t.Errorf("1 ターン目の permission_denials = %v, want 空 (allow で答えたので拒否は無いはず)", d)
+	}
+	if str(results[0], "session_id") != str(results[1], "session_id") {
+		t.Error("2 ターンで session_id が変わった (追いプロンプトは、同じ会話を続けているはず)")
+	}
+}
+
+// deny で答えるときの message は、host (この harness) が control_response に載せた文言がそのまま
+// tool_result になる (非対話の自動拒否のときの、CLI 自身の定型文とは違う)。tool_result_meta の
+// non_execution_kind も "permission-rule" になり (自動拒否の "user-rejected" とは別)、
+// system/permission_denied のフレームも出ない (あれは、誰も答えなかったときだけ)。
+func TestClaudeInteractiveDenyUsesHostMessage(t *testing.T) {
+	fs := readFrames(t, "claude", "permission-interactive-deny.jsonl")
+	if n := count(fs, "system", "permission_denied"); n != 0 {
+		t.Errorf("permission_denied の数 = %d, want 0 (host が答えたので、CLI 自身の自動拒否は起きないはず)", n)
+	}
+	var toolResult frame
+	for _, f := range fs {
+		if str(f, "type") != "user" {
+			continue
+		}
+		content, _ := sub(f, "message")["content"].([]any)
+		for _, c := range content {
+			if b, _ := c.(map[string]any); b["type"] == "tool_result" {
+				toolResult = f
+			}
+		}
+	}
+	if toolResult == nil {
+		t.Fatal("tool_result のフレームが無い")
+	}
+	content, _ := sub(toolResult, "message")["content"].([]any)
+	block, _ := content[0].(map[string]any)
+	if block["is_error"] != true {
+		t.Errorf("tool_result.is_error = %v, want true", block["is_error"])
+	}
+	if text, _ := block["content"].(string); text == "" || strings.Contains(text, "you haven't granted it yet") {
+		t.Errorf("tool_result.content = %q, want host が渡した message そのもの (CLI の定型文ではない)", text)
+	}
+	meta, _ := toolResult["tool_result_meta"].([]any)
+	if len(meta) != 1 {
+		t.Fatalf("tool_result_meta = %v, want 1 件", meta)
+	}
+	if m, _ := meta[0].(map[string]any); m["non_execution_kind"] != "permission-rule" {
+		t.Errorf("non_execution_kind = %v, want permission-rule", m["non_execution_kind"])
+	}
+}
+
+// can_use_tool に答えず、host 発の interrupt の control_request (+ その request_id への
+// control_cancel_request) を送ると、claude 自身も (別の request_id で) その can_use_tool 自身への
+// control_cancel_request を host に返し (「もう答えなくてよい」の相互通知)、ターンは
+// terminal_reason "aborted_tools" で終わる。
+func TestClaudeInteractiveInterruptAbortsTheTurn(t *testing.T) {
+	fs := readFrames(t, "claude", "permission-interactive-interrupt.jsonl")
+	var reqID string
+	for _, f := range fs {
+		if str(f, "type") == "control_request" {
+			reqID = str(f, "request_id")
+		}
+	}
+	if reqID == "" {
+		t.Fatal("can_use_tool の control_request が無い")
+	}
+	if n := count(fs, "control_cancel_request", ""); n != 1 {
+		t.Fatalf("control_cancel_request の数 = %d, want 1", n)
+	}
+	for _, f := range fs {
+		if str(f, "type") == "control_cancel_request" && str(f, "request_id") != reqID {
+			t.Errorf("control_cancel_request.request_id = %q, want can_use_tool と同じ %q", str(f, "request_id"), reqID)
+		}
+	}
+	last := fs[len(fs)-1]
+	if str(last, "type") != "result" || str(last, "terminal_reason") != "aborted_tools" || last["is_error"] != true {
+		t.Errorf("最後のフレーム = type %q, terminal_reason %q, is_error %v, want result / aborted_tools / true",
+			str(last, "type"), str(last, "terminal_reason"), last["is_error"])
 	}
 }
 

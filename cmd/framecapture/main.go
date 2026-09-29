@@ -198,6 +198,10 @@ func runOpencode(args []string, stdout, stderr io.Writer) int {
 	}
 	steps := []openai.Step{{Content: o.response}}
 	if p.sc != nil {
+		if p.sc.ClaudeOnly {
+			fmt.Fprintf(stderr, "framecapture opencode: この場面は claude 専用 (claude_only)\n")
+			return 2
+		}
 		if steps = p.sc.Opencode; len(steps) == 0 {
 			fmt.Fprintf(stderr, "framecapture opencode: %v\n", errNoSteps)
 			return 2
@@ -255,6 +259,11 @@ func runClaude(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "framecapture claude: %v\n", err)
 		return 2
+	}
+	if p.sc != nil && len(p.sc.ClaudePermissions) > 0 {
+		// この場面は、対話 (host モード) の採取: can_use_tool の control_request に答える必要があるので、
+		// 全ターンを起動前に書いて stdin を閉じる下の経路 (静的) ではなく、runClaudeInteractive を使う。
+		return runClaudeInteractive(o, p, stdout, stderr)
 	}
 	steps := []anthropic.Step{{Text: o.response}}
 	if p.sc != nil {
