@@ -17,6 +17,18 @@ import (
 // newInProcChat は、檻を使わずに、偽の claude (runFakeChat) をプロセス内で動かす chatSession (HTTP API の確認用)。
 func newInProcChat(t *testing.T, mode string) (*chatSession, *httptest.Server) {
 	t.Helper()
+	s := newInProcChatSession(t, mode)
+	srv := httptest.NewServer(newChatHandler(s))
+	t.Cleanup(func() {
+		srv.CloseClientConnections()
+		srv.Close()
+	})
+	return s, srv
+}
+
+// newInProcChatSession は、newInProcChat の、HTTP を付けない形 (web の中継のテストが、UDS に載せる)。
+func newInProcChatSession(t *testing.T, mode string) *chatSession {
+	t.Helper()
 	toAgentR, toAgentW := io.Pipe()
 	fromAgentR, fromAgentW := io.Pipe()
 	launch := mustLaunch(t)
@@ -33,23 +45,19 @@ func newInProcChat(t *testing.T, mode string) (*chatSession, *httptest.Server) {
 		s.Chat.ReadOutput(fromAgentR)
 		s.Chat.Finish(0)
 	}()
-	srv := httptest.NewServer(newChatHandler(s))
-	t.Cleanup(func() {
-		s.Chat.Conv.Stop()
-		srv.CloseClientConnections()
-		srv.Close()
-	})
-	return s, srv
+	t.Cleanup(s.Chat.Conv.Stop)
+	return s
 }
 
 // sse は、GET /events を読む: 行ごとに、event 名と data を返す。
 type sseFrame struct{ event, data string }
 
 type sseReader struct {
-	t    *testing.T
-	body io.ReadCloser
-	sc   *bufio.Scanner
-	raw  []string // 届いた行 (区切りの空行を含む)
+	t     *testing.T
+	body  io.ReadCloser
+	sc    *bufio.Scanner
+	raw   []string // 届いた行 (区切りの空行を含む)
+	pings int      // 届いた心拍 (: ping) の数 (web が足す)
 }
 
 func openSSE(t *testing.T, srv *httptest.Server) *sseReader {
@@ -71,11 +79,16 @@ func openSSE(t *testing.T, srv *httptest.Server) *sseReader {
 // data は 1 行) が破れたら、失敗にする。
 func (r *sseReader) next() (f sseFrame, ok bool) {
 	r.t.Helper()
-	dataLines := 0
+	dataLines, ping := 0, false
 	for r.sc.Scan() {
 		line := r.sc.Text()
 		r.raw = append(r.raw, line)
 		switch {
+		case line == ": ping":
+			r.pings++
+			ping = true
+		case line == "" && dataLines == 0 && ping: // 心拍の後の空行
+			ping = false
 		case line == "":
 			if dataLines != 1 {
 				r.t.Fatalf("data 行が %d 本のイベント (1 本のはず): %q", dataLines, r.raw)
