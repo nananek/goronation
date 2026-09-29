@@ -237,6 +237,26 @@ func TestMalformedFlagsFailSafe(t *testing.T) {
 	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
 }
 
+// null は、bool へはエラーなしの no-op なので、Bad にしないと、is_error・is_api_error_message の fail-safe をすり抜ける。
+func TestNullFlagsFailSafe(t *testing.T) {
+	es, err := Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result","is_error":null,"api_error_status":400,"result":"API Error: 400 x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+	es, err = Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"assistant","is_api_error_message":null,"message":{"id":"m","content":[{"type":"text","text":"API Error: 400 x"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypeAgentFrame)
+	// 重複したキーの最後が null でも、同じ
+	es, _ = Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result","is_error":false,"is_error":null}`))
+	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+	// キーが無いのは、成功 (null とは違う)
+	es, _ = Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result"}`))
+	wantTypes(t, es, v0.TypeUsage, v0.TypeTurnCompleted)
+}
+
 func d2(e v0.Envelope) map[string]any {
 	var m map[string]any
 	_ = json.Unmarshal(e.Data, &m)

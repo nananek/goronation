@@ -40,7 +40,8 @@ type lenient[T any] struct {
 func (l *lenient[T]) UnmarshalJSON(b []byte) error {
 	var v T
 	l.V, l.Bad = v, false // 重複したキーは、最後の値だけを見る
-	if json.Unmarshal(b, &v) != nil {
+	// null は、bool などへは、エラーなしの no-op になる。読めた値ではないので、型の違いと同じく Bad にする。
+	if bytes.Equal(b, []byte("null")) || json.Unmarshal(b, &v) != nil {
 		l.Bad = true
 		return nil
 	}
