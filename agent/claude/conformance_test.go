@@ -39,7 +39,14 @@ var allowedPaths = map[string][]string{
 	"assistant":                {".message.id", ".message.content.*.text", ".message.content.*.id", ".message.content.*.name", ".message.content.*.input"},
 	"user":                     {".message.content.*.tool_use_id", ".message.content.*.content"},
 	"result":                   {".stop_reason", ".result", ".terminal_reason"},
+	// 対話の権限要求。permission_suggestions・display_name・agent_id などは、data に出さない。
+	"control_request":        {".request_id", ".request.tool_use_id", ".request.tool_name", ".request.input", ".request.description"},
+	"control_cancel_request": {".request_id"},
+	"control_response":       {}, // initialize の応答 (account・memory の path などを含む)。data は空
 }
+
+var conformanceFixtures = []string{"simple-text", "tool-call", "multi-turn", "permission-request", "error-response",
+	"permission-interactive-allow", "permission-interactive-deny", "permission-interactive-interrupt"}
 
 func allowed(kind, path string) bool {
 	for _, p := range allowedPaths[kind] {
@@ -58,7 +65,7 @@ func kindOf(f map[string]any) string {
 }
 
 func TestDataDoesNotCarryUnintendedFrameValues(t *testing.T) {
-	for _, name := range []string{"simple-text", "tool-call", "multi-turn", "permission-request", "error-response"} {
+	for _, name := range conformanceFixtures {
 		s := Adapter{}.NewStream()
 		for i, line := range readLines(t, name) {
 			var f map[string]any
@@ -116,11 +123,12 @@ func containedInAllowed(x, l string, ok []leaf) bool {
 // TestDataKeysAreFixed は、data のキーが、語彙 (spec/v0 の doc) の名前だけであることを固定する。値の漏れを、キーの側から見る。
 func TestDataKeysAreFixed(t *testing.T) {
 	want := map[string][]string{
-		v0.TypeSessionStarted:     {"agent", "agent_session", "cwd", "model", "tools"},
-		v0.TypeMessageText:        {"message_id", "text"},
-		v0.TypeToolCall:           {"call_id", "input", "kind", "name", "status"},
-		v0.TypeToolUpdate:         {"call_id", "output", "status"},
-		v0.TypePermissionResolved: {"by", "call_id", "outcome", "tool_name"},
+		v0.TypeSessionStarted:      {"agent", "agent_session", "cwd", "model", "tools"},
+		v0.TypeMessageText:         {"message_id", "text"},
+		v0.TypeToolCall:            {"call_id", "input", "kind", "name", "status"},
+		v0.TypeToolUpdate:          {"call_id", "output", "status"},
+		v0.TypePermissionRequested: {"call_id", "input", "kind", "request_id", "title", "tool_name"},
+		v0.TypePermissionResolved:  {"by", "call_id", "outcome", "tool_name"}, // by=policy。by=human・agent は下で
 		v0.TypeUsage: {"cache_creation_input_tokens", "cache_read_input_tokens", "context_window", "cost_usd", "input_tokens",
 			"max_output_tokens", "output_tokens", "scope"},
 		v0.TypeError:         {"message", "retryable", "status"},
@@ -128,7 +136,7 @@ func TestDataKeysAreFixed(t *testing.T) {
 		v0.TypeAgentFrame:    nil,
 	}
 	seen := map[string]bool{}
-	for _, name := range []string{"simple-text", "tool-call", "multi-turn", "permission-request", "error-response"} {
+	for _, name := range conformanceFixtures {
 		for _, e := range decodeAll(t, name) {
 			seen[e.Type] = true
 			var keys []string
@@ -136,6 +144,9 @@ func TestDataKeysAreFixed(t *testing.T) {
 				keys = append(keys, k)
 			}
 			w := want[e.Type]
+			if e.Type == v0.TypePermissionResolved && data(t, e)["by"] != "policy" { // 対話の決着は、tool ではなく要求の ID を指す
+				w = []string{"by", "outcome", "request_id"}
+			}
 			if e.Type == v0.TypeToolUpdate && data(t, e)["status"] == v0.ToolFailed { // 失敗は、output の代わりに error
 				w = []string{"call_id", "error", "status"}
 			}

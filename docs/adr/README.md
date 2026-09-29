@@ -14,6 +14,7 @@
 | [0006](0006-goro-to-goronation-rename.md) | `goro` バイナリ名を `goronation` に統一する | 採用 |
 | [0007](0007-xterm-csp-nonce-fork.md) | xterm.js を CSP nonce 対応のためフォークし、upstream の新版を nvchecker で追跡する | 採用 |
 | [0008](0008-spec-v0-envelope.md) | 標準形式 v0: エージェントのフレームを、goronation の封筒に写す | 採用 |
+| [0010](0010-claude-interactive-permissions.md) | claude の対話的な権限要求を、標準形式の permission.requested・permission.resolve に写す | 採用 |
 
 ## 書き方
 

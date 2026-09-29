@@ -15,12 +15,12 @@
 //
 // # 限界
 //
-//   - 採れていないもの: 部分メッセージ (delta)・推論・サブエージェント・対話での権限要求と応答・中断・再開・MCP。
-//     TypeMessageDelta・TypePermissionRequested と、CommandCancel・CommandPermissionResolve は、形だけを予約する。
+//   - 採れていないもの: 部分メッセージ (delta)・推論・サブエージェント・中断 (ターンの中断のコマンド)・再開・MCP・opencode の対話での
+//     権限要求。TypeMessageDelta と CommandCancel は、形だけを予約する。claude の対話での権限要求と応答は、2.1.284 で採った (ADR 0010)。
 //   - opencode は run --format json の 1 メッセージずつの実行で採り、serve の HTTP + SSE は採っていない (S4)。
 //   - 値 (モデル名・トークン数・費用) は fake の値で、意味が無い。構造だけを見る。
 //
 // # 関連
 //
-// ADR 0008 (決定と理由)。根拠のフレームは spec/testdata/golden、対応を固定するテストは golden_test.go。
+// ADR 0008 (決定と理由)・ADR 0010 (対話の権限要求)。根拠のフレームは spec/testdata/golden、対応を固定するテストは golden_test.go。
 package v0
