@@ -19,6 +19,8 @@ type UIEnvelope struct {
 // 限界: Go の型システムは、Envelope を UI・API にそのまま返すこと自体を禁じられない。
 // Envelope は公開の struct で、誰でも json.Marshal できる。この関数と UIEnvelope は、
 // 「Raw を落とす正しい道」を 1 つ用意して、canary test (public_test.go) で押さえるだけで、誤用を防ぐ強制ではない。
+// canary test も、Envelope の新フィールドに対して自動で効くのは、フィールドごとに値を注入する形の
+// TestPublicCarriesEverythingButRaw の分だけ。golden fixtures を使う側は、新フィールド追加時に更新が要りうる。
 // 強制は、UI・API の層が Envelope を import しないことを、tools/archtest の規則で押さえる形になる (M2 の SSE API の前に足す)。
 func (e Envelope) Public() UIEnvelope {
 	return UIEnvelope{V: e.V, ID: e.ID, TS: e.TS, Session: e.Session, Seq: e.Seq, Type: e.Type, Durable: e.Durable, Data: e.Data}

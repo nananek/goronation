@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -56,7 +57,9 @@ func TestPublicDropsRawOfGoldenFrames(t *testing.T) {
 }
 
 // TestPublicCarriesEverythingButRaw は、Envelope の Raw 以外の全フィールドが、Public() で写ることを確認する。
-// Envelope にフィールドを足して、UIEnvelope に足し忘れたら、赤になる。
+// Envelope の各フィールドに、reflect で一意な非ゼロ値を注入して比べるので、フィールドを足したとき、
+// UIEnvelope に足し忘れても、Public() でのコピーを書き忘れても、赤になる (手書きのリテラルだと、
+// 新しいフィールドがゼロ値のまま一致してしまう)。値を注入できない型のフィールドが増えたときは、fill を直す。
 func TestPublicCarriesEverythingButRaw(t *testing.T) {
 	et, ut := reflect.TypeOf(Envelope{}), reflect.TypeOf(UIEnvelope{})
 	if _, ok := ut.FieldByName("Raw"); ok {
@@ -65,16 +68,39 @@ func TestPublicCarriesEverythingButRaw(t *testing.T) {
 	if ut.NumField() != et.NumField()-1 {
 		t.Fatalf("UIEnvelope のフィールド数 = %d, want %d (Envelope から Raw を除いたもの)", ut.NumField(), et.NumField()-1)
 	}
-	env := Envelope{V: 1, ID: "e", TS: "t", Session: "s", Seq: 7, Type: TypeToolCall, Durable: true, Data: json.RawMessage(`{"a":1}`), Raw: json.RawMessage(`{"x":1}`)}
-	want := reflect.ValueOf(env)
+	var env Envelope
+	ev := reflect.ValueOf(&env).Elem()
+	for i := 0; i < et.NumField(); i++ {
+		n := i + 1
+		f := ev.Field(i)
+		switch {
+		case f.Type() == reflect.TypeOf(json.RawMessage(nil)):
+			f.Set(reflect.ValueOf(json.RawMessage(`{"f":` + strconv.Itoa(n) + `}`)))
+		case f.Kind() == reflect.String:
+			f.SetString("field_" + strconv.Itoa(n))
+		case f.CanInt():
+			f.SetInt(int64(n))
+		case f.CanUint():
+			f.SetUint(uint64(n))
+		case f.Kind() == reflect.Bool:
+			f.SetBool(true)
+		default:
+			t.Fatalf("%s (%s): 値を注入できない型。このテストの fill を直す", et.Field(i).Name, f.Type())
+		}
+	}
 	got := reflect.ValueOf(env.Public())
 	for i := 0; i < et.NumField(); i++ {
 		name := et.Field(i).Name
 		if name == "Raw" {
 			continue
 		}
-		if !reflect.DeepEqual(want.Field(i).Interface(), got.FieldByName(name).Interface()) {
-			t.Errorf("%s: %v -> %v", name, want.Field(i).Interface(), got.FieldByName(name).Interface())
+		g := got.FieldByName(name)
+		if !g.IsValid() {
+			t.Errorf("%s: UIEnvelope に無い", name)
+			continue
+		}
+		if !reflect.DeepEqual(ev.Field(i).Interface(), g.Interface()) {
+			t.Errorf("%s: %v -> %v", name, ev.Field(i).Interface(), g.Interface())
 		}
 	}
 	// JSON のキーも、Envelope から "raw" を除いたものと一致する。
