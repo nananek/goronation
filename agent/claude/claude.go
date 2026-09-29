@@ -50,11 +50,14 @@ type frame struct {
 	ToolUseID string `json:"tool_use_id"`
 
 	// result
-	IsError      bool                  `json:"is_error"`
-	StopReason   string                `json:"stop_reason"`
-	TotalCostUSD float64               `json:"total_cost_usd"`
-	Usage        usage                 `json:"usage"`
-	ModelUsage   map[string]modelUsage `json:"modelUsage"`
+	IsError        bool                  `json:"is_error"`
+	Result         string                `json:"result"`
+	APIErrorStatus *int                  `json:"api_error_status"`
+	TerminalReason string                `json:"terminal_reason"`
+	StopReason     string                `json:"stop_reason"`
+	TotalCostUSD   float64               `json:"total_cost_usd"`
+	Usage          usage                 `json:"usage"`
+	ModelUsage     map[string]modelUsage `json:"modelUsage"`
 }
 
 // message は、assistant・user のフレームの message。
@@ -129,7 +132,11 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		})
 		return []v0.Envelope{e}, err
 
-	case f.Type == "assistant" && !f.IsAPIErrorMessage: // API の失敗は PR③
+	case f.Type == "assistant" && f.IsAPIErrorMessage:
+		// 失敗の本文は、同じ内容を持つ後続の result (api_error_status も、そちらにだけある) から TypeError にする。二重に出さない。
+		return unknown()
+
+	case f.Type == "assistant":
 		m, ok := f.msg()
 		if !ok {
 			return unknown()
@@ -194,7 +201,7 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		}
 		return out, nil
 
-	case f.Type == "result" && !f.IsError: // 失敗のターンは PR③
+	case f.Type == "result":
 		var window, maxOut int64
 		for _, m := range f.ModelUsage { // モデルが複数なら、大きい方 (窓の上限を、小さく見せない)
 			window, maxOut = max(window, m.ContextWindow), max(maxOut, m.MaxOutputTokens)
@@ -211,6 +218,22 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		})
 		if err != nil {
 			return nil, err
+		}
+		if f.IsError { // subtype は、失敗でも success になるので見ない
+			msg := f.Result
+			if msg == "" {
+				msg = f.TerminalReason
+			}
+			// url・応答の本文・ヘッダは載せない (raw にだけ残る)。message は、claude が整えた 1 文。
+			x, err := ev(v0.TypeError, true, map[string]any{"status": f.APIErrorStatus, "retryable": retryable(f.APIErrorStatus), "message": msg})
+			if err != nil {
+				return nil, err
+			}
+			t, err := ev(v0.TypeTurnCompleted, true, map[string]any{"stop_reason": v0.StopError, "is_error": true})
+			if err != nil {
+				return nil, err
+			}
+			return []v0.Envelope{x, u, t}, nil
 		}
 		t, err := ev(v0.TypeTurnCompleted, true, map[string]any{"stop_reason": stopReason(f.StopReason), "is_error": false})
 		if err != nil {
@@ -267,6 +290,11 @@ func orNull(m json.RawMessage) json.RawMessage {
 		return json.RawMessage("null")
 	}
 	return m
+}
+
+// retryable は、HTTP の status が、再試行して直りうるもの (429・5xx) か。status が無い (HTTP の失敗でない) 場合は false。
+func retryable(status *int) bool {
+	return status != nil && (*status == 429 || *status >= 500)
 }
 
 // stopReason は、claude の result.stop_reason を、v0 の StopReason にする。

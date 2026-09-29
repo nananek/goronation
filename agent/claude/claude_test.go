@@ -154,6 +154,40 @@ func TestPermissionDenied(t *testing.T) {
 	}
 }
 
+// error-response: API の失敗 (HTTP 400)。assistant の API Error は agent.frame にして、result から error・usage・turn.completed を出す
+// (status は result にだけある)。subtype は success のままなので、is_error を見ていることも固定する。
+func TestErrorResponse(t *testing.T) {
+	es := decodeAll(t, "error-response")
+	wantTypes(t, es, v0.TypeSessionStarted, v0.TypeAgentFrame, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+	d := data(t, es[2])
+	if d["status"] != float64(400) || d["retryable"] != false || d["message"] != "API Error: 400 fake: このリクエストは受け付けられません" || !es[2].Durable {
+		t.Errorf("error の data = %v", d)
+	}
+	if d := data(t, es[4]); d["is_error"] != true || d["stop_reason"] != v0.StopError {
+		t.Errorf("turn.completed の data = %v", d)
+	}
+}
+
+func TestErrorWithoutStatus(t *testing.T) {
+	es, err := Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result","subtype":"success","is_error":true,"terminal_reason":"aborted"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+	if d := data(t, es[0]); d["status"] != nil || d["retryable"] != false || d["message"] != "aborted" {
+		t.Errorf("error の data = %v", d)
+	}
+}
+
+func TestRetryable(t *testing.T) {
+	i := func(n int) *int { return &n }
+	for status, want := range map[*int]bool{nil: false, i(400): false, i(401): false, i(429): true, i(500): true, i(529): true} {
+		if got := retryable(status); got != want {
+			t.Errorf("retryable(%v) = %v, want %v", status, got, want)
+		}
+	}
+}
+
 func d2(e v0.Envelope) map[string]any {
 	var m map[string]any
 	_ = json.Unmarshal(e.Data, &m)
@@ -168,8 +202,7 @@ func TestUnknownFramesAreKept(t *testing.T) {
 		`{"type":"assistant","message":{"id":"m","content":[]}}`,
 		`{"type":"assistant","message":{"id":"m","content":[{"type":"thinking","thinking":"x"}]}}`,
 		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"x"}]}}`,
-		`{"type":"assistant","is_api_error_message":true,"message":{"id":"m","content":[{"type":"text","text":"x"}]}}`, // PR③
-		`{"type":"result","is_error":true,"stop_reason":"end_turn"}`,                                                   // PR③
+		`{"type":"assistant","is_api_error_message":true,"message":{"id":"m","content":[{"type":"text","text":"x"}]}}`, // error は後続の result から出す
 		`{"type":"assistant"}`,
 		`{"type":"assistant","message":"x"}`,
 		`{"type":"user","message":"x"}`,

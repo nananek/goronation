@@ -38,7 +38,7 @@ var allowedPaths = map[string][]string{
 	"system/init":              {".session_id", ".cwd", ".model", ".tools"},
 	"assistant":                {".message.id", ".message.content.*.text", ".message.content.*.id", ".message.content.*.name", ".message.content.*.input"},
 	"user":                     {".message.content.*.tool_use_id", ".message.content.*.content"},
-	"result":                   {".stop_reason"},
+	"result":                   {".stop_reason", ".result"},
 }
 
 func allowed(kind, path string) bool {
@@ -58,7 +58,7 @@ func kindOf(f map[string]any) string {
 }
 
 func TestDataDoesNotCarryUnintendedFrameValues(t *testing.T) {
-	for _, name := range []string{"simple-text", "tool-call", "multi-turn", "permission-request"} {
+	for _, name := range []string{"simple-text", "tool-call", "multi-turn", "permission-request", "error-response"} {
 		s := Adapter{}.NewStream()
 		for i, line := range readLines(t, name) {
 			var f map[string]any
@@ -123,11 +123,12 @@ func TestDataKeysAreFixed(t *testing.T) {
 		v0.TypePermissionResolved: {"by", "call_id", "outcome", "tool_name"},
 		v0.TypeUsage: {"cache_creation_input_tokens", "cache_read_input_tokens", "context_window", "cost_usd", "input_tokens",
 			"max_output_tokens", "output_tokens", "scope"},
+		v0.TypeError:         {"message", "retryable", "status"},
 		v0.TypeTurnCompleted: {"is_error", "stop_reason"},
 		v0.TypeAgentFrame:    nil,
 	}
 	seen := map[string]bool{}
-	for _, name := range []string{"simple-text", "tool-call", "multi-turn", "permission-request"} {
+	for _, name := range []string{"simple-text", "tool-call", "multi-turn", "permission-request", "error-response"} {
 		for _, e := range decodeAll(t, name) {
 			seen[e.Type] = true
 			var keys []string

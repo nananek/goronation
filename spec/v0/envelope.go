@@ -69,8 +69,8 @@ const (
 	// (ターンごとに 1 つ。subtype は、失敗でも success になるので見ない)。opencode は、フレームに明示の終わりが無い:
 	// step_finish の reason=stop か、それが無いまま (tool-calls で終わる権限拒否) 標準出力が閉じたことから合成する。
 	TypeTurnCompleted = "turn.completed"
-	// TypeError は、プロバイダーなどの失敗 (durable)。data は status・retryable・message。claude は is_api_error_message が
-	// true の assistant フレームと、is_error が true の result (api_error_status・terminal_reason)。opencode は
+	// TypeError は、プロバイダーなどの失敗 (durable)。data は status・retryable・message。claude は is_error が true の
+	// result (api_error_status・terminal_reason)。同じ内容の is_api_error_message の assistant フレームは、agent.frame にする。opencode は
 	// type=error のフレーム (error.data の statusCode・isRetryable・message。ステップのフレームは出ない)。どちらも終了コードは 1。
 	// url・応答の本文・ヘッダは、data に載せず raw にだけ残す。
 	TypeError = "error"
