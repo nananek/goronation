@@ -15,10 +15,10 @@
 //   - init: system/init の 1 回目は TypeSessionStarted、2 回目以降 (ターンごとに繰り返し出る) は TypeAgentFrame。
 //   - message: assistant の content の text は TypeMessageText、tool_use は TypeToolCall (ブロックごとに 1 イベント)。
 //   - tool-result: user の content の tool_result は TypeToolUpdate (人間の発言ではない。is_error が true なら failed)。
-//   - result: result は TypeUsage と TypeTurnCompleted (この順)。subtype は、失敗でも success になるので見ない。
-//   - prompt: prompt (Command) は標準入力の 1 行。TypeTurnStarted は合成する。
-//   - permission-denied: system/permission_denied は TypePermissionResolved (by=policy・outcome=reject_once)。message は文字列で path を
-//     含むので載せない。tool_result の is_error は tool.update の failed。result は is_error=false のまま (拒否は、この 2 つで分かる)。
+//   - prompt・result: prompt は標準入力の 1 行 (TypeTurnStarted を合成)。result は TypeUsage・TypeTurnCompleted (subtype は失敗でも success なので見ない)。
+//   - permission-denied: system/permission_denied は TypePermissionResolved (by=policy・outcome=reject_once。message は path を含むので載せない)。
+//     tool_result の is_error は tool.update の failed。result は is_error=false のまま (拒否は、この 2 つで分かる)。
+//   - error: is_error が true の result は、TypeError を先頭に足し (stop_reason=error)、is_api_error_message の assistant は TypeAgentFrame。
 //   - unknown-kept: 上に無いフレーム (message がオブジェクトでない assistant・user も) は、error にせず TypeAgentFrame にする (data は空、raw に元のフレーム)。
 //   - data-allowlist: data は UI・API に出る (Envelope.Public は Raw だけを落とす)。封筒の語彙が必要とする値だけを、名前を付けて写し、
 //     frame を丸ごと・部分木ごと写さない。書き換えずに載せる約束の値は、tool の input・tool_result の content・テキスト。
@@ -26,6 +26,6 @@
 //
 // # 限界
 //
-//   - 未対応: API の失敗 (is_api_error_message が true の assistant・is_error が true の result。PR③)。未採取のフレーム (部分メッセージ・
-//     推論・対話での権限要求・中断・再開・MCP・サブエージェント) は TypeAgentFrame。Grep・Glob・MultiEdit の tool の名前は、採取した system/init の tools に無く、claude の組み込みの名前から決めた。
+//   - 未採取のフレーム (部分メッセージ・推論・対話での権限要求・中断・再開・MCP・サブエージェント) は TypeAgentFrame。
+//     Grep・Glob・MultiEdit の tool の名前は、採取した system/init の tools に無く、claude の組み込みの名前から決めた。
 package claude

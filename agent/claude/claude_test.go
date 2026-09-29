@@ -154,6 +154,129 @@ func TestPermissionDenied(t *testing.T) {
 	}
 }
 
+// error-response: API の失敗 (HTTP 400)。assistant の API Error は agent.frame にして、result から error・usage・turn.completed を出す
+// (status は result にだけある)。subtype は success のままなので、is_error を見ていることも固定する。
+func TestErrorResponse(t *testing.T) {
+	es := decodeAll(t, "error-response")
+	wantTypes(t, es, v0.TypeSessionStarted, v0.TypeAgentFrame, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+	d := data(t, es[2])
+	if d["status"] != float64(400) || d["retryable"] != false || d["message"] != "API Error: 400 fake: このリクエストは受け付けられません" || !es[2].Durable {
+		t.Errorf("error の data = %v", d)
+	}
+	if d := data(t, es[4]); d["is_error"] != true || d["stop_reason"] != v0.StopError {
+		t.Errorf("turn.completed の data = %v", d)
+	}
+}
+
+func TestErrorWithoutStatus(t *testing.T) {
+	es, err := Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result","subtype":"success","is_error":true,"terminal_reason":"aborted"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+	if d := data(t, es[0]); d["status"] != nil || d["retryable"] != false || d["message"] != "aborted" {
+		t.Errorf("error の data = %v", d)
+	}
+}
+
+func TestRetryable(t *testing.T) {
+	i := func(n int) *int { return &n }
+	for status, want := range map[*int]bool{nil: false, i(400): false, i(401): false, i(429): true, i(500): true, i(529): true} {
+		if got := retryable(status); got != want {
+			t.Errorf("retryable(%v) = %v, want %v", status, got, want)
+		}
+	}
+}
+
+// result のフレームの各フィールドが、想定外の型でも、フレームは (error・usage・turn.completed も) raw ごと失われない。
+// (permission_denied の message と同じ、型の不一致で frame 全体の Unmarshal が失敗するバグの再発防止。攻撃者視点レビュー 43a56fa)
+func TestResultFrameFieldTypeMismatchIsNotLost(t *testing.T) {
+	cases := []string{
+		`{"type":"result","is_error":true,"api_error_status":"500","result":"x"}`,
+		`{"type":"result","is_error":true,"api_error_status":500.5,"result":"x"}`,
+		`{"type":"result","is_error":true,"api_error_status":{"code":500},"result":"x"}`,
+		`{"type":"result","is_error":true,"result":123}`,
+		`{"type":"result","is_error":true,"terminal_reason":123}`,
+		`{"type":"result","is_error":"true"}`,
+		`{"type":"system","subtype":"init","session_id":1,"tools":"x","cwd":[]}`,
+		`{"type":"system","subtype":"permission_denied","tool_name":1,"tool_use_id":{}}`,
+		`{"type":"result","usage":"x","modelUsage":[],"total_cost_usd":"x","stop_reason":1}`,
+	}
+	for _, line := range cases {
+		t.Run(line, func(t *testing.T) {
+			envs, err := (&Stream{}).DecodeFrame([]byte(line))
+			if err != nil || len(envs) == 0 {
+				t.Errorf("フレームが失われた: envs=%d err=%v", len(envs), err)
+			}
+			for _, e := range envs {
+				if len(e.Raw) == 0 {
+					t.Errorf("%s の raw が空", e.Type)
+				}
+			}
+		})
+	}
+}
+
+// 零値が反対の意味を持つフラグは、型が違っても、成功・通常の発言に化けない (fail-safe)。
+func TestMalformedFlagsFailSafe(t *testing.T) {
+	es, err := Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result","is_error":"true","api_error_status":400,"result":"API Error: 400 x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+	if d := data(t, es[2]); d["is_error"] != true || d["stop_reason"] != v0.StopError {
+		t.Errorf("turn.completed の data = %v", d)
+	}
+	es, err = Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"assistant","is_api_error_message":"true","message":{"id":"m","content":[{"type":"text","text":"API Error: 400 x"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypeAgentFrame)
+	// 重複したキーは、最後の値が読めなければ零値 (先の値を残さない)
+	es, _ = Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result","is_error":false,"is_error":"x"}`))
+	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+}
+
+// null は、bool へはエラーなしの no-op なので、Bad にしないと、is_error・is_api_error_message の fail-safe をすり抜ける。
+func TestNullFlagsFailSafe(t *testing.T) {
+	es, err := Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result","is_error":null,"api_error_status":400,"result":"API Error: 400 x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+	es, err = Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"assistant","is_api_error_message":null,"message":{"id":"m","content":[{"type":"text","text":"API Error: 400 x"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypeAgentFrame)
+	// 重複したキーの最後が null でも、同じ
+	es, _ = Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result","is_error":false,"is_error":null}`))
+	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+	// キーが無いのは、成功 (null とは違う)
+	es, _ = Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result"}`))
+	wantTypes(t, es, v0.TypeUsage, v0.TypeTurnCompleted)
+}
+
+// tool_result の is_error も、null・型の違いで成功に化けず、同じ message の別の tool_result も巻き添えにしない。
+func TestToolResultIsErrorFailSafe(t *testing.T) {
+	for _, bad := range []string{`null`, `"true"`, `0`, `[]`} {
+		line := []byte(`{"type":"user","message":{"role":"user","content":[
+			{"type":"tool_result","tool_use_id":"toolu_good","is_error":false,"content":"ok output"},
+			{"type":"tool_result","tool_use_id":"toolu_bad","is_error":` + bad + `,"content":"boom"}]}}`)
+		es, err := Adapter{}.NewStream().DecodeFrame(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantTypes(t, es, v0.TypeToolUpdate, v0.TypeToolUpdate)
+		if d := data(t, es[0]); d["call_id"] != "toolu_good" || d["status"] != v0.ToolCompleted || d["output"] != "ok output" {
+			t.Errorf("is_error=%s: 正常な tool_result の data = %v", bad, d)
+		}
+		if d := data(t, es[1]); d["call_id"] != "toolu_bad" || d["status"] != v0.ToolFailed || d["error"] != "boom" {
+			t.Errorf("is_error=%s: 読めない is_error の tool_result の data = %v", bad, d)
+		}
+	}
+}
+
 func d2(e v0.Envelope) map[string]any {
 	var m map[string]any
 	_ = json.Unmarshal(e.Data, &m)
@@ -168,8 +291,7 @@ func TestUnknownFramesAreKept(t *testing.T) {
 		`{"type":"assistant","message":{"id":"m","content":[]}}`,
 		`{"type":"assistant","message":{"id":"m","content":[{"type":"thinking","thinking":"x"}]}}`,
 		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"x"}]}}`,
-		`{"type":"assistant","is_api_error_message":true,"message":{"id":"m","content":[{"type":"text","text":"x"}]}}`, // PR③
-		`{"type":"result","is_error":true,"stop_reason":"end_turn"}`,                                                   // PR③
+		`{"type":"assistant","is_api_error_message":true,"message":{"id":"m","content":[{"type":"text","text":"x"}]}}`, // error は後続の result から出す
 		`{"type":"assistant"}`,
 		`{"type":"assistant","message":"x"}`,
 		`{"type":"user","message":"x"}`,

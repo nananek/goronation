@@ -29,38 +29,62 @@ type Stream struct {
 	sawInit bool // system/init を、もう見たか (ターンごとに繰り返し出るので、2 回目からは TypeSessionStarted にしない)
 }
 
+// lenient は、想定外の型の値を、エラーにせず零値にする。frame を 1 回で読むので、1 つのフィールドの型の不一致で
+// Unmarshal 全体が失敗すると、フレームが raw ごと失われる (そのターンの error・usage・turn.completed も)。
+// 値があったが読めなかったことは Bad に残す。零値が反対の意味を持つフラグ (is_error など) は、Bad を見て安全側に倒す。
+type lenient[T any] struct {
+	V   T
+	Bad bool
+}
+
+func (l *lenient[T]) UnmarshalJSON(b []byte) error {
+	var v T
+	l.V, l.Bad = v, false // 重複したキーは、最後の値だけを見る
+	// null は、bool などへは、エラーなしの no-op になる。読めた値ではないので、型の違いと同じく Bad にする。
+	if bytes.Equal(b, []byte("null")) || json.Unmarshal(b, &v) != nil {
+		l.Bad = true
+		return nil
+	}
+	l.V = v
+	return nil
+}
+
 // frame は、claude のフレームのうち、変換が読む部分。読まないフィールドは、宣言しない。
+// 型が想定と違うフィールドは、零値として読む (lenient)。
 type frame struct {
-	Type    string `json:"type"`
-	Subtype string `json:"subtype"`
+	Type    lenient[string] `json:"type"`
+	Subtype lenient[string] `json:"subtype"`
 
 	// system/init
-	SessionID string   `json:"session_id"`
-	Cwd       string   `json:"cwd"`
-	Model     string   `json:"model"`
-	Tools     []string `json:"tools"`
+	SessionID lenient[string]   `json:"session_id"`
+	Cwd       lenient[string]   `json:"cwd"`
+	Model     lenient[string]   `json:"model"`
+	Tools     lenient[[]string] `json:"tools"`
 
 	// assistant・user
-	IsAPIErrorMessage bool `json:"is_api_error_message"`
+	IsAPIErrorMessage lenient[bool] `json:"is_api_error_message"`
 	// message は、assistant・user ではオブジェクト、system/permission_denied では文字列なので、型を見てから読む (msg)。
 	Message json.RawMessage `json:"message"`
 
 	// system/permission_denied
-	ToolName  string `json:"tool_name"`
-	ToolUseID string `json:"tool_use_id"`
+	ToolName  lenient[string] `json:"tool_name"`
+	ToolUseID lenient[string] `json:"tool_use_id"`
 
 	// result
-	IsError      bool                  `json:"is_error"`
-	StopReason   string                `json:"stop_reason"`
-	TotalCostUSD float64               `json:"total_cost_usd"`
-	Usage        usage                 `json:"usage"`
-	ModelUsage   map[string]modelUsage `json:"modelUsage"`
+	IsError        lenient[bool]                  `json:"is_error"`
+	Result         lenient[string]                `json:"result"`
+	APIErrorStatus lenient[*int]                  `json:"api_error_status"`
+	TerminalReason lenient[string]                `json:"terminal_reason"`
+	StopReason     lenient[string]                `json:"stop_reason"`
+	TotalCostUSD   lenient[float64]               `json:"total_cost_usd"`
+	Usage          lenient[usage]                 `json:"usage"`
+	ModelUsage     lenient[map[string]modelUsage] `json:"modelUsage"`
 }
 
 // message は、assistant・user のフレームの message。
 type message struct {
-	ID      string  `json:"id"`
-	Content []block `json:"content"`
+	ID      lenient[string] `json:"id"`
+	Content []block         `json:"content"`
 }
 
 // msg は、f.Message を、オブジェクトとして読む。
@@ -71,16 +95,16 @@ func (f frame) msg() (m message, ok bool) {
 
 // block は、message.content の 1 要素 (text・tool_use・tool_result)。
 type block struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type lenient[string] `json:"type"`
+	Text lenient[string] `json:"text"`
 	// tool_use
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
+	ID    lenient[string] `json:"id"`
+	Name  lenient[string] `json:"name"`
 	Input json.RawMessage `json:"input"`
 	// tool_result
-	ToolUseID string          `json:"tool_use_id"`
+	ToolUseID lenient[string] `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
-	IsError   bool            `json:"is_error"`
+	IsError   lenient[bool]   `json:"is_error"` // 読めなければ、失敗として扱う (成功に化けさせない。ほかの tool_result も巻き添えにしない)
 }
 
 type usage struct {
@@ -115,21 +139,25 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 	}
 
 	switch {
-	case f.Type == "system" && f.Subtype == "init":
+	case f.Type.V == "system" && f.Subtype.V == "init":
 		if s.sawInit {
 			return unknown()
 		}
 		s.sawInit = true
 		e, err := ev(v0.TypeSessionStarted, true, map[string]any{
 			"agent":         Name,
-			"agent_session": f.SessionID,
-			"cwd":           f.Cwd,
-			"model":         f.Model,
-			"tools":         f.Tools,
+			"agent_session": f.SessionID.V,
+			"cwd":           f.Cwd.V,
+			"model":         f.Model.V,
+			"tools":         f.Tools.V,
 		})
 		return []v0.Envelope{e}, err
 
-	case f.Type == "assistant" && !f.IsAPIErrorMessage: // API の失敗は PR③
+	case f.Type.V == "assistant" && (f.IsAPIErrorMessage.V || f.IsAPIErrorMessage.Bad): // 読めないフラグは、失敗の本文かもしれないので、通常の発言にしない
+		// 失敗の本文は、同じ内容を持つ後続の result (api_error_status も、そちらにだけある) から TypeError にする。二重に出さない。
+		return unknown()
+
+	case f.Type.V == "assistant":
 		m, ok := f.msg()
 		if !ok {
 			return unknown()
@@ -138,12 +166,12 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		for _, b := range m.Content {
 			var e v0.Envelope
 			var err error
-			switch b.Type {
+			switch b.Type.V {
 			case "text":
-				e, err = ev(v0.TypeMessageText, true, map[string]any{"message_id": m.ID, "text": b.Text})
+				e, err = ev(v0.TypeMessageText, true, map[string]any{"message_id": m.ID.V, "text": b.Text.V})
 			case "tool_use":
 				e, err = ev(v0.TypeToolCall, true, map[string]any{
-					"call_id": b.ID, "name": b.Name, "kind": toolKind(b.Name), "input": orNull(b.Input), "status": v0.ToolInProgress,
+					"call_id": b.ID.V, "name": b.Name.V, "kind": toolKind(b.Name.V), "input": orNull(b.Input), "status": v0.ToolInProgress,
 				})
 			default: // thinking など (未採取)
 				e, err = ev(v0.TypeAgentFrame, false, struct{}{})
@@ -158,26 +186,26 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		}
 		return out, nil
 
-	case f.Type == "system" && f.Subtype == "permission_denied":
+	case f.Type.V == "system" && f.Subtype.V == "permission_denied":
 		// 非対話の拒否 (claude -p は、要求のフレームを出さず、拒否の結果だけを出す)。同じ事実を指す tool_result の is_error・
 		// tool_result_meta・result の permission_denials からは、二重に出さない。message (文) は、path を含むので data に載せない。
 		e, err := ev(v0.TypePermissionResolved, true, map[string]any{
-			"by": "policy", "outcome": v0.RejectOnce, "call_id": f.ToolUseID, "tool_name": f.ToolName,
+			"by": "policy", "outcome": v0.RejectOnce, "call_id": f.ToolUseID.V, "tool_name": f.ToolName.V,
 		})
 		return []v0.Envelope{e}, err
 
-	case f.Type == "user":
+	case f.Type.V == "user":
 		m, ok := f.msg()
 		if !ok {
 			return unknown()
 		}
 		var out []v0.Envelope
 		for _, b := range m.Content {
-			if b.Type != "tool_result" {
+			if b.Type.V != "tool_result" {
 				continue
 			}
-			d := map[string]any{"call_id": b.ToolUseID, "status": v0.ToolCompleted}
-			if b.IsError {
+			d := map[string]any{"call_id": b.ToolUseID.V, "status": v0.ToolCompleted}
+			if b.IsError.V || b.IsError.Bad {
 				d["status"] = v0.ToolFailed
 				d["error"] = orNull(b.Content)
 			} else {
@@ -194,25 +222,42 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		}
 		return out, nil
 
-	case f.Type == "result" && !f.IsError: // 失敗のターンは PR③
+	case f.Type.V == "result":
 		var window, maxOut int64
-		for _, m := range f.ModelUsage { // モデルが複数なら、大きい方 (窓の上限を、小さく見せない)
+		for _, m := range f.ModelUsage.V { // モデルが複数なら、大きい方 (窓の上限を、小さく見せない)
 			window, maxOut = max(window, m.ContextWindow), max(maxOut, m.MaxOutputTokens)
 		}
 		u, err := ev(v0.TypeUsage, true, map[string]any{
 			"scope":                       "turn",
-			"input_tokens":                f.Usage.InputTokens,
-			"output_tokens":               f.Usage.OutputTokens,
-			"cache_read_input_tokens":     f.Usage.CacheReadInputTokens,
-			"cache_creation_input_tokens": f.Usage.CacheCreationInputTokens,
-			"cost_usd":                    f.TotalCostUSD,
+			"input_tokens":                f.Usage.V.InputTokens,
+			"output_tokens":               f.Usage.V.OutputTokens,
+			"cache_read_input_tokens":     f.Usage.V.CacheReadInputTokens,
+			"cache_creation_input_tokens": f.Usage.V.CacheCreationInputTokens,
+			"cost_usd":                    f.TotalCostUSD.V,
 			"context_window":              window,
 			"max_output_tokens":           maxOut,
 		})
 		if err != nil {
 			return nil, err
 		}
-		t, err := ev(v0.TypeTurnCompleted, true, map[string]any{"stop_reason": stopReason(f.StopReason), "is_error": false})
+		if f.IsError.V || f.IsError.Bad { // subtype は、失敗でも success になるので見ない。is_error が読めなければ、失敗として扱う (成功に化けさせない)
+			msg := f.Result.V
+			if msg == "" {
+				msg = f.TerminalReason.V
+			}
+			// url・ヘッダは載せない (raw にだけ残る)。message は claude が result に整えた文をそのまま載せる。実機では
+			// API の応答の本文と request_id を含みうる (fixture は fake の 400 で、この形は未採取)。UI が出す前提の値なので、要約や切り詰めはしない。
+			x, err := ev(v0.TypeError, true, map[string]any{"status": f.APIErrorStatus.V, "retryable": retryable(f.APIErrorStatus.V), "message": msg})
+			if err != nil {
+				return nil, err
+			}
+			t, err := ev(v0.TypeTurnCompleted, true, map[string]any{"stop_reason": v0.StopError, "is_error": true})
+			if err != nil {
+				return nil, err
+			}
+			return []v0.Envelope{x, u, t}, nil
+		}
+		t, err := ev(v0.TypeTurnCompleted, true, map[string]any{"stop_reason": stopReason(f.StopReason.V), "is_error": false})
 		if err != nil {
 			return nil, err
 		}
@@ -267,6 +312,11 @@ func orNull(m json.RawMessage) json.RawMessage {
 		return json.RawMessage("null")
 	}
 	return m
+}
+
+// retryable は、HTTP の status が、再試行して直りうるもの (429・5xx) か。status が無い (HTTP の失敗でない) 場合は false。
+func retryable(status *int) bool {
+	return status != nil && (*status == 429 || *status >= 500)
 }
 
 // stopReason は、claude の result.stop_reason を、v0 の StopReason にする。
