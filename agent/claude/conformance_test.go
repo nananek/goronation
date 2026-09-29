@@ -38,7 +38,7 @@ var allowedPaths = map[string][]string{
 	"system/init":              {".session_id", ".cwd", ".model", ".tools"},
 	"assistant":                {".message.id", ".message.content.*.text", ".message.content.*.id", ".message.content.*.name", ".message.content.*.input"},
 	"user":                     {".message.content.*.tool_use_id", ".message.content.*.content"},
-	"result":                   {".stop_reason", ".result"},
+	"result":                   {".stop_reason", ".result", ".terminal_reason"},
 }
 
 func allowed(kind, path string) bool {

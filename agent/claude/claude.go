@@ -31,13 +31,20 @@ type Stream struct {
 
 // lenient は、想定外の型の値を、エラーにせず零値にする。frame を 1 回で読むので、1 つのフィールドの型の不一致で
 // Unmarshal 全体が失敗すると、フレームが raw ごと失われる (そのターンの error・usage・turn.completed も)。
-type lenient[T any] struct{ V T }
+// 値があったが読めなかったことは Bad に残す。零値が反対の意味を持つフラグ (is_error など) は、Bad を見て安全側に倒す。
+type lenient[T any] struct {
+	V   T
+	Bad bool
+}
 
 func (l *lenient[T]) UnmarshalJSON(b []byte) error {
 	var v T
-	if json.Unmarshal(b, &v) == nil {
-		l.V = v
+	l.V, l.Bad = v, false // 重複したキーは、最後の値だけを見る
+	if json.Unmarshal(b, &v) != nil {
+		l.Bad = true
+		return nil
 	}
+	l.V = v
 	return nil
 }
 
@@ -145,7 +152,7 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		})
 		return []v0.Envelope{e}, err
 
-	case f.Type.V == "assistant" && f.IsAPIErrorMessage.V:
+	case f.Type.V == "assistant" && (f.IsAPIErrorMessage.V || f.IsAPIErrorMessage.Bad): // 読めないフラグは、失敗の本文かもしれないので、通常の発言にしない
 		// 失敗の本文は、同じ内容を持つ後続の result (api_error_status も、そちらにだけある) から TypeError にする。二重に出さない。
 		return unknown()
 
@@ -232,7 +239,7 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		if err != nil {
 			return nil, err
 		}
-		if f.IsError.V { // subtype は、失敗でも success になるので見ない
+		if f.IsError.V || f.IsError.Bad { // subtype は、失敗でも success になるので見ない。is_error が読めなければ、失敗として扱う (成功に化けさせない)
 			msg := f.Result.V
 			if msg == "" {
 				msg = f.TerminalReason.V

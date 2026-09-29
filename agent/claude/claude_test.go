@@ -217,6 +217,26 @@ func TestResultFrameFieldTypeMismatchIsNotLost(t *testing.T) {
 	}
 }
 
+// 零値が反対の意味を持つフラグは、型が違っても、成功・通常の発言に化けない (fail-safe)。
+func TestMalformedFlagsFailSafe(t *testing.T) {
+	es, err := Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result","is_error":"true","api_error_status":400,"result":"API Error: 400 x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+	if d := data(t, es[2]); d["is_error"] != true || d["stop_reason"] != v0.StopError {
+		t.Errorf("turn.completed の data = %v", d)
+	}
+	es, err = Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"assistant","is_api_error_message":"true","message":{"id":"m","content":[{"type":"text","text":"API Error: 400 x"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypeAgentFrame)
+	// 重複したキーは、最後の値が読めなければ零値 (先の値を残さない)
+	es, _ = Adapter{}.NewStream().DecodeFrame([]byte(`{"type":"result","is_error":false,"is_error":"x"}`))
+	wantTypes(t, es, v0.TypeError, v0.TypeUsage, v0.TypeTurnCompleted)
+}
+
 func d2(e v0.Envelope) map[string]any {
 	var m map[string]any
 	_ = json.Unmarshal(e.Data, &m)
