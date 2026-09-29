@@ -158,13 +158,13 @@ func TestGoldenFlows(t *testing.T) {
 						t.Fatalf("state=%v", e.c.State())
 					}
 					id = onlyPendingID(t, e)
-					if err := e.c.Resolve(id, tc.outcome); err != nil {
+					if err := e.c.resolve(id, tc.outcome); err != nil {
 						t.Fatal(err)
 					}
 					if e.c.Pending() != 0 || e.c.State() != StateTurn {
 						t.Fatalf("pending=%d state=%v", e.c.Pending(), e.c.State())
 					}
-					if err := e.c.Resolve(id, tc.outcome); !errors.Is(err, ErrAlreadyResolved) {
+					if err := e.c.resolve(id, tc.outcome); !errors.Is(err, ErrAlreadyResolved) {
 						t.Fatalf("2 回目: %v", err)
 					}
 				}
@@ -210,7 +210,7 @@ func TestGoldenInterrupt(t *testing.T) {
 	if by, out, ok := resolvedBy(t, e.events(t), id); !ok || by != "agent" || out != "cancelled" {
 		t.Fatalf("resolved by=%q outcome=%q ok=%v", by, out, ok)
 	}
-	if err := e.c.Resolve(id, v0.AllowOnce); !errors.Is(err, ErrAlreadyResolved) {
+	if err := e.c.resolve(id, v0.AllowOnce); !errors.Is(err, ErrAlreadyResolved) {
 		t.Fatalf("撤回後の応答: %v", err)
 	}
 	if len(e.written()) != 1 { // initialize + prompt の 1 回だけ
@@ -223,20 +223,20 @@ func TestResolveErrors(t *testing.T) {
 	_ = e.c.Send("hi")
 	_ = e.c.OnLine(reqFrame("r1"))
 	for _, oc := range []string{v0.AllowAlways, v0.RejectAlways, "", "cancelled", "ALLOW_ONCE"} {
-		if err := e.c.Resolve("r1", oc); !errors.Is(err, ErrBadOutcome) {
+		if err := e.c.resolve("r1", oc); !errors.Is(err, ErrBadOutcome) {
 			t.Errorf("outcome %q: %v", oc, err)
 		}
 	}
-	if err := e.c.Resolve("nope", v0.AllowOnce); !errors.Is(err, ErrUnknownRequest) {
+	if err := e.c.resolve("nope", v0.AllowOnce); !errors.Is(err, ErrUnknownRequest) {
 		t.Errorf("未知の ID: %v", err)
 	}
 	if e.c.Pending() != 1 {
 		t.Fatal("拒否された応答が、未決を消した")
 	}
-	if err := e.c.Resolve("r1", v0.RejectOnce); err != nil {
+	if err := e.c.resolve("r1", v0.RejectOnce); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.c.Resolve("r1", v0.AllowOnce); !errors.Is(err, ErrAlreadyResolved) {
+	if err := e.c.resolve("r1", v0.AllowOnce); !errors.Is(err, ErrAlreadyResolved) {
 		t.Errorf("決着後: %v", err)
 	}
 	// 決着済みの ID の再要求は、新しい要求にならない (Stream が agent.frame にする)。
@@ -256,7 +256,7 @@ func TestConcurrentResolveOnlyOneWins(t *testing.T) {
 		errs := make([]error, 2)
 		for j, oc := range []string{v0.AllowOnce, v0.RejectOnce} {
 			wg.Add(1)
-			go func() { defer wg.Done(); errs[j] = e.c.Resolve("r", oc) }()
+			go func() { defer wg.Done(); errs[j] = e.c.resolve("r", oc) }()
 		}
 		wg.Wait()
 		if (errs[0] == nil) == (errs[1] == nil) {
@@ -327,7 +327,7 @@ func TestPendingCapAutoRejects(t *testing.T) {
 	if len(w) != 1+3 || strings.Count(strings.Join(w[1:], ""), `"behavior":"deny"`) != 3 {
 		t.Fatalf("writes=%q", w)
 	}
-	if err := e.c.Resolve(fmt.Sprintf("r%d", MaxPendingRequests), v0.AllowOnce); !errors.Is(err, ErrAlreadyResolved) {
+	if err := e.c.resolve(fmt.Sprintf("r%d", MaxPendingRequests), v0.AllowOnce); !errors.Is(err, ErrAlreadyResolved) {
 		t.Fatalf("自動拒否した要求への承認: %v", err)
 	}
 }
@@ -342,7 +342,7 @@ func TestRequestOutsideTurnIsRejected(t *testing.T) {
 	if by, _, ok := resolvedBy(t, e.events(t), "stray"); !ok || by != "policy" {
 		t.Fatalf("by=%q ok=%v", by, ok)
 	}
-	if err := e.c.Resolve("stray", v0.AllowOnce); !errors.Is(err, ErrAlreadyResolved) {
+	if err := e.c.resolve("stray", v0.AllowOnce); !errors.Is(err, ErrAlreadyResolved) {
 		t.Fatal(err)
 	}
 }
@@ -359,7 +359,7 @@ func TestTurnCompletedWithPendingAndStrayResult(t *testing.T) {
 	if by, out, ok := resolvedBy(t, e.events(t), "r"); !ok || by != "agent" || out != "cancelled" {
 		t.Fatalf("by=%q out=%q ok=%v", by, out, ok)
 	}
-	if err := e.c.Resolve("r", v0.AllowOnce); !errors.Is(err, ErrAlreadyResolved) {
+	if err := e.c.resolve("r", v0.AllowOnce); !errors.Is(err, ErrAlreadyResolved) {
 		t.Fatal(err)
 	}
 	_ = e.c.OnLine([]byte(`{"type":"result","is_error":false,"result":"stray"}`))
@@ -383,7 +383,7 @@ func TestStop(t *testing.T) {
 	if err := e.c.Send("x"); !errors.Is(err, ErrClosed) {
 		t.Fatal(err)
 	}
-	if err := e.c.Resolve("r", v0.AllowOnce); !errors.Is(err, ErrUnknownRequest) {
+	if err := e.c.resolve("r", v0.AllowOnce); !errors.Is(err, ErrUnknownRequest) {
 		t.Fatalf("停止後の承認は 404: %v", err)
 	}
 	// 停止の途中に来た要求は、書き込まずに (入力は閉じた)、cancelled にする。
@@ -414,7 +414,7 @@ func TestCloseExpiresPending(t *testing.T) {
 		if by, out, ok := resolvedBy(t, evs, id); !ok || by != "policy" || out != "cancelled" {
 			t.Fatalf("%s: by=%q out=%q ok=%v", id, by, out, ok)
 		}
-		if err := e.c.Resolve(id, v0.AllowOnce); !errors.Is(err, ErrUnknownRequest) {
+		if err := e.c.resolve(id, v0.AllowOnce); !errors.Is(err, ErrUnknownRequest) {
 			t.Fatalf("終了後の承認は 404: %v", err)
 		}
 	}
@@ -453,7 +453,7 @@ func TestWriteFailure(t *testing.T) {
 	_ = e.c.Send("hi")
 	_ = e.c.OnLine(reqFrame("r"))
 	e.failW = true
-	if err := e.c.Resolve("r", v0.AllowOnce); !errors.Is(err, ErrWriteFailed) {
+	if err := e.c.resolve("r", v0.AllowOnce); !errors.Is(err, ErrWriteFailed) {
 		t.Fatal(err)
 	}
 	if e.c.Pending() != 0 || e.c.State() != StateClosed {
@@ -490,7 +490,7 @@ func TestPendingRequestSurvivesRingEviction(t *testing.T) {
 			t.Fatalf("Snapshot が Seq 順でない: %d の後に %d", evs[i-1].Seq, evs[i].Seq)
 		}
 	}
-	if err := e.c.Resolve("keep", v0.RejectOnce); err != nil {
+	if err := e.c.resolve("keep", v0.RejectOnce); err != nil {
 		t.Fatal(err)
 	}
 	if has(snap()) {
@@ -558,7 +558,7 @@ func TestConversationRace(t *testing.T) {
 				id := fmt.Sprintf("g%d-%d", g, i)
 				_ = e.c.Send("x")
 				_ = e.c.OnLine(reqFrame(id))
-				_ = e.c.Resolve(id, v0.AllowOnce)
+				_ = e.c.resolve(id, v0.AllowOnce)
 				_ = e.c.OnLine([]byte(`{"type":"result","is_error":false}`))
 				if i == 150 && g == 0 {
 					e.c.Stop()
@@ -598,7 +598,7 @@ func TestNoSecondResolutionAfterConversationSettled(t *testing.T) {
 	_ = e.c.OnLine(reqFrame("a"))
 	_ = e.c.OnLine(reqFrame("b"))
 	e.failW = true
-	_ = e.c.Resolve("a", v0.AllowOnce) // 書き込みの失敗で、b も失効する
+	_ = e.c.resolve("a", v0.AllowOnce) // 書き込みの失敗で、b も失効する
 	_ = e.c.OnLine(result)
 	if na, nb := count(e, "a"), count(e, "b"); na != 1 || nb != 1 {
 		t.Fatalf("書き込みの失敗後: a=%d b=%d", na, nb)

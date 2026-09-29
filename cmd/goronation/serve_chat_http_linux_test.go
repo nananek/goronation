@@ -1,0 +1,383 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/nananek/goronation/cmd/internal/chat"
+)
+
+// newInProcChat は、檻を使わずに、偽の claude (runFakeChat) をプロセス内で動かす chatSession (HTTP API の確認用)。
+func newInProcChat(t *testing.T, mode string) (*chatSession, *httptest.Server) {
+	t.Helper()
+	toAgentR, toAgentW := io.Pipe()
+	fromAgentR, fromAgentW := io.Pipe()
+	launch := mustLaunch(t)
+	s := &chatSession{id: "sess", done: make(chan struct{})}
+	s.Chat = chat.NewSession(chat.SessionConfig{
+		Launch: launch, ID: "sess", Input: toAgentW,
+		OnStop: func() { toAgentW.Close() },
+	})
+	go func() {
+		runFakeChat(mode, toAgentR, fromAgentW)
+		fromAgentW.Close()
+	}()
+	go func() {
+		s.Chat.ReadOutput(fromAgentR)
+		s.Chat.Finish(0)
+	}()
+	srv := httptest.NewServer(newChatHandler(s))
+	t.Cleanup(func() {
+		s.Chat.Conv.Stop()
+		srv.CloseClientConnections()
+		srv.Close()
+	})
+	return s, srv
+}
+
+// sse は、GET /events を読む: 行ごとに、event 名と data を返す。
+type sseFrame struct{ event, data string }
+
+type sseReader struct {
+	t    *testing.T
+	body io.ReadCloser
+	sc   *bufio.Scanner
+	raw  []string // 届いた行 (区切りの空行を含む)
+}
+
+func openSSE(t *testing.T, srv *httptest.Server) *sseReader {
+	t.Helper()
+	resp, err := http.Get(srv.URL + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("status=%d type=%q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(nil, 4<<20)
+	return &sseReader{t: t, body: resp.Body, sc: sc}
+}
+
+// next は、次のイベント (event 行が無ければ event は空) を返す。ストリームが終われば ok=false。フレーミングの規則 (行は event:・data:・空行だけ・
+// data は 1 行) が破れたら、失敗にする。
+func (r *sseReader) next() (f sseFrame, ok bool) {
+	r.t.Helper()
+	dataLines := 0
+	for r.sc.Scan() {
+		line := r.sc.Text()
+		r.raw = append(r.raw, line)
+		switch {
+		case line == "":
+			if dataLines != 1 {
+				r.t.Fatalf("data 行が %d 本のイベント (1 本のはず): %q", dataLines, r.raw)
+			}
+			return f, true
+		case strings.HasPrefix(line, "event: "):
+			f.event = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			f.data = strings.TrimPrefix(line, "data: ")
+			dataLines++
+		default:
+			r.t.Fatalf("SSE のフレーミングが破れた行: %q (全体 %q)", line, r.raw)
+		}
+	}
+	return f, false
+}
+
+// until は、pred に合うイベントまで読んで返す。
+func (r *sseReader) until(pred func(sseFrame) bool) sseFrame {
+	r.t.Helper()
+	for {
+		f, ok := r.next()
+		if !ok {
+			r.t.Fatalf("目的のイベントの前に、ストリームが終わった: %q", r.raw)
+		}
+		if pred(f) {
+			return f
+		}
+	}
+}
+
+func evType(typ string) func(sseFrame) bool {
+	return func(f sseFrame) bool {
+		var v struct {
+			Type string `json:"type"`
+		}
+		return f.event == "" && json.Unmarshal([]byte(f.data), &v) == nil && v.Type == typ
+	}
+}
+
+func post(t *testing.T, srv *httptest.Server, path, ctype, body string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequest("POST", srv.URL+path, strings.NewReader(body))
+	if ctype != "" {
+		req.Header.Set("Content-Type", ctype)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+func postJSON(t *testing.T, srv *httptest.Server, path, body string) (int, string) {
+	t.Helper()
+	return post(t, srv, path, "application/json", body)
+}
+
+func withTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	timer := time.AfterFunc(d, func() { panic("timeout: " + t.Name()) })
+	t.Cleanup(func() { timer.Stop() })
+}
+
+// hello (世代・first_seq) → 指示 → 権限要求 → 世代の検査 (欠落 400・別の起動 409・正しければ通る・二重は 409) → 完了 → 手動の終了で end。
+func TestChatHTTPFlow(t *testing.T) {
+	withTimeout(t, 60*time.Second)
+	s, srv := newInProcChat(t, "flow")
+	sse := openSSE(t, srv)
+
+	hello, _ := sse.next()
+	var h struct {
+		FirstSeq   *uint64 `json:"first_seq"`
+		Generation string  `json:"generation"`
+	}
+	if hello.event != "hello" || json.Unmarshal([]byte(hello.data), &h) != nil || h.FirstSeq == nil || h.Generation != s.Chat.Conv.Generation() || len(h.Generation) != 32 {
+		t.Fatalf("hello = %+v", hello)
+	}
+
+	if code, body := postJSON(t, srv, "/message", `{"text":"hi"}`); code != 200 {
+		t.Fatalf("message: %d %s", code, body)
+	}
+	if code, _ := postJSON(t, srv, "/message", `{"text":"again"}`); code != 409 { // ターンの途中
+		t.Errorf("ターン中の message = %d (409 のはず)", code)
+	}
+	req := sse.until(evType("permission.requested"))
+	var rv struct {
+		Data struct {
+			RequestID string `json:"request_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(req.data), &rv); err != nil || rv.Data.RequestID == "" {
+		t.Fatalf("permission.requested = %s", req.data)
+	}
+	id := rv.Data.RequestID
+	body := func(gen, outcome string) string {
+		b, _ := json.Marshal(map[string]string{"generation": gen, "request_id": id, "outcome": outcome})
+		return string(b)
+	}
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"世代なし", `{"request_id":"` + id + `","outcome":"allow_once"}`, 400},
+		{"世代が空", body("", "allow_once"), 400},
+		{"別の起動の世代", body("00000000000000000000000000000000", "allow_once"), 409},
+		{"未知の request_id", `{"generation":"` + h.Generation + `","request_id":"nope","outcome":"allow_once"}`, 404},
+		{"不正な outcome", body(h.Generation, "allow_always"), 400},
+	} {
+		if code, b := postJSON(t, srv, "/permission", tc.body); code != tc.want {
+			t.Errorf("%s: %d %s (%d のはず)", tc.name, code, b, tc.want)
+		}
+	}
+	if s.Chat.Conv.Pending() != 1 {
+		t.Fatalf("失敗した承認で、未決が動いた: pending=%d", s.Chat.Conv.Pending())
+	}
+	if code, b := postJSON(t, srv, "/permission", body(h.Generation, "allow_once")); code != 200 {
+		t.Fatalf("承認: %d %s", code, b)
+	}
+	if code, _ := postJSON(t, srv, "/permission", body(h.Generation, "allow_once")); code != 409 {
+		t.Errorf("二重の承認 = %d (409 のはず)", code)
+	}
+	sse.until(evType("turn.completed"))
+
+	if code, _ := postJSON(t, srv, "/stop", ``); code != 200 {
+		t.Errorf("stop = %d", code)
+	}
+	end := sse.until(func(f sseFrame) bool { return f.event == "end" })
+	if end.data != `{"exit":0}` {
+		t.Errorf("end = %q", end.data)
+	}
+	if _, ok := sse.next(); ok {
+		t.Error("end の後も、ストリームが続いた")
+	}
+	if code, _ := postJSON(t, srv, "/message", `{"text":"late"}`); code != 409 {
+		t.Errorf("終了後の message = %d (409 のはず)", code)
+	}
+}
+
+// 世代は、hello から得た値で、別の起動 (別の Conversation) の値では通らない (L12: 起動をまたぐ承認の誤適用)。
+func TestChatHTTPGenerationDiffersPerLaunch(t *testing.T) {
+	withTimeout(t, 30*time.Second)
+	_, srv1 := newInProcChat(t, "hold")
+	_, srv2 := newInProcChat(t, "hold")
+	gen := func(srv *httptest.Server) string {
+		hello, _ := openSSE(t, srv).next()
+		var h struct{ Generation string }
+		json.Unmarshal([]byte(hello.data), &h)
+		return h.Generation
+	}
+	g1, g2 := gen(srv1), gen(srv2)
+	if g1 == "" || g1 == g2 {
+		t.Fatalf("世代が起動ごとに違わない: %q %q", g1, g2)
+	}
+	if code, _ := postJSON(t, srv2, "/permission", `{"generation":"`+g1+`","request_id":"r","outcome":"allow_once"}`); code != 409 {
+		t.Errorf("別の起動の世代 = %d (409 のはず)", code)
+	}
+}
+
+// 書き込み API の本文は、厳格な JSON・上限つき。
+func TestChatHTTPStrictBodies(t *testing.T) {
+	withTimeout(t, 30*time.Second)
+	_, srv := newInProcChat(t, "hold")
+	tooBig := `{"text":"` + strings.Repeat("a", chatMaxBody) + `"}`
+	for _, tc := range []struct {
+		name, path, ctype, body string
+		want                    int
+	}{
+		{"未知のフィールド", "/message", "application/json", `{"text":"x","extra":1}`, 400},
+		{"後ろに別の値", "/message", "application/json", `{"text":"x"}{"text":"y"}`, 400},
+		{"後ろのゴミ", "/message", "application/json", `{"text":"x"} junk`, 400},
+		{"JSON でない", "/message", "application/json", `text=x`, 400},
+		{"text が無い", "/message", "application/json", `{}`, 400},
+		{"text が空", "/message", "application/json", `{"text":""}`, 400},
+		{"text が数値", "/message", "application/json", `{"text":1}`, 400},
+		{"text が大きい", "/message", "application/json", `{"text":"` + strings.Repeat("a", chat.MaxMessageBytes+1) + `"}`, 413},
+		{"本文が大きい", "/message", "application/json", tooBig, 413},
+		{"Content-Type が違う", "/message", "text/plain", `{"text":"x"}`, 415},
+		{"Content-Type が無い", "/message", "", `{"text":"x"}`, 415},
+		{"permission の未知のフィールド", "/permission", "application/json", `{"generation":"g","request_id":"r","outcome":"allow_once","x":1}`, 400},
+		{"permission の空の本文", "/permission", "application/json", ``, 400},
+		{"stop の未知のフィールド", "/stop", "application/json", `{"x":1}`, 400},
+		{"stop の Content-Type が違う", "/stop", "text/plain", `{}`, 415},
+	} {
+		if code, b := post(t, srv, tc.path, tc.ctype, tc.body); code != tc.want {
+			t.Errorf("%s: %d %.100s (%d のはず)", tc.name, code, b, tc.want)
+		}
+	}
+	// 通る形 (Content-Type の parameter・大文字小文字)。
+	if code, b := post(t, srv, "/message", "Application/JSON; charset=utf-8", `{"text":"ok"}`); code != 200 {
+		t.Errorf("正しい message = %d %s", code, b)
+	}
+	// method が違うものは、405。
+	for _, path := range []string{"/message", "/permission", "/stop"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("GET %s = %d (405 のはず)", path, resp.StatusCode)
+		}
+	}
+	resp, _ := http.Post(srv.URL+"/events", "application/json", strings.NewReader("{}"))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST /events = %d", resp.StatusCode)
+	}
+}
+
+// 改行・CR・U+2028 を含む敵対テキストは、JSON のエスケープで 1 行のまま、別のイベント (end・hello) を偽造できない。
+func TestChatHTTPSSECannotBeForged(t *testing.T) {
+	withTimeout(t, 30*time.Second)
+	_, srv := newInProcChat(t, "hold")
+	sse := openSSE(t, srv)
+	sse.next() // hello
+
+	evil := "a\n\nevent: end\ndata: {\"exit\":0}\n\r\r\ndata: x\u2028y\u2029z\r\nevent: hello\n\n"
+	b, _ := json.Marshal(map[string]string{"text": evil})
+	if code, body := postJSON(t, srv, "/message", string(b)); code != 200 {
+		t.Fatalf("message: %d %s", code, body)
+	}
+	f := sse.until(evType("turn.started")) // next() が、フレーミングの破れ (data 行が 1 本でない・知らない行) を、失敗にする
+	var v struct {
+		Data struct{ Text string } `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(f.data), &v); err != nil || v.Data.Text != evil {
+		t.Fatalf("送った text が、そのまま戻らない: %q (%v)", v.Data.Text, err)
+	}
+	if strings.ContainsAny(f.data, "\r\n") {
+		t.Errorf("data に、生の改行がある: %q", f.data)
+	}
+	hellos := 0
+	for _, l := range sse.raw {
+		if l == "event: end" {
+			t.Errorf("偽造された end: %q", sse.raw)
+		}
+		if l == "event: hello" {
+			hellos++
+		}
+	}
+	if hellos != 1 {
+		t.Errorf("hello が %d 個 (1 個のはず): %q", hellos, sse.raw)
+	}
+}
+
+// 再接続 (2 本目の SSE) は、hello から、バッファの全部を受け取り、そのあとライブ。
+func TestChatHTTPReconnectReplaysBuffer(t *testing.T) {
+	withTimeout(t, 30*time.Second)
+	_, srv := newInProcChat(t, "hold")
+	sse1 := openSSE(t, srv)
+	sse1.next()
+	postJSON(t, srv, "/message", `{"text":"first"}`)
+	sse1.until(evType("turn.started"))
+
+	sse2 := openSSE(t, srv)
+	h, _ := sse2.next()
+	if h.event != "hello" {
+		t.Fatalf("hello = %+v", h)
+	}
+	sse2.until(evType("turn.started"))
+}
+
+// 切断された購読は、Hub から外れる。同時接続の上限を超えたら、503。
+func TestChatHTTPSSELimit(t *testing.T) {
+	withTimeout(t, 60*time.Second)
+	_, srv := newInProcChat(t, "hold")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var bodies []io.Closer
+	for i := 0; i < chatMaxSSE; i++ {
+		req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/events", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("%d 本目: %v %v", i, resp, err)
+		}
+		bodies = append(bodies, resp.Body)
+	}
+	resp, err := http.Get(srv.URL + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("上限を超えた SSE = %d (503 のはず)", resp.StatusCode)
+	}
+	bodies[0].Close() // 1 本切ると、また繋がる
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		resp, err := http.Get(srv.URL + "/events")
+		if err == nil && resp.StatusCode == 200 {
+			resp.Body.Close()
+			break
+		}
+		if err == nil {
+			resp.Body.Close()
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("切断した枠が、戻らない")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

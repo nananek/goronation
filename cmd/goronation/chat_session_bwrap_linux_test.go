@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -24,9 +25,14 @@ func fakeChat(args []string) int {
 	if mode == "spoof" {
 		return fakeChatSpoof()
 	}
-	in := bufio.NewScanner(os.Stdin)
+	return runFakeChat(mode, os.Stdin, os.Stdout)
+}
+
+// runFakeChat は、fakeChat の本体 (標準入出力を、引数にしたもの。檻を使わないテストが、プロセス内で動かせる)。
+func runFakeChat(mode string, stdin io.Reader, stdout io.Writer) int {
+	in := bufio.NewScanner(stdin)
 	in.Buffer(nil, 8<<20)
-	out := bufio.NewWriter(os.Stdout)
+	out := bufio.NewWriter(stdout)
 	emit := func(v any) {
 		b, _ := json.Marshal(v)
 		out.Write(append(b, '\n'))
@@ -194,10 +200,10 @@ func TestChatSessionTwoTurnsWithPermissionsThroughCage(t *testing.T) {
 	if err := conv.Send("割り込み"); err == nil {
 		t.Error("ターン中の Send が通った")
 	}
-	if err := conv.Resolve(id1, "allow_once"); err != nil {
+	if err := conv.ResolveIn(conv.Generation(), id1, "allow_once"); err != nil {
 		t.Fatal(err)
 	}
-	if err := conv.Resolve(id1, "allow_once"); err == nil {
+	if err := conv.ResolveIn(conv.Generation(), id1, "allow_once"); err == nil {
 		t.Error("同じ要求への 2 回目の承認が通った")
 	}
 	// 許可した input は、要求時に保持した値そのもの。claude が受け取った内容を、メッセージに書く。
@@ -218,7 +224,7 @@ func TestChatSessionTwoTurnsWithPermissionsThroughCage(t *testing.T) {
 		t.Fatal(err)
 	}
 	req2, at := ev.waitFor("2 つ目の権限要求", at, typeIs("permission.requested"))
-	if err := conv.Resolve(requestIDOf(t, req2), "reject_once"); err != nil {
+	if err := conv.ResolveIn(conv.Generation(), requestIDOf(t, req2), "reject_once"); err != nil {
 		t.Fatal(err)
 	}
 	msg2, at := ev.waitFor("拒否の結果のメッセージ", at, func(e chat.Event) bool {
@@ -264,7 +270,7 @@ func TestChatSessionStopExpiresPendingThroughCage(t *testing.T) {
 		t.Errorf("失効の Event = %s", res.JSON)
 	}
 	s.Wait()
-	if err := conv.Resolve(id, "allow_once"); err == nil {
+	if err := conv.ResolveIn(conv.Generation(), id, "allow_once"); err == nil {
 		t.Error("失効した要求への承認が通った")
 	}
 	// Hub は終わっている (新しい購読者は、Snapshot の後、すぐ EOF)。

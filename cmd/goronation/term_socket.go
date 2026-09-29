@@ -16,3 +16,8 @@ const defaultGroup = "default"
 func termSocketPath(stateDir, group, sessionID string) string {
 	return filepath.Join(stateDir, "groups", group, "sessions", sessionID, "term.sock")
 }
+
+// chatSocketPath は、group・sessionID の構造化チャット (goronation serve --chat) 用 UDS の path。termSocketPath の兄弟 (同じ dir の chat.sock)。
+func chatSocketPath(stateDir, group, sessionID string) string {
+	return filepath.Join(stateDir, "groups", group, "sessions", sessionID, "chat.sock")
+}
