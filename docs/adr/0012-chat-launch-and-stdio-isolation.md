@@ -26,7 +26,15 @@ ADR 0010 の B3: 標準出力が pipe の間、檻の中のプロセスは、偽
 - 断れるのは、標準入出力の fd と、エージェントのメモリまで。エージェントの子が、設定ファイル (`/work/.claude/settings*.json`・HOME) を書き換えて承認を迂回する経路は、別の問題 (塞がない)。同じ uid の子は、エージェントを kill できる (DoS)。
 - 実物の Bash tool の fd の継承は、hook の子で確かめた (継承なし)。PR⑧ の E2E で、tool の子でも確かめる。
 - 複製 (約 240 MB) を、エージェントの状態ディレクトリに持つ (版が変わると作り直し、古い複製は消す)。
-- yama (ptrace_scope ≥ 1) の環境では、断る理由が増えるだけで、結果は同じ。
+- yama (ptrace_scope ≥ 1) の環境では、断る理由が増えるだけで、結果は同じ。CI の runner は scope 1 なので、対照テストは SKIP になり、ハードニングを外した変異は CI では区別できない (`ptrace_scope=0` の非 root で実測する)。
+- 檻は `--new-session` で起こす (制御端末を持つ serve から起こしても、`/dev/tty` に書けない・読めない)。エージェントの標準エラー出力は、prefix `[agent] ` (ready 行 `goronation serve: …` に一致させない) を付け、制御文字を `?` にして serve の標準エラー出力に出す。本番の入口を通るテストで固定する。
+
+## Limit
+
+- 版の違う実体を並行に呼ぶと、読めない複製の掃除が、他方の返した path を消しうる。
+- `Conversation.Resolve` (世代なし) は公開のまま。PR⑤ は `ResolveIn` だけを使う。
+- root では chat が動かない (`errChatRoot`)。手動確認は非 root で行う。
+- Bash tool の子の fd の継承は未確認 (PR⑧)。
 
 ## 代替案
 

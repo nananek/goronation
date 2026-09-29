@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,9 @@ import (
 // (behavior と、許可した input) を、メッセージに書いてから、result で終える。最後の引数が場面: "flow" (この動き)・"hold" (何も返さず読み続ける)。
 func fakeChat(args []string) int {
 	mode := args[len(args)-1]
+	if mode == "spoof" {
+		return fakeChatSpoof()
+	}
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(nil, 8<<20)
 	out := bufio.NewWriter(os.Stdout)
@@ -291,5 +296,58 @@ func TestChatSessionStopKillsCage(t *testing.T) {
 	case <-done:
 	case <-time.After(30 * time.Second):
 		t.Fatal("Stop で檻が止まらない")
+	}
+}
+
+// fakeChatSpoof は、偽の claude の spoof 場面: 標準入出力を継承させない子 (spoof-child) に、エージェントと init への、偽のフレームの
+// 書き込み・fd の奪取・ptrace・メモリの書き換えを試させ、その結果 (child:<試み> => <結果>) を、標準エラー出力に出す。
+func fakeChatSpoof() int {
+	child := exec.Command("/opt/claude/claude", "spoof-child", strconv.Itoa(os.Getpid()))
+	child.Stdin = nil
+	child.Stdout = os.Stderr
+	if err := child.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "child-error="+err.Error())
+	}
+	return 0
+}
+
+// B3 のゲートの、本番の起動経路 (startServeChatSession → startChatSession) での確認。TestChatStdioHardenedBlocksForgedFrames は、テストが
+// 自分で組み立てた cageConfig (読めない複製・NonDumpable) を確かめるので、startChatSession が、その 2 つを外しても (cfg.AgentExe の置き換え・
+// cfg.NonDumpable = true の欠落) 落ちない。この経路で、檻の中の子が、エージェントと init の標準入出力に、偽のフレームを届けられないことを固定する。
+func TestChatSessionBlocksForgedFramesThroughProductionPath(t *testing.T) {
+	s, _, stderr := startChatFixture(t, "spoof")
+	s.Wait()
+	out := stderr.String()
+	if !strings.Contains(out, "child:forged-writes => ") {
+		t.Fatalf("子の、偽のフレームの書き込みの試みが、動いていない:\n%s", out)
+	}
+	res := childResults(strings.ReplaceAll(out, "[agent] ", ""))
+	for _, k := range []string{"pidfd_getfd:agent:fd0", "pidfd_getfd:agent:fd1", "pidfd_getfd:pid1:fd0", "pidfd_getfd:pid1:fd1", "ptrace:agent", "ptrace:pid1", "mem-rw:agent", "mem-rw:pid1"} {
+		v, ok := res[k]
+		if !ok {
+			t.Errorf("試みの結果が無い: %s\n%s", k, out)
+			continue
+		}
+		if v == "STOLEN" || v == "ATTACHED" || v == "OPENED" {
+			t.Errorf("本番の起動経路で、%s が通った (%s): 偽のフレームを、エージェントの標準入出力に届けられる\n%s", k, v, out)
+		}
+	}
+	for k, v := range res {
+		if strings.Contains(v, "OPENED") && (strings.Contains(k, ":agent:") || strings.Contains(k, ":pid1:")) {
+			t.Errorf("本番の起動経路で、%s が開けた (%s)", k, v)
+		}
+	}
+	if v := res["forged-writes"]; v != "0" {
+		t.Errorf("偽のフレームを %s 回書けた (0 のはず)\n%s", v, out)
+	}
+	sub, err := s.Chat.Hub.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	for _, e := range sub.Snapshot {
+		if strings.Contains(string(e.JSON), forgedMarker) {
+			t.Errorf("Hub に、偽のフレームが届いた: %s", e.JSON)
+		}
 	}
 }

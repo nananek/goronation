@@ -9,8 +9,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/nananek/goronation/cmd/internal/chat"
 	"github.com/nananek/goronation/sandbox/bwrap"
@@ -70,8 +73,9 @@ func startChatSession(ctx context.Context, id string, cfg cageConfig, allow []st
 		return nil, err
 	}
 	spec := cageSpec(cfg)
+	spec.NewSession = true // 制御端末を持つ serve から起こしても、檻の中から /dev/tty (運用者の端末) に書けない・読めない
 	spec.Stdin, spec.Stdout = pair.AgentIn, pair.AgentOut
-	spec.Stderr = &cappedWriter{w: stderr, prefix: "goronation serve: [agent] ", left: chatStderrCap}
+	spec.Stderr = &cappedWriter{w: stderr, prefix: "[agent] ", left: chatStderrCap}
 
 	cctx, cancel := context.WithCancel(ctx)
 	cage, err := bwrap.Start(cctx, spec)
@@ -123,7 +127,22 @@ func (s *chatSession) Wait() int {
 	return s.exit
 }
 
+// sanitizeStderr は、p の、\n・\t 以外の制御文字 (C0・DEL・C1)・不正な UTF-8 を ? に置き換える。エージェントの標準エラー出力は敵対入力で、
+// 運用者の端末に、タイトルの書き換え・画面の消去などの制御列を、届けさせない。
+func sanitizeStderr(p []byte) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r == utf8.RuneError || unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, string(p))
+}
+
 // cappedWriter は、w に、prefix を付けて、left バイトまで書き、超えた分は捨てる (書いたことにする: エージェントを止めない)。
+// prefix は "goronation serve: " で始めない (goronation web が読む ready 行に、エージェントの行が一致して、セッション ID を偽れるため)。
 type cappedWriter struct {
 	mu     sync.Mutex
 	w      io.Writer
@@ -140,6 +159,7 @@ func (c *cappedWriter) Write(p []byte) (int, error) {
 		p = p[:c.left]
 	}
 	c.left -= len(p)
+	p = []byte(sanitizeStderr(p))
 	for len(p) > 0 && c.w != nil {
 		if !c.bol {
 			io.WriteString(c.w, c.prefix)

@@ -97,6 +97,9 @@ var testAgentProfile = agentProfile{
 //	winsize               ready を出し、標準入力 (端末) の大きさを winsize=幅x高さ で出す。SIGWINCH を 1 回受けたら、
 //	                      もう一度出して終わる (pty 中継の、開始時の大きさの反映と、resize の伝わりの確認用)
 func fakeClaude(args []string) int {
+	if len(args) > 0 && args[len(args)-1] == "stderr-spoof" { // chat セッションの、標準エラー出力の転送の確認 (serve_chat_stderr_linux_test.go)
+		return fakeChatStderrSpoof()
+	}
 	// --push owner/repo のとき、claude には --mcp-config <JSON> が、場面の引数より前に入る (goronation run 側。
 	// cmd/goronation/mcp.go の claudeMCPInject)。実物の claude は、これを自分の flag として消費する。偽のエージェントも
 	// 同じに振る舞う (でないと、--push と組み合わせる場面のテストが "--mcp-config" 自体を場面の名前と誤認する)。
@@ -106,6 +109,9 @@ func fakeClaude(args []string) int {
 	if len(args) == 0 {
 		fmt.Println("scenario=none")
 		return 0
+	}
+	if args[len(args)-1] == "tty-probe" { // chat セッションの、制御端末 (/dev/tty) の確認 (chat_tty_bwrap_linux_test.go)
+		return fakeChatTTYProbe()
 	}
 	if args[0] == "-p" { // chat セッション (goronation serve --chat): stream-json で、標準入出力を話す (chat_session_bwrap_linux_test.go)
 		return fakeChat(args)
