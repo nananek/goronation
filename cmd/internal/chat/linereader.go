@@ -35,10 +35,11 @@ func NewLineReader(r io.Reader, max int) *LineReader {
 	return &LineReader{br: bufio.NewReaderSize(r, 4096), max: max}
 }
 
-// Next は、次の行 (改行と、その前の CR 1 つを除く) を返す。返すスライスは、次の Next まで有効。空行は飛ばす。
+// Next は、次の行 (改行と、その前の CR 1 つを除く) を返す。返すスライスは、次の Next まで有効。空行は飛ばす (続けて上限個を超える空行は、ErrBadLine で一度戻る)。
 // 上限を超えた行は ErrLineTooLong、NUL か不正な UTF-8 を含む行は ErrBadLine (どちらも、その行を捨てただけで、続けて読める)。
 // 改行で終わらない最後の行も、1 行として返す。読み切ったら io.EOF。読み込みの error は、そのまま返す。
 func (l *LineReader) Next() ([]byte, error) {
+	blank := 0
 	for {
 		l.buf = l.buf[:0]
 		over := false
@@ -73,6 +74,10 @@ func (l *LineReader) Next() ([]byte, error) {
 			return nil, ErrLineTooLong
 		}
 		if len(line) == 0 {
+			// 空行だけの洪水で、呼び手に戻らないまま回り続けない。続けて max 個の空行を読んだら、error で一度戻す。
+			if blank++; blank > l.max {
+				return nil, ErrBadLine
+			}
 			continue
 		}
 		if bytes.IndexByte(line, 0) >= 0 || !utf8.Valid(line) {

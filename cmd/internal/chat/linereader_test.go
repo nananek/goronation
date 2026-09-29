@@ -130,3 +130,23 @@ func FuzzLineReader(f *testing.F) {
 		t.Fatalf("読み切れない (data=%d バイト)", len(data))
 	})
 }
+
+// 空行だけの洪水で、Next が戻らないまま回り続けない。
+func TestLineReaderBlankFloodReturns(t *testing.T) {
+	lr := NewLineReader(strings.NewReader(strings.Repeat("\n", 1000)+"ok\n"), 100)
+	if _, err := lr.Next(); !errors.Is(err, ErrBadLine) {
+		t.Fatalf("err=%v", err)
+	}
+	for {
+		line, err := lr.Next()
+		if err == nil {
+			if string(line) != "ok" {
+				t.Fatalf("line=%q", line)
+			}
+			return
+		}
+		if !errors.Is(err, ErrBadLine) {
+			t.Fatalf("err=%v", err)
+		}
+	}
+}

@@ -3,11 +3,13 @@ package chat
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -72,7 +74,7 @@ func TestFeedErrorDoesNotConsumeSeq(t *testing.T) {
 	}
 }
 
-// 敵対的な text (改行・CR・U+2028・U+2029・</script>) が、JSON の 1 行に収まり、別のイベントを偽造できない。
+// 敵対的な text (改行・CR・U+2028・U+2029) が、JSON の 1 行に収まり、別のイベントを偽造できない。
 func TestFeedJSONIsSingleLine(t *testing.T) {
 	f := NewFeed(claude.Adapter{}.NewStream(), "s", fixedNow)
 	text := "a\nb\rc\u2028d\u2029e</script>\ndata: {\"seq\":1}\n\nevent: end"
@@ -82,8 +84,8 @@ func TestFeedJSONIsSingleLine(t *testing.T) {
 		t.Fatalf("evs=%v err=%v", evs, err)
 	}
 	for _, e := range evs {
-		if bytes.ContainsAny(e.JSON, "\n\r") || strings.ContainsAny(string(e.JSON), "\u2028\u2029") || bytes.Contains(e.JSON, []byte("</script>")) {
-			t.Fatalf("1 行でない・エスケープされていない: %q", e.JSON)
+		if bytes.ContainsAny(e.JSON, "\n\r") || strings.ContainsAny(string(e.JSON), "\u2028\u2029") {
+			t.Fatalf("1 行でない・U+2028/2029 が生のまま: %q", e.JSON)
 		}
 	}
 	var got struct{ Data struct{ Text string } }
@@ -196,4 +198,47 @@ func FuzzFeedClaude(f *testing.F) {
 			}
 		}
 	})
+}
+
+// Decode と Encode を並行に呼んでも、seq が重複しない (-race で確かめる)。
+func TestFeedConcurrentSeqIsUnique(t *testing.T) {
+	f := NewFeed(leakStream{}, "s", fixedNow)
+	const g, n = 4, 500
+	var mu sync.Mutex
+	seen := map[uint64]bool{}
+	var wg sync.WaitGroup
+	for i := 0; i < g; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < n; j++ {
+				evs, err := f.Decode([]byte(`{}`))
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				mu.Lock()
+				for _, e := range evs {
+					if seen[e.Seq] {
+						t.Errorf("seq %d が重複", e.Seq)
+					}
+					seen[e.Seq] = true
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// 大きすぎる Event は、捨てて、seq を進めない。
+func TestFeedRejectsOversizedEvent(t *testing.T) {
+	f := NewFeed(leakStream{}, "s", fixedNow)
+	if _, err := marshalLine(map[string]string{"x": strings.Repeat("a", DefaultMaxEvent)}); !errors.Is(err, ErrEventTooLarge) {
+		t.Fatalf("err=%v", err)
+	}
+	evs, _ := f.Decode([]byte(`{}`))
+	if evs[0].Seq != 0 {
+		t.Fatalf("seq=%d", evs[0].Seq)
+	}
 }

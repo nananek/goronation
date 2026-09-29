@@ -110,6 +110,7 @@ func TestFixtures(t *testing.T) {
 			"sandbox/z/z.go:3: dep-agent-sandbox",
 		}},
 		{"impl-only-from-cmd", 3, []string{
+			"control/y.go:3: agent-only-in-chat",
 			"control/y.go:3: impl-only-from-cmd",
 			"egress/x.go:3: impl-only-from-cmd",
 		}},

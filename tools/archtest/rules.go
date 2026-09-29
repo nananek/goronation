@@ -62,6 +62,15 @@ var DefaultRules = Rules{
 			OnlyIn:  []string{"agent/**", "core/**", "spec/**", "cmd/internal/chat/**"},
 		},
 
+		// Envelope は spec/v0 を import しなくても、core/agent の Stream.DecodeFrame の戻り値 (型は推論で決まる) から手に入る。
+		// v0-only-in-chat だけでは、cmd/goronation が core/agent と agent の実装だけを import して Raw を返せてしまう。
+		// Stream を触れる場所も、同じ範囲に限る (ADR 0009)。
+		{
+			ID:      "agent-only-in-chat",
+			Imports: mods("core/agent/**", "agent/claude/**", "agent/opencode/**"),
+			OnlyIn:  []string{"agent/**", "core/**", "spec/**", "cmd/internal/chat/**"},
+		},
+
 		// 実装の配線 (build tag) は cmd/** だけが行う。
 		{
 			ID:      "impl-only-from-cmd",
