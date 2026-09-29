@@ -1,0 +1,7 @@
+{
+  "description": "プロバイダーが、再試行されない形式のエラー (HTTP 400) を返す。エージェントが、失敗をどうフレームにするか (claude は API Error の assistant フレームと result、opencode は type=error のフレーム) と、終了コードが 1 になることを採る。再試行される 429・5xx は、待ち時間が長く再現性も落ちるので選ばない。",
+  "expect_exit": {"claude": 1, "opencode": 1},
+  "turns": ["何か答えてください。"],
+  "claude": [{"error": {"status": 400, "type": "invalid_request_error", "message": "fake: このリクエストは受け付けられません"}}],
+  "opencode": [{"error": {"status": 400, "type": "invalid_request_error", "message": "fake: このリクエストは受け付けられません"}}]
+}
