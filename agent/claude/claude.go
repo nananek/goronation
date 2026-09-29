@@ -83,8 +83,8 @@ type frame struct {
 
 // message は、assistant・user のフレームの message。
 type message struct {
-	ID      string  `json:"id"`
-	Content []block `json:"content"`
+	ID      lenient[string] `json:"id"`
+	Content []block         `json:"content"`
 }
 
 // msg は、f.Message を、オブジェクトとして読む。
@@ -95,16 +95,16 @@ func (f frame) msg() (m message, ok bool) {
 
 // block は、message.content の 1 要素 (text・tool_use・tool_result)。
 type block struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type lenient[string] `json:"type"`
+	Text lenient[string] `json:"text"`
 	// tool_use
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
+	ID    lenient[string] `json:"id"`
+	Name  lenient[string] `json:"name"`
 	Input json.RawMessage `json:"input"`
 	// tool_result
-	ToolUseID string          `json:"tool_use_id"`
+	ToolUseID lenient[string] `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
-	IsError   bool            `json:"is_error"`
+	IsError   lenient[bool]   `json:"is_error"` // 読めなければ、失敗として扱う (成功に化けさせない。ほかの tool_result も巻き添えにしない)
 }
 
 type usage struct {
@@ -166,12 +166,12 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		for _, b := range m.Content {
 			var e v0.Envelope
 			var err error
-			switch b.Type {
+			switch b.Type.V {
 			case "text":
-				e, err = ev(v0.TypeMessageText, true, map[string]any{"message_id": m.ID, "text": b.Text})
+				e, err = ev(v0.TypeMessageText, true, map[string]any{"message_id": m.ID.V, "text": b.Text.V})
 			case "tool_use":
 				e, err = ev(v0.TypeToolCall, true, map[string]any{
-					"call_id": b.ID, "name": b.Name, "kind": toolKind(b.Name), "input": orNull(b.Input), "status": v0.ToolInProgress,
+					"call_id": b.ID.V, "name": b.Name.V, "kind": toolKind(b.Name.V), "input": orNull(b.Input), "status": v0.ToolInProgress,
 				})
 			default: // thinking など (未採取)
 				e, err = ev(v0.TypeAgentFrame, false, struct{}{})
@@ -201,11 +201,11 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		}
 		var out []v0.Envelope
 		for _, b := range m.Content {
-			if b.Type != "tool_result" {
+			if b.Type.V != "tool_result" {
 				continue
 			}
-			d := map[string]any{"call_id": b.ToolUseID, "status": v0.ToolCompleted}
-			if b.IsError {
+			d := map[string]any{"call_id": b.ToolUseID.V, "status": v0.ToolCompleted}
+			if b.IsError.V || b.IsError.Bad {
 				d["status"] = v0.ToolFailed
 				d["error"] = orNull(b.Content)
 			} else {

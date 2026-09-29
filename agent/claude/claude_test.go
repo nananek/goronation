@@ -257,6 +257,26 @@ func TestNullFlagsFailSafe(t *testing.T) {
 	wantTypes(t, es, v0.TypeUsage, v0.TypeTurnCompleted)
 }
 
+// tool_result の is_error も、null・型の違いで成功に化けず、同じ message の別の tool_result も巻き添えにしない。
+func TestToolResultIsErrorFailSafe(t *testing.T) {
+	for _, bad := range []string{`null`, `"true"`, `0`, `[]`} {
+		line := []byte(`{"type":"user","message":{"role":"user","content":[
+			{"type":"tool_result","tool_use_id":"toolu_good","is_error":false,"content":"ok output"},
+			{"type":"tool_result","tool_use_id":"toolu_bad","is_error":` + bad + `,"content":"boom"}]}}`)
+		es, err := Adapter{}.NewStream().DecodeFrame(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantTypes(t, es, v0.TypeToolUpdate, v0.TypeToolUpdate)
+		if d := data(t, es[0]); d["call_id"] != "toolu_good" || d["status"] != v0.ToolCompleted || d["output"] != "ok output" {
+			t.Errorf("is_error=%s: 正常な tool_result の data = %v", bad, d)
+		}
+		if d := data(t, es[1]); d["call_id"] != "toolu_bad" || d["status"] != v0.ToolFailed || d["error"] != "boom" {
+			t.Errorf("is_error=%s: 読めない is_error の tool_result の data = %v", bad, d)
+		}
+	}
+}
+
 func d2(e v0.Envelope) map[string]any {
 	var m map[string]any
 	_ = json.Unmarshal(e.Data, &m)
