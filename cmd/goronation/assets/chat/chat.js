@@ -199,9 +199,14 @@
         if (source !== es) return;
         const data = parse(m.data);
         if (data === null) return;
+        if (!core.applyHello(state, data).ok) { // 世代の無い・壊れた hello: この接続は使わない
+          closeSource();
+          failures++;
+          scheduleRetry();
+          return;
+        }
         failures = 0;
         retryMs = RETRY_FIRST_MS;
-        core.applyHello(state, data);
         setStatus('接続済み');
         scheduleRender();
       });

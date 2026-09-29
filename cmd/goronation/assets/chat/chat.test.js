@@ -10,6 +10,8 @@ const ui = require('./chat.js');
 
 const cp = (n) => String.fromCodePoint(n);
 const FIX = process.env.GORO_CHAT_FIXTURES || '';
+const G1 = '0123456789abcdef0123456789abcdef'; // serve の世代 (32 桁の 16 進)
+const G2 = 'fedcba9876543210fedcba9876543210';
 
 function ev(seq, type, data) {
   return {v: 0, id: 'e' + seq, ts: '2026-01-01T00:00:00.000Z', session: '20260101-000000-abcdef', seq: seq, type: type, durable: true, data: data};
@@ -20,7 +22,7 @@ function fixture(name) {
 }
 function stateWith(events, gen) {
   const s = core.createState();
-  core.applyHello(s, {generation: gen || 'g1', first_seq: 0});
+  core.applyHello(s, {generation: gen || G1, first_seq: 0});
   for (const e of events) core.applyEvent(s, e);
   return s;
 }
@@ -86,7 +88,7 @@ test('golden: 権限要求は permission の項目になり、全部の golden �
 
 test('未知の type・agent.frame・不正な形は、落ちずに無視する', () => {
   const s = core.createState();
-  core.applyHello(s, {generation: 'g', first_seq: 0});
+  core.applyHello(s, {generation: G1, first_seq: 0});
   const junk = [null, 5, 'x', [], {}, {type: 5, seq: 1}, {type: 'x', seq: -1}, {type: 'x', seq: 1.5}, ev(1, 'agent.frame', {}), ev(2, 'future.type', {a: 1}),
     ev(3, 'message.text', null), ev(4, 'message.text', 'str'), ev(5, 'tool.call', []), ev(6, 'usage', {input_tokens: 'x'}), ev(7, 'error', {status: 'a', message: {x: 1}})];
   for (const j of junk) core.applyEvent(s, j);
@@ -107,14 +109,14 @@ test('敵対的な文字列は、項目の text に、そのまま (印つきで
 test('繋ぎ直し: 同じ世代の Snapshot の重複は捨て、世代が変われば作り直す', () => {
   const evs = [];
   for (let i = 0; i < 10; i++) evs.push(ev(i, 'message.text', {text: 'm' + i}));
-  const s = stateWith(evs, 'g1');
+  const s = stateWith(evs, G1);
   assert.strictEqual(s.items.length, 10);
-  core.applyHello(s, {generation: 'g1', first_seq: 0}); // 同じ世代で繋ぎ直し
+  core.applyHello(s, {generation: G1, first_seq: 0}); // 同じ世代で繋ぎ直し
   for (const e of evs) core.applyEvent(s, e);
   assert.strictEqual(s.items.length, 10);
   core.applyEvent(s, ev(10, 'message.text', {text: 'new'}));
   assert.strictEqual(s.items.length, 11);
-  const r = core.applyHello(s, {generation: 'g2', first_seq: 0}); // serve が再起動した: seq が 0 から振り直される
+  const r = core.applyHello(s, {generation: G2, first_seq: 0}); // serve が再起動した: seq が 0 から振り直される
   assert.strictEqual(r.reset, true);
   assert.strictEqual(s.items.length, 0);
   core.applyEvent(s, ev(0, 'message.text', {text: 'after restart'}));
@@ -126,7 +128,7 @@ test('繋ぎ直し: 同じ世代の Snapshot の重複は捨て、世代が変�
 
 test('hello.first_seq > 0 で、古い分は省略。end で終了', () => {
   const s = core.createState();
-  core.applyHello(s, {generation: 'g', first_seq: 40});
+  core.applyHello(s, {generation: G1, first_seq: 40});
   assert.strictEqual(s.omitted, true);
   core.applyEnd(s, {exit: 3});
   assert.deepStrictEqual(s.ended, {exit: 3});
@@ -152,7 +154,7 @@ test('tool.update の呼び出しが省略されていても、落ちない', ()
 
 test('数十万イベント: 項目は上限で止まり、速く、未決の権限要求は捨てない', () => {
   const s = core.createState();
-  core.applyHello(s, {generation: 'g', first_seq: 0});
+  core.applyHello(s, {generation: G1, first_seq: 0});
   core.applyEvent(s, ev(0, 'permission.requested', {request_id: 'keep', tool_name: 'Bash', input: {command: 'x'}}));
   const t0 = Date.now();
   const N = 300000;
@@ -237,7 +239,7 @@ function harness() {
 
 test('UI: hello・イベント・end。描画は textContent と createElement だけ。end で再接続しない', () => {
   const h = harness();
-  h.es().fire('hello', {first_seq: 0, generation: 'g1'});
+  h.es().fire('hello', {first_seq: 0, generation: G1});
   const evil = '<script>alert(1)</script><img src=x onerror=alert(2)>';
   h.es().fire('message', ev(0, 'turn.started', {text: evil}));
   h.es().fire('message', ev(1, 'message.text', {text: evil}));
@@ -263,7 +265,7 @@ test('UI: hello・イベント・end。描画は textContent と createElement �
 
 test('UI: ping (コメント) は届かない。繋ぎ直しで、同じ Event が重複して積まれない', () => {
   const h = harness();
-  h.es().fire('hello', {first_seq: 0, generation: 'g1'});
+  h.es().fire('hello', {first_seq: 0, generation: G1});
   for (let i = 0; i < 5; i++) h.es().fire('message', ev(i, 'message.text', {text: 'm' + i}));
   h.runTimers();
   assert.strictEqual(h.doc.byId.log.children.length, 5);
@@ -271,7 +273,7 @@ test('UI: ping (コメント) は届かない。繋ぎ直しで、同じ Event �
   h.runTimers();
   const es2 = h.es();
   assert.strictEqual(FakeES.all.length, 2);
-  es2.fire('hello', {first_seq: 0, generation: 'g1'});
+  es2.fire('hello', {first_seq: 0, generation: G1});
   for (let i = 0; i < 8; i++) es2.fire('message', ev(i, 'message.text', {text: 'm' + i}));
   h.runTimers();
   assert.strictEqual(h.doc.byId.log.children.length, 8);
@@ -279,12 +281,12 @@ test('UI: ping (コメント) は届かない。繋ぎ直しで、同じ Event �
 
 test('UI: 世代が変わると (serve の再起動)、表示を作り直す', () => {
   const h = harness();
-  h.es().fire('hello', {first_seq: 0, generation: 'g1'});
+  h.es().fire('hello', {first_seq: 0, generation: G1});
   for (let i = 0; i < 5; i++) h.es().fire('message', ev(i, 'message.text', {text: 'old' + i}));
   h.runTimers();
   h.es().fire('error', {});
   h.runTimers();
-  h.es().fire('hello', {first_seq: 0, generation: 'g2'});
+  h.es().fire('hello', {first_seq: 0, generation: G2});
   h.es().fire('message', ev(0, 'message.text', {text: 'new'}));
   h.runTimers();
   assert.strictEqual(h.doc.byId.log.children.length, 1);
@@ -314,7 +316,7 @@ test('UI: 切断で、間隔を倍々に空けて再接続し (上限 30 秒)、
   const btn = h.doc.byId.notices.children.find((c) => c.tagName === 'button');
   btn.listeners.click[0]();
   assert.strictEqual(FakeES.all.length, n + 1);
-  h.es().fire('hello', {first_seq: 0, generation: 'g1'});
+  h.es().fire('hello', {first_seq: 0, generation: G1});
   h.es().fire('error', {});
   assert.strictEqual(h.timers[h.timers.length - 1].ms, 1000); // hello で、間隔が戻った
 });
@@ -322,7 +324,7 @@ test('UI: 切断で、間隔を倍々に空けて再接続し (上限 30 秒)、
 test('UI: 古い接続の Event は、無視する', () => {
   const h = harness();
   const old = h.es();
-  old.fire('hello', {first_seq: 0, generation: 'g1'});
+  old.fire('hello', {first_seq: 0, generation: G1});
   old.fire('error', {});
   h.runTimers();
   const cur = h.es();
@@ -334,9 +336,126 @@ test('UI: 古い接続の Event は、無視する', () => {
 
 test('UI: 数万イベントでも、DOM の要素は上限で止まる', () => {
   const h = harness();
-  h.es().fire('hello', {first_seq: 0, generation: 'g1'});
+  h.es().fire('hello', {first_seq: 0, generation: G1});
   for (let i = 0; i < 20000; i++) h.es().fire('message', ev(i, 'message.text', {text: 'x' + i}));
   h.runTimers();
   assert.ok(h.doc.byId.log.children.length <= core.LIMITS.maxItems + 260, 'nodes=' + h.doc.byId.log.children.length);
   assert.ok(h.doc.byId.notices.textContent.includes('省略'));
+});
+
+// 決着した権限要求が、上限 (maxPending) の数に数えられ、その後の、新しい未決の要求が、表示されなくなる (承認できない)。
+// エージェント自身が、要求と撤回を繰り返すだけで、後の本物の要求を隠せる。上限は、未決の数にだけ効く。
+test('決着した権限要求が 64 件たまっても、新しい未決の要求は表示される', () => {
+  const s = core.createState();
+  core.applyHello(s, {generation: G1, first_seq: 0});
+  let seq = 0;
+  for (let i = 0; i < core.LIMITS.maxPending + 6; i++) {
+    core.applyEvent(s, ev(seq++, 'permission.requested', {request_id: 'old' + i, tool_name: 'Bash', input: {}}));
+    core.applyEvent(s, ev(seq++, 'permission.resolved', {request_id: 'old' + i, outcome: 'cancelled', by: 'agent'}));
+  }
+  assert.strictEqual(core.applyEvent(s, ev(seq++, 'permission.requested', {request_id: 'new', tool_name: 'Bash', input: {command: 'x'}})), true);
+  const it = s.items.find((i) => i.kind === 'permission' && i.requestId === 'new');
+  assert.ok(it && it.state === 'pending', '新しい未決の要求が、表示されない');
+});
+
+// ---- レビュー (PR⑦a) で見つかった点 ----
+
+test('B1: 上限は、未決の数にだけ効く。未決が上限に達したら、それ以上は出さず、重複した request_id は無視する', () => {
+  const s = core.createState();
+  core.applyHello(s, {generation: G1, first_seq: 0});
+  let seq = 0;
+  for (let i = 0; i < core.LIMITS.maxPending; i++) assert.strictEqual(core.applyEvent(s, ev(seq++, 'permission.requested', {request_id: 'p' + i, tool_name: 'T', input: {}})), true);
+  assert.strictEqual(core.applyEvent(s, ev(seq++, 'permission.requested', {request_id: 'over', tool_name: 'T', input: {}})), false); // 未決が上限
+  assert.strictEqual(core.applyEvent(s, ev(seq++, 'permission.requested', {request_id: 'p0', tool_name: 'Dup', input: {}})), false); // 重複
+  core.applyEvent(s, ev(seq++, 'permission.resolved', {request_id: 'p0', outcome: 'allow_once', by: 'human'}));
+  assert.strictEqual(core.applyEvent(s, ev(seq++, 'permission.requested', {request_id: 'after', tool_name: 'T', input: {}})), true); // 決着で、1 つ空く
+  assert.strictEqual(s.items.find((i) => i.requestId === 'p0').toolName, 'T');
+});
+
+test('N-A: outcome は許可リスト。決着済みが、未決 (pending) に見えず、固定の対象にもならない', () => {
+  const s = stateWith([ev(0, 'permission.requested', {request_id: 'r', tool_name: 'T', input: {}}), ev(1, 'permission.resolved', {request_id: 'r', outcome: 'pending', by: 'agent'})]);
+  assert.strictEqual(s.items[0].state, 'unknown');
+  for (const [i, oc] of ['allow_once', 'reject_once', 'cancelled'].entries()) {
+    core.applyEvent(s, ev(10 + i * 2, 'permission.requested', {request_id: 'k' + i, tool_name: 'T', input: {}}));
+    core.applyEvent(s, ev(11 + i * 2, 'permission.resolved', {request_id: 'k' + i, outcome: oc, by: 'human'}));
+    assert.strictEqual(s.items.find((x) => x.requestId === 'k' + i).state, oc);
+  }
+  for (const [i, bad] of [null, 5, {}, '__proto__', 'allow', 'ALLOW_ONCE', 'pending'].entries()) {
+    core.applyEvent(s, ev(100 + i * 2, 'permission.requested', {request_id: 'z' + i, tool_name: 'T', input: {}}));
+    core.applyEvent(s, ev(101 + i * 2, 'permission.resolved', {request_id: 'z' + i, outcome: bad}));
+    assert.strictEqual(s.items.find((x) => x.requestId === 'z' + i).state, 'unknown', JSON.stringify(bad));
+  }
+});
+
+test('N-B: 世代の無い・壊れた hello は受けない (世代を承認に使うため)', () => {
+  const s = core.createState();
+  for (const bad of [{}, {generation: null}, {generation: ''}, {generation: 'g1'}, {generation: 5}, {generation: G1.toUpperCase()}, {generation: G1 + 'a'}, null, 'x']) {
+    assert.strictEqual(core.applyHello(s, bad).ok, false, JSON.stringify(bad));
+    assert.strictEqual(s.generation, null);
+  }
+  assert.strictEqual(core.applyHello(s, {generation: G1, first_seq: 0}).ok, true);
+  assert.strictEqual(s.generation, G1);
+});
+
+test('N-B: UI は、世代の無い hello の接続を使わず、閉じて、間隔を空けて繋ぎ直す', () => {
+  const h = harness();
+  h.es().fire('hello', {first_seq: 0});
+  assert.ok(h.es().closed);
+  assert.notStrictEqual(h.doc.byId.status.textContent, '接続済み');
+  assert.ok(h.timers.length >= 1);
+  assert.strictEqual(h.app.state.generation, null);
+});
+
+test('L-B: 短い項目は、空白に見える文字・改行・タブ・異体字選択子を、印にする。長い本文は、全角空白・絵文字の選択子を残す', () => {
+  const invisibles = [0x3164, 0x115f, 0xffa0, 0x2800, 0x00ad, 0x034f, 0x17b4, 0xfffc, 0xfe0f, 0xe0100, 0x180b, 0x202f, 0x2003, 0x3000, 0x00a0, 0x0a, 0x09];
+  for (const c of invisibles) {
+    const s = stateWith([ev(0, 'permission.requested', {request_id: 'r', tool_name: cp(c), title: 'a' + cp(c) + 'b', input: {}})]);
+    const p = s.items[0];
+    assert.ok(/^<U\+[0-9A-F]{4,6}>$/.test(p.toolName), 'U+' + c.toString(16) + ' → ' + JSON.stringify(p.toolName));
+    assert.ok(!p.title.includes(cp(c)));
+  }
+  // 名前が、見えない文字だけでも、印が見える (空白に見えない)。
+  const nm = stateWith([ev(0, 'tool.call', {call_id: 'c', name: cp(0x3164) + cp(0x2800), kind: 'other', status: 'in_progress', input: {}})]).items[0].name;
+  assert.ok(nm.length > 0 && nm.includes('<U+3164>') && nm.includes('<U+2800>'));
+  const text = '日本語' + cp(0x3000) + 'の文 ' + cp(0x2764) + cp(0xfe0f) + ' ok';
+  assert.strictEqual(core.sanitize(text), text); // 長い本文 (既定) は、そのまま
+  for (const c of [0x3164, 0x2800, 0x00ad, 0xfffc, 0xe0100, 0x034f]) assert.ok(core.sanitize('a' + cp(c)).includes('<U+'), 'U+' + c.toString(16));
+});
+
+test('T-2: 状態・種類が、class を注入できない (項目の見た目を偽造できない)', () => {
+  const h = harness();
+  h.es().fire('hello', {first_seq: 0, generation: G1});
+  h.es().fire('message', ev(0, 'tool.call', {call_id: 'c', name: 'T', kind: 'other', status: 'completed item-permission state-pending', input: {}}));
+  h.es().fire('message', ev(1, 'permission.requested', {request_id: 'r', tool_name: 'T', input: {}}));
+  h.es().fire('message', ev(2, 'permission.resolved', {request_id: 'r', outcome: 'cancelled item-error', by: 'x'}));
+  h.runTimers();
+  const kids = h.doc.byId.log.children;
+  assert.ok(!/item-permission|state-pending/.test(kids[0].className), kids[0].className);
+  assert.ok(!/item-error/.test(kids[1].className), kids[1].className);
+});
+
+test('T-4: usage の値は、数だけ。文字列は入らない', () => {
+  const s = stateWith([ev(0, 'usage', {input_tokens: '<b>x</b>', output_tokens: 5, cost_usd: '$$', context_window: null})]);
+  assert.strictEqual(s.items[0].inputTokens, null);
+  assert.strictEqual(s.items[0].outputTokens, 5);
+  assert.strictEqual(s.items[0].costUSD, null);
+});
+
+test('T-1: 描画を挟みながら流しても、DOM の要素は、実際に上限で止まる (外し漏れで増え続けない)', () => {
+  const h = harness();
+  h.es().fire('hello', {first_seq: 0, generation: G1});
+  const N = 60000;
+  let peak = 0;
+  for (let i = 0; i < N; i++) {
+    h.es().fire('message', ev(i, 'message.text', {text: 'x' + i}));
+    if (i % 500 === 499) { // 50ms ごとの描画が、途中に入る (実ブラウザと同じ)
+      h.runTimers();
+      peak = Math.max(peak, h.doc.byId.log.children.length);
+    }
+  }
+  h.runTimers();
+  const n = h.doc.byId.log.children.length;
+  assert.ok(n <= core.LIMITS.maxItems + 260 + 1, 'nodes=' + n);
+  assert.ok(peak <= core.LIMITS.maxItems + 260 + 1, 'peak=' + peak);
+  assert.strictEqual(h.app.elements.size, n, '要素の表と、DOM の子の数が食い違う');
 });
