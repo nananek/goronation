@@ -451,6 +451,45 @@ func TestWebVendorXtermSupportsCspNonceOption(t *testing.T) {
 	}
 }
 
+// TestWebVendorXtermAppliesNonceToAllDynamicStyleElements は、独立の攻撃者視点レビュー (F1) の回帰
+// テスト。upstream xterm.js 6.0.0 がライブに動的生成する <style> は、DomRenderer の2箇所 (テーマ色・
+// セル寸法) に加え、Viewport の1箇所 (スクロールバーのスライダー配色) の、計3箇所ある。最初のパッチ
+// (PR①) は DomRenderer の2箇所しかカバーしておらず、Viewport の1箇所は CSP でブロックされたまま
+// だった (実ブラウザで確認済み。スライダーが透明になる)。TestWebVendorXtermSupportsCspNonceOption
+// (cspNonce という語の存在チェックのみ) では、この種の「3箇所のうち1箇所だけ漏れる」退行を検知
+// できないため、3箇所それぞれの呼び出し箇所を個別に確かめる。
+//
+// 配信された本文 (minify 済み) に対して、各 <style> 生成 (DomRenderer._dimensionsStyleElement・
+// DomRenderer._themeStyleElement・Viewport._styleElement) の直後で nonce 適用メソッド
+// (_setStyleElementNonce) が対応するフィールド名付きで呼ばれていることを、文字列として確かめる
+// (webpack の既定設定はプロパティ名を難読化しないため、このパターンはビルドのたびに安定する)。
+func TestWebVendorXtermAppliesNonceToAllDynamicStyleElements(t *testing.T) {
+	srv, _, _, _ := newTestServer(t)
+	client := &http.Client{}
+
+	resp := doJSON(t, client, "GET", srv.URL+"/static/vendor/xterm.js", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/static/vendor/xterm.js = %d, want 200", resp.StatusCode)
+	}
+	body := new(bytes.Buffer)
+	if _, err := body.ReadFrom(resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	src := body.String()
+
+	for _, field := range []string{
+		"_dimensionsStyleElement", // DomRenderer: セル寸法
+		"_themeStyleElement",      // DomRenderer: テーマ色
+		"_styleElement",           // Viewport: スクロールバーのスライダー配色
+	} {
+		marker := "_setStyleElementNonce(this." + field + ")"
+		if !strings.Contains(src, marker) {
+			t.Errorf("vendor 済み xterm.js に %q が見当たらない (%s の <style> に nonce を適用する呼び出しが漏れている)", marker, field)
+		}
+	}
+}
+
 // TestWebSessionsListRequiresAuth・TestWebSessionsListEmpty は、GET /api/sessions の認証・応答の形を
 // 確かめる (実際にセッションを作る結合テストは web_proxy_bwrap_linux_test.go)。
 func TestWebSessionsListRequiresAuth(t *testing.T) {
