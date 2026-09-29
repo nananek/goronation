@@ -4,10 +4,14 @@ package main
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/nananek/goronation/tools/fakeproviders/openai"
 )
 
 func TestWriteOpencodeConfigBaseURL(t *testing.T) {
@@ -47,18 +51,63 @@ func TestWriteOpencodeConfigBaseURL(t *testing.T) {
 	}
 }
 
-func TestOpencodeArgsWithoutSession(t *testing.T) {
-	args := opencodeArgs("", []string{"hello", "world"})
+func TestOpencodeArgsFirstTurn(t *testing.T) {
+	args := opencodeArgs(false, []string{"hello", "world"})
 	want := []string{"run", "--format", "json", "-m", opencodeModelRef, "hello", "world"}
 	if !slices.Equal(args, want) {
 		t.Fatalf("args = %+v, want %+v", args, want)
 	}
 }
 
-func TestOpencodeArgsWithSession(t *testing.T) {
-	args := opencodeArgs("ses_abc", []string{"hello"})
-	want := []string{"run", "--format", "json", "-m", opencodeModelRef, "--session", "ses_abc", "hello"}
+func TestOpencodeArgsContinue(t *testing.T) {
+	args := opencodeArgs(true, []string{"hello"})
+	want := []string{"run", "--format", "json", "-m", opencodeModelRef, "--continue", "hello"}
 	if !slices.Equal(args, want) {
 		t.Fatalf("args = %+v, want %+v", args, want)
+	}
+}
+
+func TestIsTitleRequest(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		want bool
+	}{
+		"タイトル生成":      {`{"messages":[{"role":"system","content":"You are a title generator. You output ONLY a thread title."},{"role":"user","content":"x"}]}`, true},
+		"tools 付きの本体": {`{"messages":[{"role":"system","content":"You are a title generator."}],"tools":[{"type":"function"}]}`, false},
+		"通常の system":  {`{"messages":[{"role":"system","content":"You are opencode."}]}`, false},
+		"先頭が user":    {`{"messages":[{"role":"user","content":"You are a title generator"}]}`, false},
+		"content が配列": {`{"messages":[{"role":"system","content":[{"type":"text"}]}]}`, false},
+		"messages が空": {`{"messages":[]}`, false},
+		"JSON でない":    {`nope`, false},
+	} {
+		if got := isTitleRequest([]byte(tc.body)); got != tc.want {
+			t.Errorf("%s: isTitleRequest = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestWithTitleRequestsDoesNotConsumeScenarioSteps(t *testing.T) {
+	scenarioSrv := openai.NewServer(openai.Step{Content: "STEP-ONE"}, openai.Step{Content: "STEP-TWO"})
+	h := withTitleRequests(scenarioSrv)
+
+	post := func(body string) string {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body)))
+		return rec.Body.String()
+	}
+	titleReq := `{"stream":false,"messages":[{"role":"system","content":"You are a title generator."}]}`
+	mainReq := `{"stream":false,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"read"}}]}`
+
+	if got := post(titleReq); !strings.Contains(got, opencodeTitleReply) || strings.Contains(got, "STEP-") {
+		t.Fatalf("タイトル生成への応答 = %s", got)
+	}
+	if got := post(mainReq); !strings.Contains(got, "STEP-ONE") {
+		t.Fatalf("本体の 1 つ目の応答が STEP-ONE でない (タイトル生成が Step を食った?): %s", got)
+	}
+	if got := post(mainReq); !strings.Contains(got, "STEP-TWO") {
+		t.Fatalf("本体の 2 つ目の応答 = %s", got)
+	}
+	if n := len(scenarioSrv.Requests()); n != 2 {
+		t.Fatalf("場面の fake が受けたリクエスト = %d, want 2 (タイトル生成は含まない)", n)
 	}
 }

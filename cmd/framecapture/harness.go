@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/nananek/goronation/cmd/framecapture/internal/connectproxy"
 	"github.com/nananek/goronation/sandbox/bwrap"
@@ -41,8 +42,13 @@ type harnessRunInput struct {
 	Args []string
 	// Stdin は、檻のコマンドの標準入力 (nil なら空)。
 	Stdin io.Reader
-	// Out は、採取したフレームを書くファイルの path (空なら、runHarness の stdout にそのまま流す)。
-	Out string
+	// Out は、檻のコマンドの標準出力 (採取したフレーム) の書き先 (nil なら、runHarness の stdout)。
+	Out io.Writer
+	// StateDir は、HOME・work・run の置き場 (空なら一時ディレクトリを作り、終わったら消す)。空でなければ、
+	// 呼び手が持つ (消さない)。複数ターンで HOME (会話の履歴) を持ち越すために使う。
+	StateDir string
+	// Timeout が正なら、檻の実行にこの期限を設ける (超えたら檻を殺す)。
+	Timeout time.Duration
 	// WorkSetup は、work ディレクトリへの下ごしらえ (opencode.json を書くなど)。nil なら何もしない。
 	WorkSetup func(work string) error
 }
@@ -64,11 +70,14 @@ func runHarness(in harnessRunInput, stdout, stderr io.Writer) int {
 		return fail("%v", err)
 	}
 
-	stateDir, err := os.MkdirTemp("", "framecapture-")
-	if err != nil {
-		return fail("作業ディレクトリを作れない: %v", err)
+	stateDir := in.StateDir
+	if stateDir == "" {
+		var err error
+		if stateDir, err = os.MkdirTemp("", "framecapture-"); err != nil {
+			return fail("作業ディレクトリを作れない: %v", err)
+		}
+		defer os.RemoveAll(stateDir)
 	}
-	defer os.RemoveAll(stateDir)
 
 	home := filepath.Join(stateDir, "home")
 	work := filepath.Join(stateDir, "work")
@@ -100,6 +109,7 @@ func runHarness(in harnessRunInput, stdout, stderr io.Writer) int {
 	defer fake.Close()
 
 	sockPath := filepath.Join(runDir, proxySockName)
+	os.Remove(sockPath) // 前のターンの残り (StateDir を持ち越すとき)
 	pl, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return fail("connectproxy の UDS で待ち受けられない: %v", err)
@@ -113,15 +123,9 @@ func runHarness(in harnessRunInput, stdout, stderr io.Writer) int {
 	proxyErr := make(chan error, 1)
 	go func() { proxyErr <- proxy.Serve(pl) }()
 
-	var out io.Writer = stdout
-	if in.Out != "" {
-		f, err := os.Create(in.Out)
-		if err != nil {
-			proxy.Close()
-			return fail("--out %s を開けない: %v", in.Out, err)
-		}
-		defer f.Close()
-		out = f
+	out := in.Out
+	if out == nil {
+		out = stdout
 	}
 
 	host := bwrap.CurrentHost()
@@ -135,6 +139,11 @@ func runHarness(in harnessRunInput, stdout, stderr io.Writer) int {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	if in.Timeout > 0 {
+		var cancelTimeout context.CancelFunc
+		ctx, cancelTimeout = context.WithTimeout(ctx, in.Timeout)
+		defer cancelTimeout()
+	}
 
 	c, err := bwrap.Start(ctx, spec)
 	if err != nil {

@@ -3,12 +3,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/nananek/goronation/sandbox/bwrap"
+	"github.com/nananek/goronation/tools/fakeproviders/openai"
 )
 
 // opencodeFakeHost・opencodeFakeVirtualPort は、opencode.json の baseURL と connectproxy の許可表の
@@ -66,12 +71,59 @@ func writeOpencodeConfig(work string) error {
 	return os.WriteFile(filepath.Join(work, "opencode.json"), b, 0o600)
 }
 
-// opencodeArgs は、檻の中で opencode に渡す引数: run --format json -m <provider/model> <message...>。
-// session は、複数ターンを採取するとき (PR③) に --session <id> を足すためのもの (空なら付けない)。
-func opencodeArgs(session string, message []string) []string {
+// opencodeArgs は、檻の中で opencode に渡す引数: run --format json -m <provider/model> [--continue] <message...>。
+// cont が true なら --continue を足す (同じ HOME の直前のセッションの続きにする。複数ターンの 2 ターン目以降)。
+func opencodeArgs(cont bool, message []string) []string {
 	args := []string{"run", "--format", "json", "-m", opencodeModelRef}
-	if session != "" {
-		args = append(args, "--session", session)
+	if cont {
+		args = append(args, "--continue")
 	}
 	return append(args, message...)
+}
+
+// opencodeTitleReply は、opencode が最初のターンで別に投げる「会話のタイトル生成」のリクエストへ返す固定の題。
+const opencodeTitleReply = "framecapture"
+
+// maxPeekBody は、タイトル生成のリクエストかを見分けるために読むリクエスト本文の上限 (超えたら、場面の応答に回す)。
+const maxPeekBody = 4 << 20
+
+// withTitleRequests は、opencode の最初のターンが本体のリクエストと別に投げる、タイトル生成のリクエスト
+// (tools が無く、system メッセージが "You are a title generator" で始まる) を、場面の応答 (scenario の
+// Step) を消費させずに固定の題で答える handler にして返す。これが無いと、タイトル生成が Step を 1 つ食い、
+// 本体のリクエストの応答が 1 つずれる (順序にも依存する)。タイトル生成でないリクエストは、そのまま next へ渡す。
+func withTitleRequests(next http.Handler) http.Handler {
+	title := openai.NewServer(openai.Step{Content: opencodeTitleReply})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxPeekBody+1))
+		r.Body.Close()
+		if err != nil || len(body) > maxPeekBody {
+			// 読めない・大きすぎる: 場面の応答に回す (本文は、読んだ分だけを渡す)。
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			next.ServeHTTP(w, r)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if isTitleRequest(body) {
+			title.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isTitleRequest は、body (Chat Completions のリクエスト) が、opencode のタイトル生成かを返す。
+func isTitleRequest(body []byte) bool {
+	var req struct {
+		Tools    []json.RawMessage `json:"tools"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content any    `json:"content"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(body, &req) != nil || len(req.Tools) != 0 || len(req.Messages) == 0 {
+		return false
+	}
+	first := req.Messages[0]
+	text, _ := first.Content.(string)
+	return first.Role == "system" && strings.HasPrefix(text, "You are a title generator")
 }
