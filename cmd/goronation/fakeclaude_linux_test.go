@@ -107,6 +107,9 @@ func fakeClaude(args []string) int {
 		fmt.Println("scenario=none")
 		return 0
 	}
+	if args[0] == "-p" { // chat セッション (goronation serve --chat): stream-json で、標準入出力を話す (chat_session_bwrap_linux_test.go)
+		return fakeChat(args)
+	}
 	switch args[0] {
 	case "auth", "login":
 		if err := os.WriteFile(filepath.Join(jailAuth, "login-marker"), []byte("logged-in\n"), 0o600); err != nil { // ログイン状態 = 認証情報は、認証用ディレクトリに残る

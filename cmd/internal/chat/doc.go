@@ -7,10 +7,9 @@
 //
 // # 使い方
 //
-//	c := chat.NewConversation(chat.ConversationConfig{Feed: feed, Hub: hub, Write: writeLine, OnStop: stop})
-//	line, _ := lr.Next(); c.OnLine(line)             // 出力の 1 行: 変換して配り、状態を進める
-//	c.Send(text); c.Resolve(requestID, "allow_once") // 書く側。型付きの error (ErrBusy・ErrUnknownRequest など) を web が status にする
-//	sub, _ := hub.Subscribe(); e, err := sub.Next(ctx) // sub.Snapshot を先に送る。終わりは io.EOF と sub.Exit()
+//	l, _ := chat.Agent("claude"); s := chat.NewSession(chat.SessionConfig{Launch: l, ID: id, Input: stdin, OnStop: stop})
+//	s.ReadOutput(stdout); s.Finish(exit)              // 出力を 1 行ずつ変換して配り (OnLine)、状態を進める。終わったら未決を失効
+//	s.Conv.Send(text); s.Conv.Resolve(id, "allow_once"); sub, _ := s.Hub.Subscribe() // sub.Snapshot を先に送り、sub.Next(ctx) で続ける
 //
 // # 規則
 //
@@ -20,6 +19,7 @@
 //   - bind: 承認は要求 ID に束縛し、1 回だけ有効。許可する input は、要求時に保持した値だけ (Conversation。ADR 0011)。
 //   - pin: 未決の permission.requested は、リングから溢れても Snapshot に残る。上限は MaxPendingRequests (Conversation・Hub)。
 //   - expire: 終了・Stop・書き込みの失敗で、未決は全部失効する。タイマーによる失効・自動停止は無い (Conversation)。
+//     入力への書き込みは有界のキュー (256 行・4 MiB) で、満杯は書き込みの失敗 (QueuedWriter。ADR 0012)。
 //
 // # 限界
 //
@@ -27,5 +27,5 @@
 //
 // # 関連
 //
-// ADR 0009・ADR 0010・ADR 0011。
+// ADR 0009・ADR 0010・ADR 0011・ADR 0012。
 package chat

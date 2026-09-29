@@ -10,8 +10,7 @@
 //
 // # 規則
 //
-//   - fixed-flags: --unshare-all・--die-with-parent・--clearenv・--proc・--dev は常に付く。外す手段も、--share-net を出す手段も無い。
-//     足せるのは、NewSession (--new-session) と AsPID1 (--as-pid-1) だけ。
+//   - fixed-flags: --unshare-all・--die-with-parent・--clearenv・--proc・--dev は常に付く。外す手段も、--share-net を出す手段も無い。足せるのは、--new-session・--as-pid-1 だけ。
 //   - bind-src: 機密の Src (ホストの HOME 自体・~/.ssh・~/.claude・/run・/etc・/root・/home・/・SSH_AUTH_SOCK の実体など) は error。
 //     HOME の下は、InHome を明示した作業用 dir だけ。システムの path は ro だけ。Start は、symlink を辿った実体にも同じ規則をかける。
 //   - bind-dst: Dst は絶対・クリーンで、重複せず、/・/proc・/dev の中と、Symlinks の Dst の下 (symlink を辿って迂回できる) は使えない。
