@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -249,5 +250,20 @@ func TestResolveInStaleGeneration(t *testing.T) {
 	other := newConv(t, HubConfig{})
 	if other.c.Generation() == e.c.Generation() {
 		t.Fatal("2 つの会話の世代が同じ")
+	}
+}
+
+// 世代なしの承認の経路は、型で無い (L2): Conversation の公開のメソッドに、Resolve が無く、ResolveIn だけがある。
+func TestResolveWithoutGenerationIsNotExported(t *testing.T) {
+	typ := reflect.TypeOf(&Conversation{})
+	if _, ok := typ.MethodByName("Resolve"); ok {
+		t.Error("世代なしの Resolve が公開されている")
+	}
+	if _, ok := typ.MethodByName("ResolveIn"); !ok {
+		t.Error("ResolveIn が無い")
+	}
+	e := newConv(t, HubConfig{})
+	if err := e.c.ResolveIn("", "r", v0.AllowOnce); !errors.Is(err, ErrNoGeneration) {
+		t.Errorf("世代が空 = %v", err)
 	}
 }

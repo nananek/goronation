@@ -54,7 +54,7 @@ type SessionConfig struct {
 //
 //	s := chat.NewSession(cfg)
 //	go func() { s.ReadOutput(agentStdout); s.Finish(exitCode) }() // エージェントが終わるまで、出力を読み、終わったら Finish
-//	s.Conv.Send(text); s.Conv.Resolve(id, outcome); s.Conv.Stop(); s.Hub.Subscribe()
+//	s.Conv.Send(text); s.Conv.ResolveIn(s.Conv.Generation(), id, outcome); s.Conv.Stop(); s.Hub.Subscribe()
 type Session struct {
 	Conv *Conversation
 	Hub  *Hub

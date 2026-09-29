@@ -9,7 +9,7 @@
 //
 //	l, _ := chat.Agent("claude"); s := chat.NewSession(chat.SessionConfig{Launch: l, ID: id, Input: stdin, OnStop: stop})
 //	s.ReadOutput(stdout); s.Finish(exit)              // 出力を 1 行ずつ変換して配り (OnLine)、状態を進める。終わったら未決を失効
-//	s.Conv.Send(text); s.Conv.Resolve(id, "allow_once"); sub, _ := s.Hub.Subscribe() // sub.Snapshot を先に送り、sub.Next(ctx) で続ける
+//	s.Conv.Send(text); s.Conv.ResolveIn(gen, id, "allow_once"); sub, _ := s.Hub.Subscribe() // sub.Snapshot を先に送り、sub.Next(ctx) で続ける
 //
 // # 規則
 //
@@ -27,5 +27,5 @@
 //
 // # 関連
 //
-// ADR 0009・ADR 0010・ADR 0011・ADR 0012。
+// ADR 0009・ADR 0010・ADR 0011・ADR 0012・ADR 0013。
 package chat

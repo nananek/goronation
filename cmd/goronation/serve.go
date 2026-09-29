@@ -17,7 +17,7 @@ import (
 
 // serveUsage は、goronation serve -h の使い方。
 const serveUsage = `使い方: goronation serve (--repo PATH [--name N] [--email E]) | --session ID
-                   [--agent NAME] [--state-dir DIR] [--socket PATH] [-- ARGS...]
+                   [--chat] [--agent NAME] [--state-dir DIR] [--socket PATH] [-- ARGS...]
 
 goronation serve は、認証済みの相手 (通常は goronation web) から UDS 経由でだけ繋がる、端末ビュー (pty の生
 バイト中継) の WebSocket サーバーを起こす。UDS に繋げること自体を信頼の境界にする (goronation serve 自身は
@@ -26,11 +26,14 @@ cookie も WebAuthn も持たない。認証は goronation web が済ませて�
 
   --repo PATH     PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
   --session ID    前に goronation serve 自身が作ったセッションを再開する (--repo とは同時に使えない)
+  --chat          端末ビューの代わりに、構造化チャット (stream-json を檻で回す。SSE の GET /events と、POST /message・
+                  /permission・/stop) を、UDS chat.sock で出す。エージェントは claude だけ。root では動かせない (非 root の利用者で動かす)。
+                  最初の指示は、チャット (POST /message) から送る (起動しただけでは、エージェントに何も送らない)
   --agent NAME    動かすエージェント (goronation run と同じ表。--session のときは、記録したものと違うと断る)
   --name N        clone の user.name (--repo のとき)
   --email E       clone の user.email (--repo のとき)
   --state-dir DIR 状態を置く場所 (既定は $XDG_STATE_HOME/goronation か ~/.local/state/goronation)
-  --socket PATH   UDS の path (既定は <state-dir>/groups/default/sessions/<session-id>/term.sock。
+  --socket PATH   UDS の path (既定は <state-dir>/groups/default/sessions/<session-id>/term.sock (--chat のときは chat.sock)。
                   goronation web は、同じ既定の計算式で dial するので、通常は指定しなくてよい)
   -- ARGS...      エージェントへの引数 (実運用では通常は要らない: エージェントの既定の対話モードで
                   起動し、操作は goronation web 越しの端末ビューで行う)
@@ -63,6 +66,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	nameFlag := flags.String("name", "", "")
 	emailFlag := flags.String("email", "", "")
 	socketFlag := flags.String("socket", "", "")
+	chatFlag := flags.Bool("chat", false, "")
 	if err := flags.Parse(head); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -86,6 +90,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 			return fail("--agent は %s: %q", agentNames(), *agentFlag)
 		}
 	}
+	if *chatFlag && os.Geteuid() == 0 { // 何かを作る前に、分かりやすく断る (L3)
+		return fail("%v", errChatRoot)
+	}
 	stateDir, err := resolveStateDir(*stateDirFlag)
 	if err != nil {
 		return fail("%v", err)
@@ -99,23 +106,43 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	stopSig := watchServeSignals(cancel)
 	defer stopSig()
 
-	term, err := startServeTermSession(ctx, stateDir, *sessionFlag, *agentFlag, *nameFlag, *emailFlag, *repoFlag, tail, stderr)
-	if err != nil {
-		return fail("端末ビューのセッションを起動できない: %v", err)
+	// 端末ビュー (term) か、構造化チャット (--chat) のどちらか 1 つの檻を起こす。以降は、id・待ち・UDS の HTTP ハンドラだけが違う。
+	var (
+		id      string
+		wait    func()
+		handler http.Handler
+		what    = "端末ビュー"
+		sockOf  = termSocketPath
+	)
+	if *chatFlag {
+		chatS, err := startServeChatSession(ctx, stateDir, *sessionFlag, *agentFlag, *nameFlag, *emailFlag, *repoFlag, tail, stderr)
+		if err != nil {
+			return fail("チャットのセッションを起動できない: %v", err)
+		}
+		id, wait, handler, what, sockOf = chatS.id, func() { chatS.Wait() }, newChatHandler(chatS), "チャット", chatSocketPath
+	} else {
+		term, err := startServeTermSession(ctx, stateDir, *sessionFlag, *agentFlag, *nameFlag, *emailFlag, *repoFlag, tail, stderr)
+		if err != nil {
+			return fail("端末ビューのセッションを起動できない: %v", err)
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { handleTerminal(term, w, r) })
+		mux.HandleFunc("GET /version", handleVersion)
+		id, wait, handler = term.id, func() { term.Wait() }, mux
 	}
 	// 戻る前に、檻の後片付け (proxy.Close・master.Close) が終わるまで待つ。ただし、待つだけでは
 	// ハングする: 檻は ctx が取り消されたときにしか終わらないが、defer は登録順と逆に走るので、
-	// このまま defer term.Wait() とだけ書くと、外側の defer cancel() より先に (cancel が走る前に)
-	// 実行され、term.Wait が無期限にブロックする (攻撃者視点レビューで発見。net.Listen の失敗など、
+	// このまま defer wait() とだけ書くと、外側の defer cancel() より先に (cancel が走る前に)
+	// 実行され、wait が無期限にブロックする (攻撃者視点レビューで発見。net.Listen の失敗など、
 	// シグナルを経由しない異常系の return で起きる)。cancel を、ここで明示的に先に呼ぶ (cancel は
 	// 冪等なので、外側の defer cancel() と重複しても安全)。
-	defer func() { cancel(); term.Wait() }()
+	defer func() { cancel(); wait() }()
 
 	sockPath := *socketFlag
 	if sockPath == "" {
-		sockPath = termSocketPath(stateDir, defaultGroup, term.id)
+		sockPath = sockOf(stateDir, defaultGroup, id)
 	}
-	if err := checkSockPath(sockPath, "端末ビュー"); err != nil {
+	if err := checkSockPath(sockPath, what); err != nil {
 		return fail("%v", err)
 	}
 	sockDir := filepath.Dir(sockPath)
@@ -124,7 +151,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	// 同じソケットを、同時に 2 つの goronation serve が使うことは、ロックで断る (前の起動が残した UDS は、
 	// ロックを持てたときだけ消す。proxy.go の startProxy と同じパターン)。
-	lock, err := lockDir(sockDir, "同じセッションの端末ビューを、別の goronation serve がすでに待ち受けている")
+	lock, err := lockDir(sockDir, "同じセッションの"+what+"を、別の goronation serve がすでに待ち受けている")
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -142,10 +169,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return fail("UDS の権限を設定できない: %v", err)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { handleTerminal(term, w, r) })
-	mux.HandleFunc("GET /version", handleVersion)
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: handler}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), serveShutdownTimeout)
@@ -154,7 +178,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}()
 	// goronation web は、この行 (path と session ID の両方を含む) を見て、UDS が使えるようになったことと、
 	// 対応するセッション ID を知る (新しく作ったセッション (--repo) の ID は、起動前には分からないため)。
-	fmt.Fprintf(stderr, "goronation serve: %s で待ち受けている (session=%s)\n", sockPath, term.id)
+	fmt.Fprintf(stderr, "goronation serve: %s で待ち受けている (session=%s)\n", sockPath, id)
 	if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintf(stderr, "goronation serve: 終了: %v\n", err)
 		return 1

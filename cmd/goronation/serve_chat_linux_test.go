@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/nananek/goronation/cmd/internal/chat"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // root では、chat を起こさない (檻に capability が残り、標準入出力を奪われる)。root でなければ、この経路は結合テストが確かめる。
@@ -91,9 +94,26 @@ func TestUnreadableExeCopy(t *testing.T) {
 	if err != nil || p3 == p1 {
 		t.Fatalf("実体が変わったのに、同じ複製: %q (%v)", p3, err)
 	}
+	// 猶予の間は、古い複製 (別の呼び手が、いま使っているかもしれない) を消さない (L1)。
+	if _, err := os.Stat(p1); err != nil {
+		t.Fatalf("猶予の間に、古い複製を消した: %v", err)
+	}
+	// 猶予を過ぎた古い複製は、次の呼び出しで消える。
+	old := time.Now().Add(-2 * exeCopyGrace)
+	if err := os.Chtimes(p1, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if p4, err := unreadableExeCopy(dst, src); err != nil || p4 != p3 {
+		t.Fatalf("p4 = %q (%v)", p4, err)
+	}
+	if _, err := os.Stat(p1); err == nil {
+		t.Error("猶予を過ぎた古い複製が残っている")
+	}
 	ents, _ := os.ReadDir(dst)
-	if len(ents) != 1 || filepath.Join(dst, ents[0].Name()) != p3 {
-		t.Errorf("古い複製が残っている: %v", ents)
+	for _, e := range ents {
+		if e.Name() != filepath.Base(p3) && e.Name() != ".lock" {
+			t.Errorf("余計なファイル: %s", e.Name())
+		}
 	}
 	if _, err := unreadableExeCopy(dst, dir); err == nil {
 		t.Error("ディレクトリを、複製できた")
@@ -129,4 +149,35 @@ func mustLaunch(t *testing.T) chat.Launch {
 		t.Fatal(err)
 	}
 	return l
+}
+
+// 版の違う実体を並行に呼んでも、返した path が消えない (L1)。全員が返った後も、全部の path がある。
+func TestUnreadableExeCopyConcurrentVersions(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "copies")
+	for round := 0; round < 20; round++ {
+		var wg sync.WaitGroup
+		paths := make([]string, 4)
+		for i := range paths {
+			src := filepath.Join(dir, fmt.Sprintf("agent%d", i))
+			if err := os.WriteFile(src, []byte(strings.Repeat("x", 10+i+round)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				p, err := unreadableExeCopy(dst, src)
+				if err != nil {
+					t.Error(err)
+				}
+				paths[i] = p
+			}()
+		}
+		wg.Wait()
+		for _, p := range paths {
+			if _, err := os.Stat(p); err != nil {
+				t.Fatalf("round %d: 返した path が、もう無い: %v", round, err)
+			}
+		}
+	}
 }

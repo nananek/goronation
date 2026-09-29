@@ -34,6 +34,7 @@ var (
 	ErrBadText         = errors.New("chat: text が不正な UTF-8")                       // Send: 400
 	ErrBadOutcome      = errors.New("chat: outcome は allow_once か reject_once だけ") // Resolve: 400
 	ErrUnknownRequest  = errors.New("chat: 未決の request_id ではない (未知・失効)")           // Resolve: 404
+	ErrNoGeneration    = errors.New("chat: 世代が無い")                                 // ResolveIn: 400
 	ErrStaleGeneration = errors.New("chat: 別の起動 (世代) の画面からの応答")                    // ResolveIn: 409
 	ErrAlreadyResolved = errors.New("chat: その request_id は、もう決着している")              // Resolve: 409
 	ErrWriteFailed     = errors.New("chat: エージェントの入力に書けなかった (会話を終了した)")            // Send・Resolve: 500
@@ -174,17 +175,21 @@ func (c *Conversation) Send(text string) error {
 // 起動をまたぐ承認の誤適用 (起動 1 の古い画面の allow が、起動 2 の同じ request_id の別の input に通る。L12) を断てる。
 func (c *Conversation) Generation() string { return c.generation }
 
-// ResolveIn は、generation がこの会話のものと一致するときだけ Resolve する (違えば ErrStaleGeneration。未決の表には触れない)。
+// ResolveIn は、未決の権限要求に、人間の応答 (allow_once・reject_once) を返す。generation がこの会話のものと一致するときだけ通す
+// (空なら ErrNoGeneration、違えば ErrStaleGeneration。どちらも未決の表には触れない)。世代なしの経路は、型で無い (resolve は非公開。L2)。
 func (c *Conversation) ResolveIn(generation, requestID, outcome string) error {
+	if generation == "" {
+		return ErrNoGeneration
+	}
 	if generation != c.generation {
 		return ErrStaleGeneration
 	}
-	return c.Resolve(requestID, outcome)
+	return c.resolve(requestID, outcome)
 }
 
-// Resolve は、未決の権限要求に、人間の応答 (allow_once・reject_once) を返す。
+// resolve は、ResolveIn の、世代を確かめた後の本体。
 // 未決でない ID は ErrUnknownRequest、応答済みの ID は ErrAlreadyResolved (別タブの後追いなど)。並行に呼ばれても、1 つだけが通る。
-func (c *Conversation) Resolve(requestID, outcome string) error {
+func (c *Conversation) resolve(requestID, outcome string) error {
 	if outcome != v0.AllowOnce && outcome != v0.RejectOnce {
 		return ErrBadOutcome
 	}
@@ -219,7 +224,7 @@ func (c *Conversation) Resolve(requestID, outcome string) error {
 	return nil
 }
 
-// Stop は、手動の「終了」。未決の要求を全部失効させ、以後の Send・Resolve を断り、OnStop (入力を閉じて檻を止める) を 1 回だけ呼ぶ。
+// Stop は、手動の「終了」。未決の要求を全部失効させ、以後の Send・ResolveIn を断り、OnStop (入力を閉じて檻を止める) を 1 回だけ呼ぶ。
 // 何度呼んでもよい。出力は、エージェントが終わるまで OnLine で読み続け、終わったら Close する。
 func (c *Conversation) Stop() {
 	c.mu.Lock()

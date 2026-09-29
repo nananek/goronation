@@ -18,7 +18,7 @@ ADR 0010 の B3: 標準出力が pipe の間、檻の中のプロセスは、偽
 3. **root では起こさない** (檻に capability が残り、2 は意味を失う)。
 4. **配線は `cmd/internal/chat`。** `chat.Agent(name)` が Launch (引数・Stream の作り方。M1.5 は claude だけ)、`chat.Session` が LineReader・Feed・Conversation・Hub・書き込みのキューをつなぐ。`cmd/goronation` は名前・引数・バイト列・Event の JSON だけを扱う。initialize は、アダプタが最初の prompt の前に書く (別に送らない)。
 5. **洪水 (L11)**: Write は有界のキュー (256 行・4 MiB。`QueuedWriter`)。入力を読むエージェントは、要求の洪水 (自動拒否の書き込み) でも、会話は終わらない。**読まないエージェントは、キュー満杯で書き込みの失敗になり、会話を終える** (OnStop で檻を止める。受け入れる: 読まないエージェントを残しても、承認は進まない)。
-6. **世代 (L12)**: `Conversation.Generation()` (起動ごとのランダム値) と `ResolveIn` (違う世代は `ErrStaleGeneration`)。`/permission` に世代を添える形は PR⑤ (hello に載せる案)。API の形が変わるので、着手前に確認する。
+6. **世代 (L12)**: `Conversation.Generation()` (起動ごとのランダム値) と `ResolveIn` (違う世代は `ErrStaleGeneration`)。世代の渡し方と `/permission` の形は、ADR 0013 で決めた。
 7. **L15**: 未対応の `control_request` は `agent.frame` になり、返答しない。`initialize` の応答に `pending_user_dialog_requests` があり、対話が要る別の要求が出うる。M1.5 が扱うのは `can_use_tool` だけで、ほかは手動の「終了」で止める。実物での出方の採取と、拒否の返答は M2。
 
 ## 帰結
@@ -31,9 +31,9 @@ ADR 0010 の B3: 標準出力が pipe の間、檻の中のプロセスは、偽
 
 ## Limit
 
-- 版の違う実体を並行に呼ぶと、読めない複製の掃除が、他方の返した path を消しうる。
-- `Conversation.Resolve` (世代なし) は公開のまま。PR⑤ は `ResolveIn` だけを使う。
-- root では chat が動かない (`errChatRoot`)。手動確認は非 root で行う。
+- 版の違う実体を並行に呼ぶと、読めない複製の掃除が、他方の返した path を消しうる (→ ADR 0013 決定 8 で対処)。
+- `Conversation.Resolve` (世代なし) は公開のまま (→ ADR 0013 決定 6 で非公開)。
+- root では chat が動かない (`errChatRoot`。CLI が理由を言って断る: ADR 0013 決定 7)。手動確認は非 root で行う。
 - Bash tool の子の fd の継承は未確認 (PR⑧)。
 - stderr の無害化は、Unicode の双方向制御文字・U+2028/2029 を通す (表示の偽装に留まる。ready 行の正規表現には一致しない)。
 - `/proc/<pid>/fd` への `O_PATH` は開けるが、その dirfd 経由の fd アクセスは全部断られる (実害なし)。
