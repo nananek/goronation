@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sort"
 	"sync"
 )
 
@@ -12,6 +13,7 @@ const (
 	DefaultHubMaxBytes      = 4 << 20 // リングバッファ (溢れたら古い方から捨てる)
 	DefaultSubMaxBytes      = 4 << 20 // 購読者ごとのキュー (読むのが遅くて溢れたら、その購読者を外す)
 	DefaultSubMaxEvents     = 4096    // 同 (件数)
+	DefaultMaxPinned        = 16      // 固定 (Update の pin) できる Event の数
 	hubSubscribersHardLimit = 1 << 16 // 購読者の数の、最後の砦 (通常の上限は呼び手 (web の接続数の上限) が持つ)
 )
 
@@ -27,6 +29,7 @@ type HubConfig struct {
 	MaxBytes  int // リングバッファの上限 (Event の JSON の長さの合計 + 1 件あたりの固定の分)
 	SubBytes  int // 購読者ごとのキューの上限 (バイト)
 	SubEvents int // 購読者ごとのキューの上限 (件数)
+	MaxPinned int // 固定する Event の数の上限 (1 件は最大 DefaultMaxEvent。超えた分は固定しない)
 }
 
 // Hub は、イベントのメモリ上のリングバッファと、購読者への配信。耐久ストアではない (M2 で置き換える。ADR 0009)。
@@ -39,6 +42,7 @@ type Hub struct {
 	mu       sync.Mutex
 	ring     []Event // ring[head:] が有効。head までは捨てた分 (Event{} に潰してある)
 	head     int
+	pinned   map[uint64]Event // 固定した Event (Seq → Event)。リングから溢れても、Unpin されるまで、Snapshot に含める
 	bytes    int
 	nextSeq  uint64 // 次に受ける Event の Seq (連続していなくても、最後の Seq + 1 まで進める)
 	subs     map[*Subscription]struct{}
@@ -57,16 +61,37 @@ func NewHub(cfg HubConfig) *Hub {
 	if cfg.SubEvents <= 0 {
 		cfg.SubEvents = DefaultSubMaxEvents
 	}
+	if cfg.MaxPinned <= 0 {
+		cfg.MaxPinned = DefaultMaxPinned
+	}
 	return &Hub{cfg: cfg, subs: map[*Subscription]struct{}{}}
 }
 
 // Publish は、events をバッファに足し、購読者に配る。終了後は何もしない。上限を超えたら、古い Event から捨てる
 // (直近の 1 件は、それだけで上限を超えても残す)。キューが溢れた購読者は外す。
-func (h *Hub) Publish(events ...Event) {
+func (h *Hub) Publish(events ...Event) { h.Update(events, nil, nil) }
+
+// Update は、Publish と、Event の固定・固定の解除を、1 つの Mutex の中で行う (リングから押し出される前に、固定できる)。
+// pin の Event は、unpin に入れられるまで、リングから溢れても、新しい購読者の Snapshot に (リングの前に、Seq 順で) 含める。
+// 未決の権限要求を、溢れても失わないための仕組み (ADR 0009)。固定できる数は MaxPinned まで (超えた分は、黙って固定しない)。
+// pin は、events に含めた Event でも、含めない Event でもよい (含めなければ、ライブには配らない)。
+func (h *Hub) Update(events, pin []Event, unpin []uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.ended {
 		return
+	}
+	for _, e := range pin {
+		if _, ok := h.pinned[e.Seq]; !ok && len(h.pinned) >= h.cfg.MaxPinned {
+			continue
+		}
+		if h.pinned == nil {
+			h.pinned = map[uint64]Event{}
+		}
+		h.pinned[e.Seq] = e
+	}
+	for _, seq := range unpin {
+		delete(h.pinned, seq)
 	}
 	for _, e := range events {
 		h.ring = append(h.ring, e)
@@ -113,9 +138,9 @@ func (h *Hub) Close(exit int) {
 type Subscription struct {
 	hub *Hub
 
-	// Snapshot は、Subscribe の時点でバッファにあった Event (Seq 順)。呼び手が書き換えてはいけない。
+	// Snapshot は、Subscribe の時点でバッファにあった Event (Seq 順)。リングから溢れた、固定した Event を、先頭に含む。呼び手が書き換えてはいけない。
 	Snapshot []Event
-	// FirstSeq は、Snapshot の最初の Event の Seq (空なら、次に来る Event の Seq)。0 でなければ、それより前の分は溢れて捨てた
+	// FirstSeq は、リングの最初の Event の Seq (空なら、次に来る Event の Seq。固定した Event は数えない)。0 でなければ、それより前の分は溢れて捨てた
 	// (seq は 0 から)。UI が「古い分は省略」を出すのに使う (SSE の hello の first_seq)。
 	FirstSeq uint64
 
@@ -135,10 +160,19 @@ func (h *Hub) Subscribe() (*Subscription, error) {
 	if len(h.subs) >= hubSubscribersHardLimit {
 		return nil, ErrTooManySubscribers
 	}
-	s := &Subscription{hub: h, Snapshot: append([]Event(nil), h.ring[h.head:]...), FirstSeq: h.nextSeq, notify: make(chan struct{}, 1)}
-	if len(s.Snapshot) > 0 {
-		s.FirstSeq = s.Snapshot[0].Seq
+	ring := h.ring[h.head:]
+	s := &Subscription{hub: h, FirstSeq: h.nextSeq, notify: make(chan struct{}, 1)}
+	if len(ring) > 0 {
+		s.FirstSeq = ring[0].Seq
 	}
+	// 固定した Event のうち、リングから溢れた分 (リングの最初の Seq より前) を、リングの前に足す (Seq 順)。
+	for _, e := range h.pinned {
+		if e.Seq < s.FirstSeq {
+			s.Snapshot = append(s.Snapshot, e)
+		}
+	}
+	sort.Slice(s.Snapshot, func(i, j int) bool { return s.Snapshot[i].Seq < s.Snapshot[j].Seq })
+	s.Snapshot = append(s.Snapshot, ring...)
 	if h.ended {
 		s.done, s.exit = true, h.exitCode
 		return s, nil
