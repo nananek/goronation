@@ -110,6 +110,21 @@ const (
 	ToolFailed     = "failed"
 )
 
+// ToolKind は、TypeToolCall の data の kind で、ACP の ToolKind と同じ。tool の名前は、エージェントごとに違うので、
+// 利用者 (UI) が、名前を知らなくても、種類で見分けられるようにするもの。対応表は、アダプタの側にある。
+const (
+	KindRead       = "read"
+	KindEdit       = "edit"
+	KindDelete     = "delete"
+	KindMove       = "move"
+	KindSearch     = "search"
+	KindExecute    = "execute"
+	KindThink      = "think"
+	KindFetch      = "fetch"
+	KindSwitchMode = "switch_mode"
+	KindOther      = "other"
+)
+
 // PermissionOptionKind は、権限の応答の種類で、ACP の PermissionOptionKind と同じ。
 const (
 	AllowOnce    = "allow_once"
