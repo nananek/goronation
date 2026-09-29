@@ -2,9 +2,12 @@ package claude
 
 import (
 	"bytes"
+	"cmp"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/nananek/goronation/core/agent"
 	v0 "github.com/nananek/goronation/spec/v0"
@@ -12,6 +15,21 @@ import (
 
 // Name は、このアダプタの名前 (agent.Adapter.Name)。
 const Name = "claude"
+
+// TestedVersion は、フレームの形を採取した claude の版 (spec/testdata/golden の system/init の claude_code_version)。
+// 対話の権限要求 (--permission-prompt-tool stdio) は --help に出ない隠しフラグの経路で、版が上がると形が変わりうる
+// (ADR 0010)。アダプタは未知のフレーム・subtype を error にせず TypeAgentFrame に倒す (lenient)。
+const TestedVersion = "2.1.284"
+
+// initRequestID は、最初の prompt の前に送る initialize の control_request の request_id。
+const initRequestID = "goronation-init"
+
+// outcomeCancelled は、TypePermissionResolved (by=agent) の outcome。
+const outcomeCancelled = "cancelled" // claude が要求を撤回した (v0.PermissionOptionKind ではない拡張。ADR 0010)
+
+// denyMessage は、reject_once のときに control_response に載せる、モデルへの理由。クライアントは文を選べない
+// (送れるのは request_id と outcome だけ)。tool_result の内容として、モデルに渡る。
+const denyMessage = "The user denied this tool use."
 
 var _ agent.Adapter = Adapter{}
 
@@ -25,9 +43,50 @@ func (Adapter) Name() string { return Name }
 func (Adapter) NewStream() agent.Stream { return &Stream{} }
 
 // Stream は、1 回の claude の起動の、状態を持つ変換器。並行には呼べない。
+//
+// 承認フローの完全性 (ADR 0010): claude の標準出力が pipe の間、檻の中のプロセスは /proc/<pid>/fd/1 (bwrap の /proc/1/fd/1 も同じ pipe) を
+// 開いて任意の行を書ける。偽の result・control_cancel_request は、実際の未決の要求を全部 cancelled で閉じ (claude は応答を待ち続け、画面と
+// 実態が食い違う)、偽の can_use_tool は任意の title・input を人間に見せる。フレームの出どころは DecodeFrame の入力から区別できないので、
+// アダプタも、会話の状態機械 (未決の上限・失効・result と cancel の整合の確認) も、この偽造を完全には塞げない。
+// 対応は、起動側 (cmd。未実装で、計画では PR④) で標準入出力を socketpair にすること。claude 2.1.284 に socketpair を渡して動くこと、
+// /proc/<pid>/fd/1 の再オープンが ENXIO になる (pipe は成功する) ことは、bwrap の外で確かめた。bwrap の檻での拒否は、PR④ で回帰テストとして固定する予定 (まだ無い)。
+// fd の継承・pidfd_getfd と ptrace・SCM_RIGHTS は未検証なので、実測の後に、塞げたものと塞げていないものに分けて確定する
+// (それまで、解消したものとして扱わない)。
+//
+// 上限: 未決は maxPendingRequests まで。超えた can_use_tool は承認できないが (誤って許可はしない)、claude は応答を待ち続けるので、
+// TypeError で知らせる。決着すれば、以後の新しい要求は通る (落とされた 1 件は戻らない)。見た request_id は SHA-256 で maxSeenRequests まで覚え、こちらは回復しない。
+// 上限を超えた要求に claude へ拒否を返すには、DecodeFrame が呼び手に書かせる戻りの設計が要る (会話の状態機械で決める)。
 type Stream struct {
 	sawInit bool // system/init を、もう見たか (ターンごとに繰り返し出るので、2 回目からは TypeSessionStarted にしない)
+
+	sentInit bool // initialize を、もう送ったか (最初の prompt の前に 1 回だけ)
+
+	// 未決の can_use_tool の要求 (request_id → 要求時の tool の input と、届いた順の番号)。
+	// 応答 (permission.resolve) の許可する input は、ここに保持した値だけから作る (クライアントからは受けない)。
+	pending map[string]pendingRequest
+	// seen は、このストリームで見た request_id の全部 (決着済みも) の SHA-256。ID は一意で、決着した ID の再要求は、
+	// 新しい要求にしない (再送された許可が、人間の見ていない別の input を許可するのを防ぐ)。長い ID でメモリを使わせないよう、
+	// 固定長の要約で覚える。
+	seen    map[[sha256.Size]byte]struct{}
+	nextSeq uint64 // pendingRequest.seq に振る、届いた順の番号
 }
+
+// pendingRequest は、未決の can_use_tool の要求。seq は届いた順 (result で、順に閉じるため)。
+type pendingRequest struct {
+	input json.RawMessage
+	seq   uint64
+}
+
+// 未決の数の上限と、覚える request_id の数の上限 (メモリを、agent の出す要求の数・ID の長さに比例させない)。
+// 超えた要求は、承認できない (誤って許可はしない) が、claude は応答を待ち続けるので、黙って捨てず、
+// TypeError (permissionLimitMessage) で呼び手・UI に知らせる。未決の上限は、決着すれば以後の新しい要求が通る (落とされた 1 件は戻らない)。
+// 覚える ID の上限は回復しない (長いセッションでも、通常は届かない値)。
+const (
+	maxPendingRequests = 64
+	maxSeenRequests    = 1 << 17
+)
+
+const permissionLimitMessage = "claude: 権限要求の上限に達したため、この要求は承認できない (claude は応答を待ち続けている)"
 
 // lenient は、想定外の型の値を、エラーにせず零値にする。frame を 1 回で読むので、1 つのフィールドの型の不一致で
 // Unmarshal 全体が失敗すると、フレームが raw ごと失われる (そのターンの error・usage・turn.completed も)。
@@ -66,6 +125,10 @@ type frame struct {
 	// message は、assistant・user ではオブジェクト、system/permission_denied では文字列なので、型を見てから読む (msg)。
 	Message json.RawMessage `json:"message"`
 
+	// control_request・control_cancel_request (request_id は、claude が振る、要求の ID)
+	RequestID lenient[string] `json:"request_id"`
+	Request   json.RawMessage `json:"request"`
+
 	// system/permission_denied
 	ToolName  lenient[string] `json:"tool_name"`
 	ToolUseID lenient[string] `json:"tool_use_id"`
@@ -91,6 +154,15 @@ type message struct {
 // オブジェクトでなければ ok=false (呼び手は、捨てずに TypeAgentFrame にする。error にすると、フレームが raw ごと失われる)。
 func (f frame) msg() (m message, ok bool) {
 	return m, json.Unmarshal(f.Message, &m) == nil
+}
+
+// controlRequest は、control_request の request。can_use_tool のときの tool_use_id・tool_name・input・description だけを読む。
+type controlRequest struct {
+	Subtype     lenient[string] `json:"subtype"`
+	ToolUseID   lenient[string] `json:"tool_use_id"`
+	ToolName    lenient[string] `json:"tool_name"`
+	Input       json.RawMessage `json:"input"`
+	Description lenient[string] `json:"description"`
 }
 
 // block は、message.content の 1 要素 (text・tool_use・tool_result)。
@@ -186,6 +258,43 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		}
 		return out, nil
 
+	case f.Type.V == "control_request":
+		// can_use_tool だけを写す。それ以外の subtype (と、応答できない形の要求) は agent.frame (lenient)。
+		var r controlRequest
+		id := f.RequestID.V
+		if json.Unmarshal(f.Request, &r) != nil || r.Subtype.V != "can_use_tool" || f.RequestID.Bad || id == "" ||
+			r.ToolName.Bad || r.ToolName.V == "" || !isObject(r.Input) {
+			return unknown()
+		}
+		key := sha256.Sum256([]byte(id))
+		if _, dup := s.seen[key]; dup { // 同じ ID の再要求は、決着済みでも捨てる (先の要求の input を、後から差し替えさせない)
+			return unknown()
+		}
+		if len(s.pending) >= maxPendingRequests || len(s.seen) >= maxSeenRequests {
+			e, err := ev(v0.TypeError, true, map[string]any{"status": nil, "retryable": false, "message": permissionLimitMessage})
+			return []v0.Envelope{e}, err
+		}
+		if s.pending == nil {
+			s.pending, s.seen = map[string]pendingRequest{}, map[[sha256.Size]byte]struct{}{}
+		}
+		s.seen[key] = struct{}{}
+		s.nextSeq++
+		s.pending[id] = pendingRequest{input: bytes.Clone(r.Input), seq: s.nextSeq}
+		e, err := ev(v0.TypePermissionRequested, true, map[string]any{
+			"request_id": id, "call_id": r.ToolUseID.V, "tool_name": r.ToolName.V, "kind": toolKind(r.ToolName.V),
+			"input": r.Input, "title": r.Description.V,
+		})
+		return []v0.Envelope{e}, err
+
+	case f.Type.V == "control_cancel_request":
+		// claude が、未決の要求を撤回した (もう答えなくてよい)。未決でない ID の撤回は、対応するものが無い。
+		id := f.RequestID.V
+		if f.RequestID.Bad || !s.settle(id) {
+			return unknown()
+		}
+		e, err := ev(v0.TypePermissionResolved, true, map[string]any{"by": "agent", "outcome": outcomeCancelled, "request_id": id})
+		return []v0.Envelope{e}, err
+
 	case f.Type.V == "system" && f.Subtype.V == "permission_denied":
 		// 非対話の拒否 (claude -p は、要求のフレームを出さず、拒否の結果だけを出す)。同じ事実を指す tool_result の is_error・
 		// tool_result_meta・result の permission_denials からは、二重に出さない。message (文) は、path を含むので data に載せない。
@@ -223,6 +332,21 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		return out, nil
 
 	case f.Type.V == "result":
+		// ターンが終わったのに未決のままの要求は、もう答えられない。撤回として先に閉じる (未決のまま残さない)。
+		var out []v0.Envelope
+		ids := make([]string, 0, len(s.pending))
+		for id := range s.pending {
+			ids = append(ids, id)
+		}
+		slices.SortFunc(ids, func(a, b string) int { return cmp.Compare(s.pending[a].seq, s.pending[b].seq) })
+		for _, id := range ids {
+			s.settle(id)
+			e, err := ev(v0.TypePermissionResolved, true, map[string]any{"by": "agent", "outcome": outcomeCancelled, "request_id": id})
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, e)
+		}
 		var window, maxOut int64
 		for _, m := range f.ModelUsage.V { // モデルが複数なら、大きい方 (窓の上限を、小さく見せない)
 			window, maxOut = max(window, m.ContextWindow), max(maxOut, m.MaxOutputTokens)
@@ -255,23 +379,33 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 			if err != nil {
 				return nil, err
 			}
-			return []v0.Envelope{x, u, t}, nil
+			return append(out, x, u, t), nil
 		}
 		t, err := ev(v0.TypeTurnCompleted, true, map[string]any{"stop_reason": stopReason(f.StopReason.V), "is_error": false})
 		if err != nil {
 			return nil, err
 		}
-		return []v0.Envelope{u, t}, nil
+		return append(out, u, t), nil
 	}
 	return unknown()
 }
 
 // EncodeCommand は、Command を、claude の標準入力に書く 1 行 (改行を含む) にする。
-// prompt は、フレームの無い TypeTurnStarted を、合成して返す。
+//   - prompt は、フレームの無い TypeTurnStarted を、合成して返す。最初の prompt の raw は、その前に initialize の
+//     control_request の 1 行を含む (--permission-prompt-tool stdio の対話は、最初のターンより前にこれを送る。ADR 0010)。
+//   - permission.resolve は、control_response の 1 行と、合成の TypePermissionResolved (by=human) を返す。
+//     許可する input は、要求時に保持した値だけから作る。未決でない request_id (未知・応答済み・撤回済み) は error。
 func (s *Stream) EncodeCommand(cmd v0.Command) ([]byte, []v0.Envelope, error) {
-	if cmd.Type != v0.CommandPrompt {
-		return nil, nil, fmt.Errorf("claude: 未対応のコマンド %q", cmd.Type)
+	switch cmd.Type {
+	case v0.CommandPrompt:
+		return s.encodePrompt(cmd)
+	case v0.CommandPermissionResolve:
+		return s.encodePermissionResolve(cmd)
 	}
+	return nil, nil, fmt.Errorf("claude: 未対応のコマンド %q", cmd.Type)
+}
+
+func (s *Stream) encodePrompt(cmd v0.Command) ([]byte, []v0.Envelope, error) {
 	var d struct {
 		Text string `json:"text"`
 	}
@@ -291,8 +425,77 @@ func (s *Stream) EncodeCommand(cmd v0.Command) ([]byte, []v0.Envelope, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	started := v0.Envelope{V: v0.Version, Type: v0.TypeTurnStarted, Durable: true, Data: json.RawMessage(`{}`)}
-	return append(line, '\n'), []v0.Envelope{started}, nil
+	out := append(line, '\n')
+	if !s.sentInit {
+		initLine, err := marshal(map[string]any{
+			"type": "control_request", "request_id": initRequestID, "request": map[string]any{"subtype": "initialize"},
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(append(initLine, '\n'), out...)
+		s.sentInit = true
+	}
+	startedData, err := marshal(map[string]any{"text": d.Text})
+	if err != nil {
+		return nil, nil, err
+	}
+	started := v0.Envelope{V: v0.Version, Type: v0.TypeTurnStarted, Durable: true, Data: startedData}
+	return out, []v0.Envelope{started}, nil
+}
+
+func (s *Stream) encodePermissionResolve(cmd v0.Command) ([]byte, []v0.Envelope, error) {
+	var d struct {
+		RequestID string `json:"request_id"`
+		Outcome   string `json:"outcome"`
+	}
+	if err := json.Unmarshal(cmd.Data, &d); err != nil {
+		return nil, nil, fmt.Errorf("claude: permission.resolve の data が読めない: %w", err)
+	}
+	var behavior map[string]any
+	switch d.Outcome {
+	case v0.AllowOnce:
+		p, ok := s.pending[d.RequestID]
+		if !ok {
+			break
+		}
+		behavior = map[string]any{"behavior": "allow", "updatedInput": p.input}
+	case v0.RejectOnce:
+		behavior = map[string]any{"behavior": "deny", "message": denyMessage}
+	default: // allow_always・reject_always・未知の値 (M1.5 の範囲外)
+		return nil, nil, fmt.Errorf("claude: 未対応の outcome %q", d.Outcome)
+	}
+	if !s.settle(d.RequestID) { // 未決でなければ、何も書かない (1 回限り)
+		return nil, nil, fmt.Errorf("claude: 未決でない request_id %q", d.RequestID)
+	}
+	line, err := marshal(map[string]any{
+		"type":     "control_response",
+		"response": map[string]any{"subtype": "success", "request_id": d.RequestID, "response": behavior},
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := marshal(map[string]any{"by": "human", "outcome": d.Outcome, "request_id": d.RequestID})
+	if err != nil {
+		return nil, nil, err
+	}
+	resolved := v0.Envelope{V: v0.Version, Type: v0.TypePermissionResolved, Durable: true, Data: data}
+	return append(line, '\n'), []v0.Envelope{resolved}, nil
+}
+
+// settle は、id を未決の表から外す。未決でなければ false。
+func (s *Stream) settle(id string) bool {
+	if _, ok := s.pending[id]; !ok {
+		return false
+	}
+	delete(s.pending, id)
+	return true
+}
+
+// isObject は、m が JSON のオブジェクトか (tool の input は、オブジェクトでなければ、許可の応答に使えない)。
+func isObject(m json.RawMessage) bool {
+	m = bytes.TrimSpace(m)
+	return len(m) > 0 && m[0] == '{'
 }
 
 // marshal は、HTML 用のエスケープ (< を < にする) をしない json.Marshal。

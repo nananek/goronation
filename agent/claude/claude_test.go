@@ -339,13 +339,19 @@ func TestToolKind(t *testing.T) {
 
 func TestEncodePrompt(t *testing.T) {
 	cmd := v0.Command{V: v0.Version, Type: v0.CommandPrompt, Data: json.RawMessage(`{"text":"hi <b> \"q\"\n"}`)}
-	raw, synth, err := (&Stream{}).EncodeCommand(cmd)
+	s2 := &Stream{}
+	raw, synth, err := s2.EncodeCommand(cmd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasSuffix(raw, []byte("\n")) || bytes.Count(raw, []byte("\n")) != 1 {
-		t.Fatalf("1 行 (末尾に改行 1 つ) でない: %q", raw)
+	lines := bytes.SplitAfter(raw, []byte("\n"))
+	if len(lines) != 3 || len(lines[2]) != 0 || !bytes.HasSuffix(lines[1], []byte("\n")) {
+		t.Fatalf("initialize + prompt の 2 行 (それぞれ改行で終わる) でない: %q", raw)
 	}
+	if string(lines[0]) != `{"request":{"subtype":"initialize"},"request_id":"goronation-init","type":"control_request"}`+"\n" {
+		t.Errorf("1 行目 (initialize) = %s", lines[0])
+	}
+	raw = lines[1] // 以下は prompt の行
 	var got struct {
 		Type    string `json:"type"`
 		Message struct {
@@ -363,23 +369,353 @@ func TestEncodePrompt(t *testing.T) {
 		got.Message.Content[0].Type != "text" || got.Message.Content[0].Text != "hi <b> \"q\"\n" {
 		t.Errorf("stdin の 1 行 = %s", raw)
 	}
-	if len(synth) != 1 || synth[0].Type != v0.TypeTurnStarted || !synth[0].Durable || string(synth[0].Data) != "{}" || synth[0].Raw != nil || synth[0].V != v0.Version {
+	// 2 回目の prompt には、initialize を付けない。
+	raw2, _, err := s2.EncodeCommand(cmd)
+	if err != nil || bytes.Count(raw2, []byte("\n")) != 1 {
+		t.Errorf("2 回目の prompt = %q, %v", raw2, err)
+	}
+	if len(synth) != 1 || synth[0].Type != v0.TypeTurnStarted || !synth[0].Durable || string(synth[0].Data) != `{"text":"hi <b> \"q\"\n"}` || synth[0].Raw != nil || synth[0].V != v0.Version {
 		t.Errorf("synthesized = %+v", synth)
 	}
 }
 
 func TestEncodeRejects(t *testing.T) {
 	for name, cmd := range map[string]v0.Command{
-		"cancel (未対応)":     {Type: v0.CommandCancel, Data: json.RawMessage(`{}`)},
-		"permission (未対応)": {Type: v0.CommandPermissionResolve, Data: json.RawMessage(`{}`)},
-		"未知の type":         {Type: "x", Data: json.RawMessage(`{}`)},
-		"data が JSON でない":  {Type: v0.CommandPrompt, Data: json.RawMessage(`nope`)},
-		"data が無い":         {Type: v0.CommandPrompt},
-		"text が空":          {Type: v0.CommandPrompt, Data: json.RawMessage(`{"text":""}`)},
-		"text が無い":         {Type: v0.CommandPrompt, Data: json.RawMessage(`{}`)},
+		"cancel (未対応)":        {Type: v0.CommandCancel, Data: json.RawMessage(`{}`)},
+		"permission (未知の ID)": {Type: v0.CommandPermissionResolve, Data: json.RawMessage(`{"request_id":"nope","outcome":"allow_once"}`)},
+		"未知の type":            {Type: "x", Data: json.RawMessage(`{}`)},
+		"data が JSON でない":     {Type: v0.CommandPrompt, Data: json.RawMessage(`nope`)},
+		"data が無い":            {Type: v0.CommandPrompt},
+		"text が空":             {Type: v0.CommandPrompt, Data: json.RawMessage(`{"text":""}`)},
+		"text が無い":            {Type: v0.CommandPrompt, Data: json.RawMessage(`{}`)},
 	} {
 		if raw, synth, err := (&Stream{}).EncodeCommand(cmd); err == nil || raw != nil || synth != nil {
 			t.Errorf("%s: error にならない: %q %+v", name, raw, synth)
 		}
 	}
+}
+
+// --- 対話の権限要求 (PR⓪ の fixtures: claude 2.1.284、--permission-prompt-tool stdio) ---
+
+func resolveCmd(id, outcome string) v0.Command {
+	return v0.Command{V: v0.Version, Type: v0.CommandPermissionResolve, Data: json.RawMessage(`{"request_id":"` + id + `","outcome":"` + outcome + `"}`)}
+}
+
+// decodeUntilRequest は、fixture を、最初の permission.requested まで流す。
+func decodeUntilRequest(t *testing.T, name string) (*Stream, v0.Envelope) {
+	t.Helper()
+	s := Adapter{}.NewStream()
+	for _, line := range readLines(t, name) {
+		es, err := s.DecodeFrame(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range es {
+			if e.Type == v0.TypePermissionRequested {
+				return s.(*Stream), e
+			}
+		}
+	}
+	t.Fatalf("%s: permission.requested が出ない", name)
+	return nil, v0.Envelope{}
+}
+
+func TestInteractiveAllowFlow(t *testing.T) {
+	// 実際の流れ: 要求が来たら、goronation が allow_once で答える (答えた要求は、result で撤回されない)。
+	s := Adapter{}.NewStream()
+	var es []v0.Envelope
+	for _, line := range readLines(t, "permission-interactive-allow") {
+		got, err := s.DecodeFrame(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		es = append(es, got...)
+		for _, e := range got {
+			if e.Type == v0.TypePermissionRequested {
+				if _, _, err := s.EncodeCommand(resolveCmd(data(t, e)["request_id"].(string), v0.AllowOnce)); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	wantTypes(t, es,
+		v0.TypeAgentFrame, // initialize の control_response
+		v0.TypeSessionStarted,
+		v0.TypeMessageText, v0.TypeToolCall,
+		v0.TypePermissionRequested,
+		v0.TypeToolUpdate, v0.TypeMessageText, v0.TypeUsage, v0.TypeTurnCompleted,
+		v0.TypeAgentFrame, // 2 ターン目の system/init
+		v0.TypeMessageText, v0.TypeUsage, v0.TypeTurnCompleted)
+	d := data(t, es[4])
+	if d["request_id"] != "<uuid:5>" || d["call_id"] != "toolu_fake_1" || d["tool_name"] != "Write" || d["kind"] != v0.KindEdit || d["title"] != "new.txt" {
+		t.Errorf("permission.requested の data = %v", d)
+	}
+	in, _ := d["input"].(map[string]any)
+	if in["file_path"] != "/work/new.txt" || in["content"] != "new file\n" {
+		t.Errorf("input が、書き換えずに載っていない: %v", d["input"])
+	}
+	if es[4].Durable != true || es[4].Raw == nil {
+		t.Errorf("durable・raw = %v %s", es[4].Durable, es[4].Raw)
+	}
+}
+
+func TestInteractiveResolveAllowUsesHeldInput(t *testing.T) {
+	s, req := decodeUntilRequest(t, "permission-interactive-allow")
+	raw, synth, err := s.EncodeCommand(resolveCmd("<uuid:5>", v0.AllowOnce))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"response":{"request_id":"<uuid:5>","response":{"behavior":"allow","updatedInput":{"content":"new file\n","file_path":"/work/new.txt"}},"subtype":"success"},"type":"control_response"}` + "\n"
+	if string(raw) != want {
+		t.Errorf("control_response =\n%s want\n%s", raw, want)
+	}
+	if len(synth) != 1 || synth[0].Type != v0.TypePermissionResolved || !synth[0].Durable || synth[0].Raw != nil ||
+		string(synth[0].Data) != `{"by":"human","outcome":"allow_once","request_id":"<uuid:5>"}` {
+		t.Errorf("synthesized = %+v", synth)
+	}
+	_ = req
+	// 1 回限り: 2 回目 (別タブの後追いなど) は、何も書かず error。
+	if raw, synth, err := s.EncodeCommand(resolveCmd("<uuid:5>", v0.AllowOnce)); err == nil || raw != nil || synth != nil {
+		t.Errorf("2 回目の応答が通った: %q %+v", raw, synth)
+	}
+	if _, _, err := s.EncodeCommand(resolveCmd("<uuid:5>", v0.RejectOnce)); err == nil {
+		t.Error("応答済みの要求への、逆の応答が通った")
+	}
+}
+
+func TestInteractiveResolveReject(t *testing.T) {
+	s, _ := decodeUntilRequest(t, "permission-interactive-deny")
+	raw, synth, err := s.EncodeCommand(resolveCmd("<uuid:5>", v0.RejectOnce))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"response":{"request_id":"<uuid:5>","response":{"behavior":"deny","message":"The user denied this tool use."},"subtype":"success"},"type":"control_response"}` + "\n"
+	if string(raw) != want || len(synth) != 1 || string(synth[0].Data) != `{"by":"human","outcome":"reject_once","request_id":"<uuid:5>"}` {
+		t.Errorf("raw = %s synth = %+v", raw, synth)
+	}
+}
+
+func TestInteractiveResolveRejects(t *testing.T) {
+	s, _ := decodeUntilRequest(t, "permission-interactive-allow")
+	for name, cmd := range map[string]v0.Command{
+		"未知の ID":          resolveCmd("other", v0.AllowOnce),
+		"allow_always":    resolveCmd("<uuid:5>", v0.AllowAlways),
+		"reject_always":   resolveCmd("<uuid:5>", v0.RejectAlways),
+		"未知の outcome":     resolveCmd("<uuid:5>", "allow"),
+		"outcome が無い":     {Type: v0.CommandPermissionResolve, Data: json.RawMessage(`{"request_id":"<uuid:5>"}`)},
+		"data が JSON でない": {Type: v0.CommandPermissionResolve, Data: json.RawMessage(`x`)},
+	} {
+		if raw, synth, err := s.EncodeCommand(cmd); err == nil || raw != nil || synth != nil {
+			t.Errorf("%s: 通った: %q %+v", name, raw, synth)
+		}
+	}
+	// 失敗した応答は、未決を消さない (その後の正しい応答は通る)。
+	if _, _, err := s.EncodeCommand(resolveCmd("<uuid:5>", v0.AllowOnce)); err != nil {
+		t.Errorf("失敗した応答の後に、正しい応答が通らない: %v", err)
+	}
+}
+
+func TestInteractiveResolveIgnoresClientInput(t *testing.T) {
+	// クライアントが data に input・message を足しても、control_response には出ない。
+	s, _ := decodeUntilRequest(t, "permission-interactive-allow")
+	cmd := v0.Command{Type: v0.CommandPermissionResolve, Data: json.RawMessage(`{"request_id":"<uuid:5>","outcome":"allow_once","input":{"file_path":"/etc/passwd"},"message":"x"}`)}
+	raw, _, err := s.EncodeCommand(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "passwd") || strings.Contains(string(raw), `"x"`) {
+		t.Errorf("クライアントの値が、control_response に出た: %s", raw)
+	}
+}
+
+func TestInteractiveCancelledByAgent(t *testing.T) {
+	es := decodeAll(t, "permission-interactive-interrupt")
+	var got []v0.Envelope
+	for _, e := range es {
+		if e.Type == v0.TypePermissionRequested || e.Type == v0.TypePermissionResolved {
+			got = append(got, e)
+		}
+	}
+	if len(got) != 2 || got[0].Type != v0.TypePermissionRequested || string(got[1].Data) != `{"by":"agent","outcome":"cancelled","request_id":"<uuid:5>"}` {
+		t.Fatalf("要求と撤回 = %+v", got)
+	}
+	last := es[len(es)-1]
+	if last.Type != v0.TypeTurnCompleted || data(t, last)["is_error"] != true {
+		t.Errorf("最後 = %+v", last)
+	}
+	// 撤回された要求には、もう応答できない。
+	s, _ := decodeUntilRequest(t, "permission-interactive-interrupt")
+	if _, err := s.DecodeFrame(readLines(t, "permission-interactive-interrupt")[5]); err != nil { // control_cancel_request
+		t.Fatal(err)
+	}
+	if _, _, err := s.EncodeCommand(resolveCmd("<uuid:5>", v0.AllowOnce)); err == nil {
+		t.Error("撤回済みの要求に応答できた")
+	}
+}
+
+func TestInteractiveDenyFlowKeepsToolFailed(t *testing.T) {
+	es := decodeAll(t, "permission-interactive-deny")
+	for _, e := range es {
+		if e.Type == v0.TypeToolUpdate {
+			if d := data(t, e); d["status"] != v0.ToolFailed || d["error"] != "このファイルへの書き込みは却下します。" {
+				t.Errorf("tool.update = %v", d)
+			}
+			return
+		}
+	}
+	t.Error("tool.update が出ない")
+}
+
+func TestPendingClosedAtTurnEnd(t *testing.T) {
+	// 未決のまま result が来たら、撤回として閉じてから turn.completed を出す。
+	s := Adapter{}.NewStream()
+	for _, l := range []string{
+		`{"type":"control_request","request_id":"a","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"t1","input":{"command":"ls"}}}`,
+		`{"type":"control_request","request_id":"b","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"t2","input":{"command":"pwd"}}}`,
+	} {
+		if es, err := s.DecodeFrame([]byte(l)); err != nil || len(es) != 1 || es[0].Type != v0.TypePermissionRequested {
+			t.Fatalf("%s -> %+v %v", l, es, err)
+		}
+	}
+	es, err := s.DecodeFrame([]byte(`{"type":"result","is_error":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTypes(t, es, v0.TypePermissionResolved, v0.TypePermissionResolved, v0.TypeUsage, v0.TypeTurnCompleted)
+	if d := data(t, es[0]); d["request_id"] != "a" || d["outcome"] != "cancelled" || d["by"] != "agent" {
+		t.Errorf("resolved[0] = %v", d)
+	}
+	if d := data(t, es[1]); d["request_id"] != "b" {
+		t.Errorf("resolved[1] = %v", d)
+	}
+	if _, _, err := s.(*Stream).EncodeCommand(resolveCmd("a", v0.AllowOnce)); err == nil {
+		t.Error("閉じた要求に応答できた")
+	}
+}
+
+func TestControlFramesAreLenient(t *testing.T) {
+	s := Adapter{}.NewStream()
+	req := func(id, req string) string {
+		return `{"type":"control_request","request_id":` + id + `,"request":` + req + `}`
+	}
+	ok := `{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"t","input":{"command":"ls"}}`
+	for _, line := range []string{
+		req(`"x"`, `{"subtype":"something_new"}`),
+		req(`"x"`, `{"subtype":"elicitation"}`),
+		req(`"x"`, `"str"`),
+		`{"type":"control_request","request":` + ok + `}`, // request_id が無い
+		req(`""`, ok), // 空
+		req(`7`, ok),  // 型が違う
+		req(`"x"`, `{"subtype":"can_use_tool","tool_use_id":"t","input":{}}`),                      // tool_name が無い
+		req(`"x"`, `{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"t"}`),              // input が無い
+		req(`"x"`, `{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"t","input":"ls"}`), // input がオブジェクトでない
+		req(`"x"`, `{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"t","input":null}`),
+		`{"type":"control_cancel_request"}`,
+		`{"type":"control_cancel_request","request_id":"never-requested"}`, // 未決でない
+		`{"type":"control_response","response":{"subtype":"success","request_id":"goronation-init"}}`,
+	} {
+		es, err := s.DecodeFrame([]byte(line))
+		if err != nil {
+			t.Fatalf("%s: %v", line, err)
+		}
+		if len(es) != 1 || es[0].Type != v0.TypeAgentFrame || es[0].Durable || string(es[0].Data) != "{}" || string(es[0].Raw) != line {
+			t.Errorf("%s -> %+v", line, es)
+		}
+	}
+	// 応答できない形の要求は、未決に残らない (応答も通らない)。
+	if _, _, err := s.(*Stream).EncodeCommand(resolveCmd("x", v0.AllowOnce)); err == nil {
+		t.Error("agent.frame にした要求に応答できた")
+	}
+}
+
+func TestDuplicateRequestIDDoesNotOverwrite(t *testing.T) {
+	s := Adapter{}.NewStream()
+	first := `{"type":"control_request","request_id":"a","request":{"subtype":"can_use_tool","tool_name":"Write","tool_use_id":"t","input":{"file_path":"/work/ok"}}}`
+	second := `{"type":"control_request","request_id":"a","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"t2","input":{"command":"rm -rf /"}}}`
+	if es, _ := s.DecodeFrame([]byte(first)); len(es) != 1 || es[0].Type != v0.TypePermissionRequested {
+		t.Fatalf("first -> %+v", es)
+	}
+	if es, _ := s.DecodeFrame([]byte(second)); len(es) != 1 || es[0].Type != v0.TypeAgentFrame {
+		t.Fatalf("同じ ID の再要求が、agent.frame にならない: %+v", es)
+	}
+	raw, _, err := s.(*Stream).EncodeCommand(resolveCmd("a", v0.AllowOnce))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "/work/ok") || strings.Contains(string(raw), "rm -rf") {
+		t.Errorf("後の要求の input で、上書きされた: %s", raw)
+	}
+}
+
+// 採取した claude の版が、fixtures と一致すること (版を上げて採り直したら、TestedVersion と ADR 0010 も更新する)。
+func TestTestedVersionMatchesFixtures(t *testing.T) {
+	for _, name := range []string{"permission-interactive-allow", "permission-interactive-deny", "permission-interactive-interrupt"} {
+		found := false
+		for _, line := range readLines(t, name) {
+			var f struct {
+				Type, Subtype string
+				Version       string `json:"claude_code_version"`
+			}
+			if json.Unmarshal(line, &f) == nil && f.Type == "system" && f.Subtype == "init" {
+				found = true
+				if f.Version != TestedVersion {
+					t.Errorf("%s: claude_code_version = %q, TestedVersion = %q", name, f.Version, TestedVersion)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s: system/init が無い", name)
+		}
+	}
+}
+
+// FuzzDecodeAndResolve は、任意の行を流しても panic せず、返す封筒の data が JSON で raw が元の行であること、
+// 未決の要求への応答が、要求時の input 以外を含まないことを確かめる。
+func FuzzDecodeAndResolve(f *testing.F) {
+	for _, l := range []string{
+		`{"type":"control_request","request_id":"a","request":{"subtype":"can_use_tool","tool_name":"Bash","tool_use_id":"t","input":{"command":"ls"}}}`,
+		`{"type":"control_cancel_request","request_id":"a"}`,
+		`{"type":"result","is_error":false}`,
+		`{"type":"control_request","request_id":"a","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{}}}`,
+	} {
+		f.Add([]byte(l), []byte(l))
+	}
+	f.Fuzz(func(t *testing.T, a, b []byte) {
+		s := &Stream{}
+		for _, line := range [][]byte{a, b} {
+			es, err := s.DecodeFrame(line)
+			if err != nil {
+				continue
+			}
+			for _, e := range es {
+				if !json.Valid(e.Data) || string(e.Raw) != string(line) {
+					t.Fatalf("data = %q, raw = %q, line = %q", e.Data, e.Raw, line)
+				}
+				if e.Type != v0.TypePermissionRequested {
+					continue
+				}
+				var d struct {
+					RequestID string          `json:"request_id"`
+					Input     json.RawMessage `json:"input"`
+				}
+				if err := json.Unmarshal(e.Data, &d); err != nil || d.RequestID == "" {
+					t.Fatalf("permission.requested の data = %q", e.Data)
+				}
+				raw, _, err := s.EncodeCommand(resolveCmd(d.RequestID, v0.AllowOnce))
+				if err != nil {
+					continue // 同じ ID の再要求が先に来て、応答済み、など
+				}
+				var got struct {
+					Response struct {
+						Response struct {
+							UpdatedInput json.RawMessage `json:"updatedInput"`
+						} `json:"response"`
+					} `json:"response"`
+				}
+				if json.Unmarshal(raw, &got) != nil || !json.Valid(got.Response.Response.UpdatedInput) {
+					t.Fatalf("control_response = %q", raw)
+				}
+			}
+		}
+	})
 }

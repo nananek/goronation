@@ -1,6 +1,6 @@
 # 0008. 標準形式 v0: エージェントのフレームを、goronation の封筒に写す
 
-- 状態: 採用
+- 状態: 採用 (2026-09-29 追記: 予約にしていた対話の権限要求・応答は、claude について ADR 0010 で確定した)
 - 日付: 2026-09-29
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1) (S1)、`spec/v0` の doc (語彙とフレームの対応の正)、`spec/testdata/golden` (実フレーム)
 

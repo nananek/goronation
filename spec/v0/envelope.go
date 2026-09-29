@@ -39,6 +39,7 @@ const (
 	// 最初のフレームの sessionID から合成する。
 	TypeSessionStarted = "session.started"
 	// TypeTurnStarted は、ターンの開始 (durable)。どちらのエージェントもフレームを出さないので、prompt の送信で合成する。
+	// data は text (送った prompt の全文。画面に「送った文」を出すため。ADR 0010)。
 	TypeTurnStarted = "turn.started"
 	// TypeMessageDelta は、メッセージの途中経過 (durable でない)。予約: 採取では、どちらも部分メッセージを出さなかった。
 	TypeMessageDelta = "message.delta"
@@ -53,13 +54,22 @@ const (
 	// block を含む、type=user のフレーム (ユーザーの発言ではない。tool_use_id が call_id)。opencode は同じ tool フレームの
 	// state.status (completed・error)。
 	TypeToolUpdate = "tool.update"
-	// TypePermissionRequested は、権限の要求 (durable)。予約: 非対話の実行 (claude -p・opencode run) は、要求のフレームを
-	// 出さず、拒否の結果だけが出る。対話での要求は、control protocol (claude)・serve (opencode) の側にあり、未採取。
+	// TypePermissionRequested は、権限の要求 (durable)。data は request_id (応答に使う、エージェントが振った ID)・call_id (対応する
+	// tool 呼び出し)・tool_name・kind (ToolKind)・input (書き換えない)・title (人間向けの短い説明。無ければ空)。claude は、
+	// --permission-prompt-tool stdio で起動したときの、can_use_tool の control_request (ADR 0010)。それ以外の subtype と、応答できない形
+	// (request_id・tool_name が無い、input がオブジェクトでない) の要求は TypeAgentFrame にする。同じ request_id の再要求は、先の要求を
+	// 上書きせず TypeAgentFrame にする。permission_suggestions は載せない。非対話の実行 (claude -p・opencode run) は、要求のフレームを出さず、
+	// 拒否の結果だけが出る。opencode の対話での要求は、serve の側にあり、未採取。
 	TypePermissionRequested = "permission.requested"
-	// TypePermissionResolved は、権限の決着 (durable)。data は by (policy か human)・outcome (PermissionOptionKind)・rule。
-	// 非対話の拒否は、by=policy として合成する。claude は system/permission_denied と、tool_result の is_error と
-	// tool_result_meta の non_execution_kind=user-rejected と、result の permission_denials。opencode は tool の
-	// state.error (拒否の文)。
+	// TypePermissionResolved は、権限の決着 (durable)。data は by・outcome (PermissionOptionKind か、cancelled)。
+	//   - by=policy: 非対話の拒否 (data は by・outcome=reject_once・call_id・tool_name)。claude は system/permission_denied で、
+	//     tool_result の is_error と tool_result_meta の non_execution_kind=user-rejected と、result の permission_denials からは出さない。
+	//     opencode は tool の state.error (拒否の文)。
+	//   - by=human: 対話の応答 (data は by・outcome・request_id)。フレームは無く、CommandPermissionResolve の送信で合成する。
+	//   - by=agent: エージェントが未決の要求を取り下げた (data は by・outcome=cancelled・request_id)。outcome の cancelled は、
+	//     PermissionOptionKind ではない拡張 (ACP の RequestPermissionOutcome の cancelled と同じ意味)。claude は control_cancel_request か、
+	//     未決のまま result (ターンの終わり) が来たとき。
+	// 要求 (request_id) には、決着がちょうど 1 つ付く。
 	TypePermissionResolved = "permission.resolved"
 	// TypeUsage は、使用量 (durable)。data は scope (turn か step)・トークン数・費用・context_window (拡張)。claude は
 	// result の usage・modelUsage (contextWindow・maxOutputTokens を含む。ターンごと)。opencode は step_finish の
@@ -86,7 +96,9 @@ const (
 	CommandPrompt = "prompt"
 	// CommandCancel は、ターンの中断。予約 (未採取)。
 	CommandCancel = "cancel"
-	// CommandPermissionResolve は、権限の要求への応答。data は request_id と outcome (PermissionOptionKind)。予約 (未採取)。
+	// CommandPermissionResolve は、権限の要求への応答。data は request_id と outcome (M1.5 で受けるのは allow_once と reject_once だけ)。
+	// claude は control_response の 1 行 (許可する input は、要求時に保持した値だけから作る。reject の message は固定文)。
+	// 未決でない request_id (未知・応答済み・撤回済み) への応答は error で、何も書かない。合成する TypePermissionResolved (by=human) を返す。
 	CommandPermissionResolve = "permission.resolve"
 )
 
