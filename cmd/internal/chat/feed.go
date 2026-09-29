@@ -24,7 +24,9 @@ type Event struct {
 // size は、Hub のバイト上限の勘定に使う大きさ (JSON の長さと、Event 自体の分)。
 func (e Event) size() int { return len(e.JSON) + 64 }
 
-// DefaultMaxEvent は、Event の JSON の大きさの上限 (バイト)。行の上限の 2 倍 (リングバッファの既定の半分)。これを超える
+// DefaultMaxEvent は、Event の JSON の大きさの上限 (バイト)。< > & はエスケープしない (6 倍に膨らみ、上限以内の 1 行が購読者を外し、
+// 履歴を押し出せたため)。JSON は SSE の data: と JSON.parse だけに使い、HTML には埋め込まない (これは archtest では検査できない)。
+// 行の上限の 2 倍 (リングバッファの既定の半分)。これを超える
 // Event は作らずに、ErrEventTooLarge を返す (エージェントの 1 行が、リングの履歴を押し出す・購読者を外すのを防ぐ)。
 const DefaultMaxEvent = 2 * DefaultMaxLine
 
