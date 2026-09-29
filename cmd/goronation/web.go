@@ -325,6 +325,11 @@ func newWebMuxChat(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, 
 	mux.HandleFunc("POST /api/repos/start", s.requireSession(s.handleRepoStart))
 	mux.HandleFunc("GET /s/{id}", s.requireSession(s.handleTerminalPage))
 	mux.HandleFunc("GET /s/{id}/ws", s.requireSession(s.handleTerminalProxy))
+	// 構造化チャットの画面 (表示だけ。ページは requireSession。静的なファイルは、ほかの /static と同じく認証なし)。
+	mux.HandleFunc("GET /s/{id}/chat", s.requireSession(s.handleChatPage))
+	mux.HandleFunc("GET /static/chat.js", serveEmbedded(chatAssets, "assets/chat/chat.js", "text/javascript; charset=utf-8"))
+	mux.HandleFunc("GET /static/chat-core.js", serveEmbedded(chatAssets, "assets/chat/chat-core.js", "text/javascript; charset=utf-8"))
+	mux.HandleFunc("GET /static/chat.css", serveEmbedded(chatAssets, "assets/chat/chat.css", "text/css; charset=utf-8"))
 	// 構造化チャット (goronation serve --chat の UDS への中継。serve は起こさない)。書き込みは、requireSession の後に、Origin・Content-Type の関門。
 	mux.HandleFunc("GET /s/{id}/events", s.requireSession(s.handleChatEvents))
 	for _, op := range []string{"message", "permission", "stop"} {

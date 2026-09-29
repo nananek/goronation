@@ -16,6 +16,12 @@ import (
 //go:embed vendor/xterm/xterm.js vendor/xterm/xterm.css vendor/xterm/addon-fit.js
 var xtermVendor embed.FS
 
+// chatAssets は、構造化チャットの画面 (ページ・chat-core.js・chat.js・chat.css)。素のファイルで持つ (node で試験し、文字列の禁止を検査できる)。
+// 描画は textContent だけ (chat_ui_test.go が検査)。インラインの script・style は無い (web.go の CSP が禁じる)。
+//
+//go:embed assets/chat/chat.html assets/chat/chat-core.js assets/chat/chat.js assets/chat/chat.css
+var chatAssets embed.FS
+
 // indexHTML・appJS は、goronation web の登録・ログイン画面。ビルド時の依存を増やさないよう、素の HTML・JS を
 // 文字列で埋め込む (npm・バンドラは使わない)。インライン <script> は使わない (web.go の
 // Content-Security-Policy が禁じる)。
@@ -194,6 +200,10 @@ async function loadSessions() {
     a.href = '/s/' + encodeURIComponent(s.id);
     a.textContent = s.id + '  ' + (s.repo || '-') + '  ' + (s.agent || '-') + '  ' + s.created;
     li.appendChild(a);
+    const chatLink = document.createElement('a');
+    chatLink.href = '/s/' + encodeURIComponent(s.id) + '/chat';
+    chatLink.textContent = '  [チャット]';
+    li.appendChild(chatLink);
     list.appendChild(li);
   }
 }
