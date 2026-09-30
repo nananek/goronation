@@ -400,7 +400,7 @@ func TestInitRelayKillAndSquatWindow(t *testing.T) {
 	for i := 0; i < trials; i++ {
 		r := startInit(t, fakeOpencodeScript(t, ""), nil)
 		if got := r.statusLine(); got != `{"ready":true}` {
-			t.Fatalf("試行 %d: 状態の行 = %q", i, got)
+			t.Fatalf("試行 %d: 状態の行 = %q\nstderr:\n%s", i, got, r.stderr.String())
 		}
 		pid, _ := strconv.Atoi(r.record("PID"))
 		var got atomicString
@@ -420,6 +420,7 @@ func TestInitRelayKillAndSquatWindow(t *testing.T) {
 				}
 			}
 			defer l.Close()
+			go func() { <-stop; l.Close() }() // 試行が終わったら、待ち受けを畳む (畳まないと、試行の数だけソケットが残る)
 			close(squatted)
 			for {
 				c, err := l.Accept()
