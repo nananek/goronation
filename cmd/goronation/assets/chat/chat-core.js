@@ -10,9 +10,11 @@
     maxInput: 4000,     // tool の input・出力の、文字数
     maxShort: 300,      // 名前・title・message の、文字数
     maxPending: 64,     // 未決の権限要求の数 (これ以上は、表示しない)
+    maxRequestID: 1000, // request_id の長さ (これより長い要求は、扱えないので、表示しない)
   };
 
   const TRIM_SLACK = 250;
+  const MAX_DEPTH = 40; // 表示する入れ子の深さ (これより深い input は、打ち切る = 全部は表示できない)
   const GENERATION_RE = /^[0-9a-f]{32}$/; // serve の世代 (ADR 0013)
   const OUTCOMES = new Set(['allow_once', 'reject_once', 'cancelled']); // permission.resolved の outcome (これ以外は unknown)
 
@@ -80,9 +82,78 @@
     return last === 0 ? s : out + s.slice(last);
   }
 
-  // clip は、値を文字列にして、n 文字までにする (サロゲートの途中で切らない)。cut は、切ったか (元の長さは total)。
+  // boundedJSON は、v を、JSON.stringify(v, null, 2) と同じ形の文字列にする。ただし、出力が max 文字を超える・入れ子が MAX_DEPTH を超えるところで打ち切る
+  // (cut: true)。JSON.stringify は、深い入れ子で例外を投げ (B1: 例外を「空の input」に化けさせない)、深さの 2 乗の長さの文字列を作る (L-E: CPU の増幅)。
+  // 打ち切った値は、全体の長さが分からない (total: null)。
+  function boundedJSON(v, max) {
+    const out = [];
+    let len = 0;
+    let cut = false;
+    function emit(t) {
+      if (cut) return false;
+      if (len + t.length > max) {
+        out.push(t.slice(0, max - len));
+        len = max;
+        cut = true;
+        return false;
+      }
+      out.push(t);
+      len += t.length;
+      return true;
+    }
+    function quote(t) {
+      const room = max - len + 1;
+      return JSON.stringify(t.length > room ? t.slice(0, room) : t); // 予算を超える分は、切ってから引用する (巨大な文字列を、全部は処理しない)
+    }
+    function walk(x, depth) {
+      if (cut) return;
+      if (x === null || x === undefined) { emit('null'); return; }
+      switch (typeof x) {
+        case 'string': emit(quote(x)); return;
+        case 'number': emit(Number.isFinite(x) ? JSON.stringify(x) : 'null'); return;
+        case 'boolean': emit(x ? 'true' : 'false'); return;
+        case 'object': break;
+        default: emit('null'); return;
+      }
+      if (depth >= MAX_DEPTH) { // 深すぎる: ここから先は、表示しない
+        emit('"..."');
+        cut = true;
+        return;
+      }
+      const pad = '\n' + '  '.repeat(depth + 1);
+      const end = '\n' + '  '.repeat(depth);
+      if (Array.isArray(x)) {
+        if (x.length === 0) { emit('[]'); return; }
+        emit('[');
+        for (let i = 0; i < x.length && !cut; i++) {
+          emit((i === 0 ? '' : ',') + pad);
+          walk(x[i], depth + 1);
+        }
+        if (!cut) emit(end + ']');
+        return;
+      }
+      const keys = Object.keys(x);
+      if (keys.length === 0) { emit('{}'); return; }
+      emit('{');
+      for (let i = 0; i < keys.length && !cut; i++) {
+        emit((i === 0 ? '' : ',') + pad + quote(keys[i]) + ': ');
+        walk(x[keys[i]], depth + 1);
+      }
+      if (!cut) emit(end + '}');
+    }
+    walk(v, 0);
+    return {text: out.join(''), cut: cut, total: cut ? null : len};
+  }
+
+  // clip は、値を文字列にして、n 文字までにする (サロゲートの途中で切らない)。cut は、切ったか (元の長さは total。分からなければ null)。
+  // 文字列以外の値は、boundedJSON (深さ・長さを限る)。
   function clip(v, n, strict) {
-    let s = typeof v === 'string' ? v : (v === null || v === undefined ? '' : safeJSON(v));
+    if (v === null || v === undefined) return {text: '', cut: false, total: 0};
+    if (typeof v !== 'string') {
+      const b = boundedJSON(v, n);
+      return {text: sanitize(b.text, strict), cut: b.cut, total: b.total};
+    }
+    let s = v;
     const total = s.length;
     let cut = false;
     if (s.length > n) {
@@ -100,13 +171,10 @@
     return clip(v, LIMITS.maxShort, true).text;
   }
 
-  function safeJSON(v) {
-    try {
-      const s = JSON.stringify(v, null, 2);
-      return typeof s === 'string' ? s : '';
-    } catch (e) {
-      return '';
-    }
+  // permissionInput は、権限要求の input の表示。input が無い・オブジェクトでない要求は、何を許可するのか見せられないので、「全部は表示できない」(cut) にする。
+  function permissionInput(v) {
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return {text: clip(v, LIMITS.maxInput).text, cut: true, total: null};
+    return clip(v, LIMITS.maxInput);
   }
 
   function obj(v) {
@@ -129,6 +197,8 @@
       dirty: new Map(),   // id → 項目 (描画が要る)
       removed: [],        // 描画から外す項目の id
       reset: false,       // 表示を全部作り直す (世代が変わった)
+      turnActive: false,  // ターンの途中か (turn.started から turn.completed まで。送信欄を無効にする)
+      turnCount: 0,       // 受けた turn.started の数 (送った指示が、受け付けられたかの確認に使う)
     };
   }
 
@@ -189,6 +259,8 @@
       state.trimmed = false;
       state.omitted = false;
       state.ended = null;
+      state.turnActive = false;
+      state.turnCount = 0;
       state.reset = true;
     }
     state.generation = gen;
@@ -221,6 +293,8 @@
         return true;
       }
       case 'turn.started': {
+        state.turnActive = true;
+        state.turnCount++;
         const t = clip(d.text, LIMITS.maxText);
         add(state, {kind: 'user', text: t.text, cut: t.cut, total: t.total});
         return true;
@@ -259,22 +333,26 @@
         return true;
       }
       case 'permission.requested': {
-        const rid = short(d.request_id);
-        if (!rid || state.pending.has(rid) || unresolved(state) >= LIMITS.maxPending) {
+        // request_id は、生の値のまま持つ (承認で、そのまま返す。表示用に、印をつけたり切ったりした値を、返さない: 見えない文字だけが違う
+        // 2 つの要求が、同じ ID に見えて、表示した要求と別の要求を承認させられる)。表示は idShown。
+        const rid = typeof d.request_id === 'string' ? d.request_id : '';
+        if (!rid || rid.length > LIMITS.maxRequestID || state.pending.has(rid) || unresolved(state) >= LIMITS.maxPending) {
           state.ignored++;
           return false;
         }
+        const shown = clip(rid, LIMITS.maxShort, true);
         const it = add(state, {
-          kind: 'permission', requestId: rid, callId: short(d.call_id),
+          kind: 'permission', requestId: rid, idShown: shown.text, idPlain: !shown.cut && shown.text === rid,
+          callId: short(d.call_id),
           toolName: short(d.tool_name), toolKind: short(d.kind),
-          title: short(d.title), input: clip(d.input, LIMITS.maxInput),
+          title: short(d.title), input: permissionInput(d.input),
           state: 'pending', by: '',
         });
         state.pending.set(rid, it);
         return true;
       }
       case 'permission.resolved': {
-        const rid = short(d.request_id);
+        const rid = typeof d.request_id === 'string' ? d.request_id : '';
         const it = rid ? state.pending.get(rid) : undefined;
         if (!it) { // 要求が、履歴から省略された (決着だけが残った)。表示しない
           state.ignored++;
@@ -291,6 +369,7 @@
         return true;
       }
       case 'turn.completed': {
+        state.turnActive = false;
         add(state, {kind: 'turn_end', stopReason: short(d.stop_reason), isError: d.is_error === true});
         return true;
       }
@@ -314,7 +393,7 @@
     return out;
   }
 
-  const api = {LIMITS: LIMITS, sanitize: sanitize, clip: clip, createState: createState, applyHello: applyHello, applyEnd: applyEnd, applyEvent: applyEvent, drain: drain};
+  const api = {isGeneration: (g) => typeof g === 'string' && GENERATION_RE.test(g), LIMITS: LIMITS, sanitize: sanitize, clip: clip, createState: createState, applyHello: applyHello, applyEnd: applyEnd, applyEvent: applyEvent, drain: drain};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.GoroChatCore = api;
 })(typeof self !== 'undefined' ? self : this);

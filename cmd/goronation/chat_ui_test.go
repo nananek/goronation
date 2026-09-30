@@ -34,6 +34,16 @@ var chatForbiddenAPIs = map[string]*regexp.Regexp{
 	"javascript:":              regexp.MustCompile(`javascript:`),
 	"動的 import":                regexp.MustCompile(`\bimport\s*\(`),
 	"cookie・storage":           regexp.MustCompile(`\bdocument\s*\.\s*cookie\b|\blocalStorage\b|\bsessionStorage\b`),
+	// 動的な参照 (N-D): 名前を組み立てて sink を呼ぶ・ブラケットで代入する・第 1 引数が文字列リテラルでない属性・イベント名・遷移。
+	"ブラケットへの代入":                regexp.MustCompile(`\]\s*=[^=]`),
+	"ブラケットで組み立てた名前":            regexp.MustCompile(`\[\s*['"][^'"]*['"]\s*\+|\+\s*['"][^'"]*['"]\s*\]`),
+	"setAttribute(リテラル以外)":     regexp.MustCompile(`setAttribute(NS)?\s*\(\s*[^'"\s]`),
+	"setAttributeNS":           regexp.MustCompile(`setAttributeNS`),
+	"setHTMLUnsafe":            regexp.MustCompile(`setHTMLUnsafe|parseHTMLUnsafe`),
+	"addEventListener(リテラル以外)": regexp.MustCompile(`addEventListener\s*\(\s*[^'"\s]`),
+	"location への代入・遷移":         regexp.MustCompile(`\blocation\s*=[^=]|\blocation\s*\.\s*(assign|replace|href|search|hash|pathname)\s*=|\.\s*(assign|replace)\s*\(|\bhistory\s*\.`),
+	"window.open・フォーム・通信の別経路":  regexp.MustCompile(`\bwindow\s*\.\s*open\b|\.open\s*\(|\.submit\s*\(|XMLHttpRequest|WebSocket|sendBeacon|importScripts|postMessage|\bwindow\s*\.\s*name\b`),
+	"constructor・Function の別名": regexp.MustCompile(`\.\s*constructor\b|\bFunction\b|\bglobalThis\b|\bReflect\b|\bProxy\b`),
 }
 
 var (
@@ -78,6 +88,21 @@ func TestChatUINoDangerousAPIs(t *testing.T) {
 	if got := forbiddenAPIs("// innerHTML は使わない\n/* eval( */\nx.textContent = y; // a.href = 1\n"); len(got) != 0 {
 		t.Errorf("コメントを、禁止の使用と数えた: %v", got)
 	}
+	for name, bad := range map[string]string{
+		"ブラケットへの代入":                "el[k] = x;",
+		"ブラケットで組み立てた名前":            "el['inner' + 'HTML'] = x;",
+		"setAttribute(リテラル以外)":     "el.setAttribute(name, x);",
+		"setAttributeNS":           "el.setAttributeNS(ns, 'a', x);",
+		"setHTMLUnsafe":            "el.setHTMLUnsafe(x);",
+		"addEventListener(リテラル以外)": "el.addEventListener(name, f);",
+		"location への代入・遷移":         "location = x;",
+		"window.open・フォーム・通信の別経路":  "window.open(x);",
+		"constructor・Function の別名": "[].constructor.constructor(x)();",
+	} {
+		if got := forbiddenAPIs(bad); !contains(got, name) {
+			t.Errorf("%s を含む原稿を、検査が見逃した: %q → %v", name, bad, got)
+		}
+	}
 	for _, name := range []string{"assets/chat/chat.js", "assets/chat/chat-core.js"} {
 		b, err := chatAssets.ReadFile(name)
 		if err != nil {
@@ -86,6 +111,48 @@ func TestChatUINoDangerousAPIs(t *testing.T) {
 		if got := forbiddenAPIs(string(b)); len(got) != 0 {
 			t.Errorf("%s が、禁止の API を使っている: %v", name, got)
 		}
+	}
+}
+
+// 書き込み・接続の呼び先は、固定 (fetch は post() の 1 か所だけ。呼び先は base + 固定の path。EventSource は url だけ)。承認・指示・終了は、この 3 つの
+// path 以外へ送れない (動的な参照は、上の検査が見逃しうるので、呼び先そのものを、ここで数える)。
+func TestChatUIWriteTargetsAreFixed(t *testing.T) {
+	b, err := chatAssets.ReadFile("assets/chat/chat.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := jsLineComment.ReplaceAllString(jsBlockComment.ReplaceAllString(string(b), ""), "")
+	if n := len(regexp.MustCompile(`\bfetch\s*\(`).FindAllString(src, -1)); n != 1 {
+		t.Errorf("fetch( が %d 個 (post() の 1 個だけのはず)", n)
+	}
+	if !regexp.MustCompile(`env\.fetch\(base \+ path, \{`).MatchString(src) {
+		t.Error("fetch の呼び先が、base + path でない")
+	}
+	got := map[string]int{}
+	for _, m := range regexp.MustCompile(`\bpost\(\s*([^,)]+)`).FindAllStringSubmatch(src, -1) {
+		got[strings.TrimSpace(m[1])]++
+	}
+	delete(got, "path") // 定義 (async function post(path, body))
+	want := map[string]int{"'/message'": 1, "'/permission'": 1, "'/stop'": 1}
+	for k, v := range got {
+		if want[k] != v {
+			t.Errorf("post の呼び先 %s が %d 回 (想定外)", k, v)
+		}
+	}
+	for k := range want {
+		if got[k] != 1 {
+			t.Errorf("post の呼び先 %s が %d 回 (1 回のはず)", k, got[k])
+		}
+	}
+	if n := len(regexp.MustCompile(`new env\.EventSource\(url\)`).FindAllString(src, -1)); n != 1 {
+		t.Errorf("EventSource の作り方が想定外 (%d)", n)
+	}
+	news := map[string]int{}
+	for _, m := range regexp.MustCompile(`new\s+([\w.]+)`).FindAllStringSubmatch(src, -1) {
+		news[m[1]]++
+	}
+	if want := map[string]int{"Map": 2, "env.TextEncoder": 1, "env.EventSource": 1, "Error": 1}; len(news) != len(want) || news["Map"] != 2 || news["env.TextEncoder"] != 1 || news["env.EventSource"] != 1 || news["Error"] != 1 {
+		t.Errorf("new の使い方が想定外: %v", news)
 	}
 }
 

@@ -10,10 +10,21 @@
 <header>
 <a href="/sessions">← セッション</a>
 <span id="status">接続中</span>
-<span class="readonly">表示だけ (送信・承認は次の版)</span>
 </header>
 <div id="notices"></div>
 <main id="log"></main>
+<div id="bottom">
+<div id="dialogs-head"></div>
+<div id="dialogs"></div>
+<div id="composer">
+<textarea id="msg" rows="3" placeholder="エージェントへの指示 (Ctrl+Enter で送る)"></textarea>
+<div class="composer-row">
+<button id="send" type="button" disabled>送る</button>
+<button id="stop" type="button" disabled>終了</button>
+<span id="write-status"></span>
+</div>
+</div>
+</div>
 <script src="/static/chat-core.js"></script>
 <script src="/static/chat.js"></script>
 </body>
