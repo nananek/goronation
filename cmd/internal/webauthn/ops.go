@@ -31,8 +31,6 @@ type Binding struct {
 
 var requestIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-const maxCredentialIDLen = 1023 // WebAuthn の credential ID の上限 (バイト)
-
 func (b Binding) validate() error {
 	if !requestIDRe.MatchString(b.RequestID) {
 		return errors.New("webauthn: 要求の ID の形が不正")
@@ -43,7 +41,7 @@ func (b Binding) validate() error {
 			return errors.New("webauthn: 解錠に、対象は付けられない")
 		}
 	case OpAddCredential, OpRemoveCredential:
-		if len(b.Target) == 0 || len(b.Target) > maxCredentialIDLen {
+		if len(b.Target) == 0 || len(b.Target) > maxCredentialIDBytes {
 			return errors.New("webauthn: 対象の credential ID が不正")
 		}
 	default:

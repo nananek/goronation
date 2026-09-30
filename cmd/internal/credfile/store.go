@@ -29,13 +29,8 @@ const (
 	largestMaxValue = 64 << 10
 )
 
-// fileLimit は、値の上限 maxValue に対する、ファイルの大きさの上限 (改行の余裕つき。以前の既定 4096 は、値 1024 の 4 倍)。
-func fileLimit(maxValue int) int {
-	if maxValue == defaultMaxValue {
-		return 4096
-	}
-	return maxValue + 16
-}
+// fileLimit は、値の上限 maxValue に対する、ファイルの大きさの上限 (改行の余裕つき。既定では、従来の 4096 のまま)。
+func fileLimit(maxValue int) int { return max(4096, maxValue+16) }
 
 var (
 	// ErrUnsafe は、ディレクトリ・ファイルが、安全な形でない (権限が緩い・所有者が違う・symlink・通常のファイルでない・ハードリンク) ときの error。

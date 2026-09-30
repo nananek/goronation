@@ -430,3 +430,56 @@ func TestCredentialLimit(t *testing.T) {
 		t.Fatal("16 個を超える追加を、始められた")
 	}
 }
+
+// 最悪の大きさ (RP ID 253 文字・credential ID 128 バイト・4 バイト文字 32 個の label を、16 個) でも、状態が credfile の上限に収まる。
+func TestStateFitsWorstCase(t *testing.T) {
+	host := strings.Repeat(strings.Repeat("a", 62)+".", 3) + strings.Repeat("b", 61) // 253 文字
+	c := webauthn.Config{RPID: host, RPName: "x", Origin: "https://" + host}
+	st, err := webauthn.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := must(webauthn.IssueBootstrapToken(ctx, st, 1e9*60))
+	opts, state, err := webauthn.RegisterBegin(ctx, c, st, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newAt := func(i int) *webauthntest.Authenticator {
+		a := newAuth(t)
+		a.UseCredentialID(bytes.Repeat([]byte{byte(i + 1)}, 128))
+		return a
+	}
+	first := newAt(0)
+	resp, _ := first.Register(c.RPID, c.Origin, opts.Challenge)
+	if err := webauthn.RegisterFinish(ctx, c, st, state, resp); err != nil {
+		t.Fatal(err)
+	}
+	label := strings.Repeat("😀", 32)
+	for i := 1; i < 16; i++ {
+		reqID := "r" + strings.Repeat("x", i)
+		b := newAt(i)
+		aopts, astate, err := webauthn.AddBegin(ctx, c, st, reqID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		salt := must(b64.DecodeString(aopts.Extensions.PRF.Eval.First))
+		att, _ := b.RegisterWith(c.RPID, c.Origin, aopts.Challenge, webauthntest.Options{UV: true, Salt: salt})
+		cand, err := webauthn.AddFinish(ctx, c, st, astate, reqID, att)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bind := webauthn.Binding{Op: webauthn.OpAddCredential, Target: cand.CredentialID, RequestID: reqID}
+		oopts, ostate, err := webauthn.OpAuthBegin(ctx, c, st, bind, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oresp, _ := first.AuthenticateWith(c.RPID, c.Origin, oopts.Challenge, webauthntest.Options{UV: true})
+		authz, err := webauthn.OpAuthFinish(ctx, c, st, ostate, bind, oresp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := webauthn.CommitAdd(ctx, st, cand, authz, label); err != nil {
+			t.Fatalf("%d 個目の追加: %v", i+1, err)
+		}
+	}
+}
