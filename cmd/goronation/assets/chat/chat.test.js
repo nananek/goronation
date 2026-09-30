@@ -233,6 +233,7 @@ const BASE = '/s/20260101-000000-abcdef';
 
 function harness() {
   FakeES.all = [];
+  const clock = {t: 1000};
   const doc = new FakeDoc();
   const timers = [];
   const calls = []; // fetch の呼び出し: {url, opts, body, respond(status)}
@@ -241,12 +242,14 @@ function harness() {
     fetch: (url, opts) => new Promise((resolve, reject) => {
       calls.push({url, opts, body: JSON.parse(opts.body), respond: (status) => resolve({status}), fail: () => reject(new Error('net'))});
     }),
-    TextEncoder: TextEncoder,
+    TextEncoder: TextEncoder, now: () => clock.t,
   };
   const app = ui.create(env);
   app.start(BASE + '/events', BASE);
-  return {doc, timers, calls, app, es: () => FakeES.all[FakeES.all.length - 1],
+  return {doc, timers, calls, app, clock, es: () => FakeES.all[FakeES.all.length - 1],
     runTimers() { const t = timers.splice(0); for (const x of t) x.f(); },
+    // 時計を ms 進める (100ms ごとに、タイマーを走らせる: 静止している間の tick)。
+    advance(ms) { for (let done = 0; done < ms; done += 100) { clock.t += Math.min(100, ms - done); const t = timers.splice(0); for (const x of t) x.f(); } },
     // hello を受けて、描画まで進める。
     hello(gen) { this.es().fire('hello', {first_seq: 0, generation: gen || G1}); this.runTimers(); },
     fire(e) { this.es().fire('message', e); },
@@ -843,7 +846,7 @@ test('B2: 枠に収まらない input は、末尾までスクロールするま
   h.app.render();
   assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '見えていない行があるのに、許可できる');
   assert.strictEqual(findBtn(dlg, 'deny').disabled, false, '拒否は、いつでもできる');
-  scrollStepwise(pre, 522 - 84, 80); // 上から下まで、途切れなく
+  readAll(h, pre); // 上から下まで、ゆっくり、途切れなく
   assert.strictEqual(findBtn(dlg, 'approve').disabled, false, '全部を見たのに、許可できない');
 });
 
@@ -895,12 +898,22 @@ function scrollable(h, dlg, scrollHeight, clientHeight) {
   return pre;
 }
 
-// 1 歩が step 以下で、scrollTop を target まで動かし、そのたびに scroll を発火する。
-function scrollStepwise(pre, target, step) {
+// 1 歩が step 以下で、scrollTop を target まで動かし、そのたびに scroll を発火して、dt ミリ秒 (時計) 待つ。
+function scrollStepwise(h, pre, target, step, dt) {
   while (pre.scrollTop < target) {
     pre.scrollTop = Math.min(target, pre.scrollTop + step);
     for (const f of pre.listeners.scroll || []) f();
+    h.advance(dt);
   }
+}
+
+// readAll は、上から下まで、ゆっくり (20px ずつ・200ms ずつ) スクロールして、どの部分も 0.5 秒以上、画面に出す。
+function readAll(h, pre) {
+  pre.scrollTop = 0;
+  for (const f of pre.listeners.scroll || []) f();
+  h.advance(600);
+  scrollStepwise(h, pre, pre.scrollHeight - pre.clientHeight, 20, 200);
+  h.advance(600);
 }
 
 test('B2: 枠に収まる input は、そのまま許可できる。収まらないときは、末尾までスクロールするまで許可できず、理由を出す。末尾を見た後は、上に戻しても許可できる', () => {
@@ -919,7 +932,7 @@ test('B2: 枠に収まる input は、そのまま許可できる。収まらな
   pre.scrollTop = 40; // 途中
   for (const f of pre.listeners.scroll) f();
   assert.strictEqual(findBtn(long, 'approve').disabled, true);
-  scrollStepwise(pre, 522 - 84, 80); // 途切れなく末尾まで
+  readAll(h, pre); // 上から下まで、ゆっくり
   assert.strictEqual(findBtn(long, 'approve').disabled, false);
   assert.ok(!long.textContent.includes('途切れなく'));
   pre.scrollTop = 0;
@@ -1012,8 +1025,8 @@ test('L-H: 一発のジャンプ (End・フリック・スクロールバーの�
   pre.scrollTop = 160;
   fire();
   assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '284〜438 が、まだ未表示');
-  scrollStepwise(pre, 354, 80);
-  assert.strictEqual(findBtn(dlg, 'approve').disabled, false, '全部の範囲を画面に出したのに、許可できない');
+  readAll(h, pre);
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, false, '全部の範囲を、十分な時間、画面に出したのに、許可できない');
   // 大きく飛ばすと、その間は残る (ステップが clientHeight を超える)
   const dlg2 = (() => {
     h.fire(ev(1, 'permission.requested', pendingReq('r2')));
@@ -1039,11 +1052,98 @@ test('L-H: 枠が画面 (下の領域) から外れている間の表示は、�
   pre.getBoundingClientRect = () => ({top: 900, bottom: 984}); // 領域の外 (領域の中で、スクロールされて隠れている)
   h.doc.byId.dialogs.getBoundingClientRect = () => ({top: 400, bottom: 700});
   h.app.render();
-  scrollStepwise(pre, 300 - 84, 40);
+  h.advance(600);
+  scrollStepwise(h, pre, 300 - 84, 20, 200);
   assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '画面に出ていない枠のスクロールで、見たことになった');
   pre.getBoundingClientRect = () => ({top: 500, bottom: 584}); // 領域の中
   pre.scrollTop = 0;
   h.app.render(); // 上端を、画面に出した
-  scrollStepwise(pre, 300 - 84, 40);
+  readAll(h, pre);
   assert.strictEqual(findBtn(dlg, 'approve').disabled, false);
+});
+
+// ---- L-H2: 各部分を、一定の時間 (0.5 秒) 以上、画面に出す ----
+
+function longDialog(h, scrollHeight) {
+  h.fire(ev(h.app.state.lastSeq + 1, 'permission.requested', pendingReq('r' + (h.app.state.lastSeq + 1))));
+  h.runTimers();
+  const dlgs = dialogEls(h);
+  const dlg = dlgs[dlgs.length - 1];
+  const pre = scrollable(h, dlg, scrollHeight || 522, 84);
+  h.app.render();
+  return {dlg, pre};
+}
+
+test('L-H2: 速いスクロール (smooth scroll・連続の PageDown) では、全体を出しても、時間が足りず許可できない', () => {
+  const h = harness();
+  h.hello();
+  const {dlg, pre} = longDialog(h);
+  // smooth scroll: 上から下まで、約 470ms (16ms ごとに 15px)。
+  for (let y = 0; y <= 438; y += 15) {
+    pre.scrollTop = y;
+    for (const f of pre.listeners.scroll) f();
+    h.advance(16);
+  }
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '474ms のスクロールで、許可できた');
+  // 連続の PageDown: 1 歩が clientHeight (84) 未満で、50ms ごと。
+  pre.scrollTop = 0;
+  for (const f of pre.listeners.scroll) f();
+  for (let y = 80; y <= 438; y += 80) {
+    pre.scrollTop = y;
+    for (const f of pre.listeners.scroll) f();
+    h.advance(50);
+  }
+  pre.scrollTop = 438;
+  for (const f of pre.listeners.scroll) f();
+  h.advance(50);
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '高速な PageDown で、許可できた');
+});
+
+test('L-H2: 十分な時間をかければ許可できる。かかる時間は、内容の長さに応じる。止まっている間も、時間は数える', () => {
+  const h = harness();
+  h.hello();
+  const {dlg, pre} = longDialog(h);
+  const t0 = h.clock.t;
+  readAll(h, pre);
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, false);
+  assert.ok(h.clock.t - t0 >= 3000, 'かかった時間が短い: ' + (h.clock.t - t0));
+  // 上端に留まるだけでは、足りない (下の区画は、0 のまま)。
+  const h2 = harness();
+  h2.hello();
+  const b = longDialog(h2);
+  h2.advance(60000);
+  assert.strictEqual(findBtn(b.dlg, 'approve').disabled, true, '上端を見ているだけで、許可できた');
+  // 全体が、1 画面に収まる枠は、時間を待たない。
+  const c = longDialog(h2, 80);
+  h2.app.render();
+  assert.strictEqual(findBtn(c.dlg, 'approve').disabled, false);
+});
+
+test('L-H2: 背景のタブ・枠が領域の外・タイマーの遅れの間は、時間を数えない (1 回の上限 300ms)', () => {
+  const h = harness();
+  h.hello();
+  const {dlg, pre} = longDialog(h);
+  h.doc.hidden = true; // 背景のタブ
+  readAll(h, pre);
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '背景のタブで、時間を数えた');
+  h.doc.hidden = false;
+  // 上限: 1 回の観測で 10 秒進めても、300ms 分しか数えない。
+  const h2 = harness();
+  h2.hello();
+  const b = longDialog(h2);
+  b.pre.scrollTop = 0;
+  h2.app.render();
+  h2.clock.t += 10000; // タイマーが、10 秒遅れた
+  for (const f of b.pre.listeners.scroll) f();
+  const cells = Array.from(h2.app.dialogs.values())[0].cells;
+  assert.ok(cells.every((c) => c <= 300), '上限を超えて数えた: ' + Math.max(...cells));
+});
+
+test('L-H2: 進み具合 (%) を出す', () => {
+  const h = harness();
+  h.hello();
+  const {dlg, pre} = longDialog(h);
+  assert.ok(dlg.textContent.includes('いま 0%'));
+  h.advance(600);
+  assert.ok(/いま [1-9][0-9]?%/.test(dlg.textContent), dlg.textContent.slice(0, 300));
 });

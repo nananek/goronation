@@ -246,43 +246,73 @@
 
     // ---- 権限ダイアログ ----
 
-    // 見た範囲の追跡: 枠 (pre) が、スクロールの各位置で、画面に出していた範囲 [scrollTop, scrollTop + clientHeight] の和が、全体 [0, scrollHeight] を
-    // 覆うまで、許可させない。末尾に一度着いただけ (End キー・フリック・スクロールバーのドラッグの一発のジャンプ) では、途中を見ていない。
-    // スクロールの 1 歩が clientHeight を超えると、その間は、未表示のまま残る (戻って見るまで、許可できない)。
+    // 見た範囲と、見た時間の追跡: input の枠 (pre) の内容を、CELL_PX ごとの区画に分け、各区画が、画面に完全に出ていた時間を、累積する。
+    // すべての区画が DWELL_MS 以上になるまで、許可させない。
+    //   - 末尾に着いただけ (End キー・フリック・スクロールバーのドラッグの一発のジャンプ) では、途中の区画が 0 のまま残る。
+    //   - 速いスクロール (smooth scroll・連続の PageDown) は、区画が画面に出ている時間が短く、条件に届かない。
+    // これは、意図的な高速操作の抑止で、完全な防御ではない (人間が、実際に読んだかは、分からない。待てば条件は満たせる。M2 の内容ハッシュ束縛とは別の問題)。
+    const CELL_PX = 16;
+    const DWELL_MS = 500; // 各区画を、画面に出しておく時間
+    const TICK_MS = 100; // 静止している間も、時間を数える間隔
+    const CREDIT_CAP_MS = 300; // 1 回に数える時間の上限 (背景のタブ・重い処理で、タイマーが遅れた間は、数えない)
     const SEEN_TOLERANCE = 2;
+
+    function nowMs() {
+      return env.now ? env.now() : Date.now();
+    }
 
     // preOnScreen は、枠が、下の領域 (スクロールする) の中で、画面に出ているか。DOM に、位置の API が無い環境 (試験) では、出ているとみなす。
     function preOnScreen(d) {
+      if (doc.hidden === true) return false; // 背景のタブ
       if (typeof d.pre.getBoundingClientRect !== 'function' || typeof dialogsEl.getBoundingClientRect !== 'function') return true;
       const r = d.pre.getBoundingClientRect();
       const c = dialogsEl.getBoundingClientRect();
       return r.top >= c.top - 1 && r.bottom <= c.bottom + 1;
     }
 
-    // recordView は、いまの枠の表示範囲を、見た範囲に足す (連続する・重なる範囲は、まとめる)。
-    function recordView(d) {
-      if (!preOnScreen(d) || d.pre.clientHeight <= 0) return;
-      let a = d.pre.scrollTop;
-      let b = a + d.pre.clientHeight;
-      const rest = [];
-      for (const r of d.seen) {
-        if (r[1] < a - SEEN_TOLERANCE || r[0] > b + SEEN_TOLERANCE) {
-          rest.push(r);
-        } else {
-          a = Math.min(a, r[0]);
-          b = Math.max(b, r[1]);
+    // observe は、直前の表示範囲に、経過時間 (上限つき) を足し、いまの表示範囲を、次の起点にする。スクロールのたびと、TICK_MS ごとに呼ぶ。
+    function observe(d) {
+      const t = nowMs();
+      const n = Math.ceil(d.pre.scrollHeight / CELL_PX);
+      while (d.cells.length < n) d.cells.push(0);
+      d.cells.length = n;
+      if (d.view) {
+        const dt = Math.min(t - d.view.t, CREDIT_CAP_MS);
+        if (dt > 0) {
+          for (let i = 0; i < n; i++) {
+            const top = i * CELL_PX;
+            const bottom = Math.min((i + 1) * CELL_PX, d.pre.scrollHeight);
+            if (top >= d.view.a - SEEN_TOLERANCE && bottom <= d.view.b + SEEN_TOLERANCE) d.cells[i] += dt; // 完全に、画面に出ていた区画だけ
+          }
         }
       }
-      rest.push([a, b]);
-      d.seen = rest;
+      d.view = preOnScreen(d) && d.pre.clientHeight > 0 ? {a: d.pre.scrollTop, b: d.pre.scrollTop + d.pre.clientHeight, t: t} : null;
     }
 
-    // hiddenPart は、input の枠が、スクロールしないと見えない部分を持ち、その全体を、まだ画面に出していないか。枠の高さは限ってあるので、字数が上限以内でも起きる
-    // (エージェントが、key の順を決められる: 危険な内容を、途中や末尾に置ける)。
+    function dwellProgress(d) {
+      if (d.cells.length === 0) return 0;
+      let done = 0;
+      for (const c of d.cells) if (c >= DWELL_MS) done++;
+      return done / d.cells.length;
+    }
+
+    // hiddenPart は、input の枠が、スクロールしないと見えない部分を持ち、その全体を、まだ十分な時間、画面に出していないか。枠の高さは限ってあるので、字数が
+    // 上限以内でも起きる (エージェントが、key の順を決められる: 危険な内容を、途中や末尾に置ける)。
     function hiddenPart(d) {
       if (d.pre === null || d.pre.scrollHeight <= d.pre.clientHeight + 1) return false;
-      recordView(d);
-      return !(d.seen.length === 1 && d.seen[0][0] <= SEEN_TOLERANCE && d.seen[0][1] >= d.pre.scrollHeight - SEEN_TOLERANCE);
+      observe(d);
+      if (dwellProgress(d) >= 1) return false;
+      scheduleTick(d);
+      return true;
+    }
+
+    // scheduleTick は、静止している間も、時間が経つように、TICK_MS 後に、ダイアログを更新する (未決で、まだ条件を満たさない間だけ)。
+    function scheduleTick(d) {
+      if (d.tick !== null || d.removed) return;
+      d.tick = env.setTimeout(() => {
+        d.tick = null;
+        if (!d.removed) refreshDialog(d.item, d);
+      }, TICK_MS);
     }
 
     function approvable(item, d) {
@@ -299,7 +329,7 @@
       const can = dialogCanAnswer(d, item);
       d.approve.disabled = !can || !approvable(item, d);
       d.deny.disabled = !can;
-      if (d.hint) d.hint.textContent = item.input.cut === false && item.idPlain === true && hiddenPart(d) ? 'input が枠に収まらない。上から下まで、途切れなくスクロールして全部を表示すると、許可できる (一気に飛ばすと、間が未表示のまま残る)' : '';
+      if (d.hint) d.hint.textContent = item.input.cut === false && item.idPlain === true && hiddenPart(d) ? 'input が枠に収まらない。上から下まで、途切れなくスクロールし、どの部分も 0.5 秒以上、画面に出すと、許可できる (いま ' + Math.floor(dwellProgress(d) * 100) + '%。一気に飛ばす・速く送ると、足りない)' : '';
     }
 
     async function answer(item, d, outcome) {
@@ -326,7 +356,7 @@
     }
 
     function buildDialog(item) {
-      const d = {el: el('div', 'dialog'), gen: state.generation, busy: false, done: false, approve: null, deny: null, note: null, hint: null, pre: null, seen: []};
+      const d = {el: el('div', 'dialog'), gen: state.generation, busy: false, done: false, approve: null, deny: null, note: null, hint: null, pre: null, cells: [], view: null, tick: null, removed: false, item: item};
       d.el.appendChild(el('div', 'label', '権限の要求'));
       d.el.appendChild(el('div', 'dialog-tool', 'tool: ' + (item.toolName || '(名前なし)') + (item.toolKind ? ' (' + item.toolKind + ')' : '')));
       if (item.title) d.el.appendChild(el('div', 'dialog-title', '説明 (エージェントの自己申告。検証されていない): ' + item.title));
@@ -347,8 +377,7 @@
       d.el.appendChild(d.hint);
       d.el.appendChild(el('div', 'meta', 'request_id: ' + item.idShown));
       d.pre = el('pre', 'input', item.input.text + clipNote(item.input));
-      d.pre.addEventListener('scroll', () => { // スクロールのたびに、見た範囲を足す (一発のジャンプでは、間が残る)
-        recordView(d);
+      d.pre.addEventListener('scroll', () => { // スクロールのたびに、見た範囲・時間を足す (一発のジャンプ・速いスクロールでは、足りない)
         refreshDialog(item, d);
       });
       d.el.appendChild(d.pre);
@@ -359,6 +388,7 @@
     function syncDialogs() {
       for (const [item, d] of Array.from(dialogs.entries())) {
         if (item.state !== 'pending' || state.pending.get(item.requestId) !== item) { // 決着した・履歴から外れた・世代が変わった
+          d.removed = true;
           dialogsEl.removeChild(d.el);
           dialogs.delete(item);
         }
@@ -529,7 +559,7 @@
     const m = /^\/s\/([0-9]{8}-[0-9]{6}-[0-9a-f]{6})\/chat$/.exec(root.location.pathname);
     if (m && root.document.getElementById('log')) {
       const ui = create({
-        document: root.document, EventSource: root.EventSource, fetch: root.fetch.bind(root), setTimeout: root.setTimeout.bind(root),
+        document: root.document, EventSource: root.EventSource, fetch: root.fetch.bind(root), setTimeout: root.setTimeout.bind(root), now: root.performance.now.bind(root.performance),
         TextEncoder: root.TextEncoder, scroller: root.document.scrollingElement,
       });
       ui.start('/s/' + m[1] + '/events', '/s/' + m[1]);
