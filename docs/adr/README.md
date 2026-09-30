@@ -23,7 +23,11 @@
 | [0015](0015-chat-ui-display.md) | チャット画面の表示 (読む側): textContent だけ・危険な文字の印・再接続・項目の上限 (M1.5) | 採用 |
 | [0016](0016-chat-ui-write.md) | チャット画面の書く側: 送信・終了・権限の承認 (M1.5) | 採用 |
 | [0017](0017-chat-start-and-permission-mode.md) | チャットの開始の入口・E2E・権限モード (M1.5) | 採用 |
-| [0018](0018-opencode-serve-adapter.md) | opencode アダプタ (2.x の serve --stdio) の設計: 認証・中継・Landlock・承認・Stream の形 (M2) | 採用 |
+| [0018](0018-opencode-2x-serve-stdio.md) | opencode は 2.x の serve --stdio で起動する (M2) | 採用 |
+| [0019](0019-opencode-request-relay.md) | opencode サーバーへの通信は、socketpair と SCM_RIGHTS の中継で通す (M2) | 採用 |
+| [0020](0020-opencode-token-and-landlock.md) | opencode のトークンは使い捨てにし、読めても繋げない 3 重の守りを置く (M2) | 採用 |
+| [0021](0021-opencode-permission-ask.md) | opencode の承認は、セッション作成時の permissions で固定する (M2) | 採用 |
+| [0022](0022-opencode-stream-shape.md) | opencode の Stream は行のまま、HTTP と SSE は transport 層が写す (M2) | 採用 |
 
 ## 書き方
 
