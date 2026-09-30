@@ -12,12 +12,13 @@ ADR 0029 の L0 で、init は、opencode の起動の証明が済むまで要�
 
 1. **init の状態は、init の標準出力 (ホストとの socketpair の出る側。PR② は未使用) に、JSON を 1 行だけ出して知らせる。** 成功は `{"ready":true}`、失敗は `{"error":"<短い理由>"}`。出した後は何も書かない。失敗のときは、同じ理由を標準エラーにも出し、非 0 で終わる。ホストは、この 1 行を待ってから、control に fd を送る。標準エラーと終了コードだけにしない理由: 「起動中」と「失敗」を、檻の終了を待たずに区別できる。ホストが chat の transport (PR⑥) で読む経路は、この 1 行を読むだけで足りる。
 2. **init はエージェントを知らない。** トークンを渡す環境変数の名前 (`--relay-token-env`)・子の起動の引数・`landlock-exec` で包むか (`--landlock-connect PORT`) は、檻を組む側 (opencode の profile) が渡す。トークンは、子の環境変数にだけ渡し、argv・bwrap の `--setenv` には出さない。`OPENCODE_SERVER_PASSWORD` (旧名) は、子の環境から消す。
-3. **版の検査。** `landlock-exec` の下で `opencode --version` を実行し、出力 (長さ・時間に上限) の先頭が `opencode v2.0.` でなければ、起動を拒否する (ADR 0018)。
-4. **要求のヘッダは許可リスト。** 通すのは `Content-Type`・`Content-Length` (init が付け直す)・`Accept`・`Cache-Control`・`Last-Event-ID` だけ (大文字小文字を問わず・重複は拒否)。それ以外 (アンダースコア版・`X-*`・`Cookie` を含む) は、捨てずに **拒否** (400) する: 送り手はホストだけで、値を組み立てるのもホストなので、許可外が来るのは、ホストの誤りか、攻撃である。
+3. **版の検査。** 檻を組む側が渡す接頭辞 (`--relay-version-prefix`。opencode は `opencode v2.0.`) で、子と同じ `landlock-exec` の下で `<子> --version` を実行し、出力 (4 KiB・10 秒が上限) の先頭が合わなければ、起動を拒否する (ADR 0018)。
+4. **要求のヘッダは許可リスト。** 通すのは `Content-Type`・`Content-Length` (init が付け直す)・`Accept`・`Cache-Control`・`Last-Event-ID` だけ (大文字小文字を問わず・重複は拒否)。`Host`・`Connection`・`Authorization`・`Proxy-Authorization` は、値を捨てて init が付け直す。それ以外 (アンダースコア版・`X-*`・`Cookie`・`User-Agent`・`Accept-Encoding` を含む) は、捨てずに **拒否** (400。`Transfer-Encoding` は 501、`Expect` は 417) する: 送り手はホストだけで、値を組み立てるのもホストなので、許可外が来るのは、ホストの誤りか、攻撃である。
 
 ## 帰結
 
-- ヘッダを増やすには、この ADR を変える。opencode の API が別のヘッダを要るなら、まず実測する。
+- ヘッダを増やすには、この ADR を変える。実物の opencode 2.0.20 で、session の作成・prompt・SSE・承認の返答が、この 4 つだけで通ることを確かめた (`TestRealOpencodeInCage`)。
+- ホストの `relayClient.HTTPClient` は、`net/http` が既定で付ける `User-Agent`・`Accept-Encoding` を付けない (付けると 400)。
 - 起動の結果が 1 行になるので、PR⑥ の transport は、ここに 1 行の読み取りを足す。
 
 ## 代替案

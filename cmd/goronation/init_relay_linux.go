@@ -21,7 +21,7 @@ import (
 	"unsafe"
 )
 
-// relayRun は、--relay-control のときの init の追加の状態 (PR② は、子の起動と、トークンの渡し方を持たない: PR③)。
+// relayRun は、--relay-control のときの init の追加の状態 (control・要求の中継・子の標準入出力の pipe・トークン・子の pidfd)。
 type relayRun struct {
 	ctl   *net.UnixConn
 	relay *requestRelay
@@ -81,9 +81,7 @@ func (r *relayRun) started(onGone func()) {
 
 // close は、init が終わるときの後始末。
 func (r *relayRun) close() {
-	if r.pidfd >= 0 {
-		syscall.Close(r.pidfd)
-	}
+	// pidfd は閉じない (init はこのあと終わる。閉じると、処理中の要求が、別の用途に再利用された番号を poll しうる)。
 	r.ctl.Close()
 	r.stdinW.Close()
 	r.stdoutR.Close()

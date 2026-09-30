@@ -17,14 +17,14 @@ Landlock の TCP connect 制限は、通常の TCP の connect だけを止め�
    - `serve --stdio` による、環境変数の継承の断ち (opencode の挙動で、版に依存する。テストで確かめる)。
    - opencode は、読めない複製 (mode 0111。ADR 0012) から起動する。`environ` を他プロセスから読めなくする。
    - 補助のサブコマンド `goronation landlock-exec --allow-connect <port> -- <exe> …` が、Landlock (TCP connect を egress の proxy のポートだけに制限) と **seccomp** (下の 3) と `no_new_privs` を掛けて `execve` する。opencode とその子孫だけに掛け、init には掛けない。
-3. **seccomp で、Landlock が止めない TCP の経路を塞ぐ。** `socket` は許可リストにする: `AF_UNIX`・`AF_NETLINK` は通し、`AF_INET`・`AF_INET6` は TCP (`SOCK_STREAM`・protocol 0 か 6) だけ通す。MPTCP・SCTP・DCCP・UDP・UDP-Lite・raw・`AF_VSOCK`・`AF_SMC` など、それ以外は `EPERM`。`sendto`・`sendmsg`・`sendmmsg` の flags に `MSG_FASTOPEN`、`io_uring_setup`・`enter`・`register` を `EPERM` にする (io_uring は seccomp を通らず、socket の作成や送信ができるため、予防として塞ぐ)。x86_64 以外の ABI・x32 の syscall も `EPERM`。**実機 (非 root の bwrap の檻) で、MPTCP・SCTP・UDP・MSG_FASTOPEN が EPERM になることを確認した。2.0.20 の 1 ターン (承認つき) が動くことは、socket を許可リストにする前の版で確認した。許可リストの下 (UDP の DNS などが要らないこと) の再確認は、init の統合 (PR③c) で行う。**
+3. **seccomp で、Landlock が止めない TCP の経路を塞ぐ。** `socket` は許可リストにする: `AF_UNIX`・`AF_NETLINK` は通し、`AF_INET`・`AF_INET6` は TCP (`SOCK_STREAM`・protocol 0 か 6) だけ通す。MPTCP・SCTP・DCCP・UDP・UDP-Lite・raw・`AF_VSOCK`・`AF_SMC` など、それ以外は `EPERM`。`sendto`・`sendmsg`・`sendmmsg` の flags に `MSG_FASTOPEN`、`io_uring_setup`・`enter`・`register` を `EPERM` にする (io_uring は seccomp を通らず、socket の作成や送信ができるため、予防として塞ぐ)。x86_64 以外の ABI・x32 の syscall も `EPERM`。**実機 (非 root の bwrap の檻) で、MPTCP・SCTP・UDP・MSG_FASTOPEN が EPERM になることを確認した。実物の 2.0.20 が、init・`landlock-exec`・この許可リストの下の非 root の bwrap の檻で、起動し、承認つきの 1 ターン (shell の実行・provider への通信は proxy 経由) を終えることも確かめた (PR③c の `TestRealOpencodeInCage`)。**
 4. **Landlock か seccomp が使えなければ、起動を拒否する (fail closed)。** Landlock の ABI が 4 未満 (kernel 6.7 未満)・無効、seccomp の設定や ruleset の作成・適用の失敗のどれでも、opencode を起動せず理由を言う。
 
 ## 帰結
 
 - 3 つ目は kernel に依存する。x86_64 以外 (arm64 など) は、syscall 番号と arch を足すまで動かさない (fail closed)。
 - socket 以外 (`sendto` の flags・io_uring) は拒否の一覧で、未知の経路は塞げない。新しい経路が見つかったら足す。Landlock の新しい ABI が MPTCP を扱うなら、見直す。
-- UDP を止めるので、opencode が UDP の DNS を使うなら動かない (檻にネットワークは無く、外向きは proxy 経由なので、要らない見込み。PR③c で確かめる)。接続済みの fd を渡されれば、制限の外で使える (Unix の性質。檻には渡し元が無い)。
+- UDP を止めても、opencode 2.0.20 は動く (DNS は proxy が行う。上の実測)。接続済みの fd を渡されれば、制限の外で使える (Unix の性質。檻には渡し元が無い)。
 - Landlock はポート単位で IP は指定できない。opencode が proxy 以外のローカルポートに繋ぐなら、許可に足す。
 - 同じ uid の子は opencode を kill できる (DoS。受け入れる)。
 
