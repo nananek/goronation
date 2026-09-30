@@ -14,13 +14,13 @@
 
 1. **`GET /events?after=N&generation=G`** (web 経由の `/s/{id}/events` も同じ。web が値を検証して渡す)。`generation` が現在の世代と一致し、`after` が 10 進数の非負整数 (2^53 未満) のときだけ、`seq > N` の durable から再送する。**一致しない・欠ける・不正な値は、エラーにせず、今までどおり全部 (pinned + 直近) を送る。**
 2. `after` が保持している分より前なら、保持している分から送る。**`hello` の `first_seq` は、連続して残っている先頭 (`pinned` でない行の最小の `seq`) とする**。古い `pinned` の行が GC を免れて残っても、`first_seq` はそれより後になり、UI の既存の省略検出 (`first_seq > lastSeq + 1`) が働く。古い `pinned` の行は、同じ SELECT で、`seq` 順に届く。
-3. **未決の権限要求は、`after` と保持の範囲に依らず、再接続で届く。** 読み取りは `SELECT payload FROM events WHERE generation=? AND seq>? AND seq<? ORDER BY seq` (上の `<` は、リングの先頭) で、**`pinned=1` の行は GC で消えない** (ADR 0023 決定 6) ので、`after < 未決の要求の seq < 保持の先頭` でも、同じ SELECT で、`seq` 順に返る。重複は UI の `seq <= lastSeq` の捨てで防ぐ。
-4. **Hub**: `Subscribe()` は変えず、`SubscribeAfter(after)` を足す。同じ Mutex の中で、リングの先頭・購読者の登録を取り、DB から `seq` がリングの先頭より前の行を、ロックの外で読み、リング、ライブの順に続ける。境目に取りこぼしも重複も無い。読み取りは `LIMIT` つきの `seq` の続きから、何回かに分ける (1 回ごとの短い読み取りで、GC や追記と競合しない)。`Conversation` の `Publish`/`Update`/`pin` の意味は変えない。
+3. **未決の権限要求は、`after` と保持の範囲に依らず、再接続で届く。** 読み取りは `SELECT payload FROM events WHERE generation=? AND seq>? AND seq<? ORDER BY seq` (上の `<` は、リングの先頭) で、**`pinned=1` の行は GC で消えない** (ADR 0027 決定 6) ので、`after < 未決の要求の seq < 保持の先頭` でも、同じ SELECT で、`seq` 順に返る。重複は UI の `seq <= lastSeq` の捨てで防ぐ。
+4. **Hub**: `Subscribe()` は変えず、`SubscribeAfter(after)` を足す。同じ Mutex の中で、リングの先頭・購読者の登録を取り、DB から `seq` がリングの先頭より前の行 (書き込み済みの範囲 W まで。ADR 0027 決定 3) を、ロックの外で読み、リング、ライブの順に続ける。境目に取りこぼしも重複も無い。読み取りは `LIMIT` つきの `seq` の続きから、何回かに分ける (1 回ごとの短い読み取りで、GC や追記と競合しない)。`Conversation` の `Publish`/`Update`/`pin` の意味は変えない。
 5. **SSE**: 各イベントに `id: <seq>` の行を足す (`Last-Event-ID` ヘッダも、クエリより弱い扱いで受ける)。`id:` の値は 10 進数だけ。**`Last-Event-ID` だけで `generation` が無い場合は、世代を確かめられないので、無視して全再送する。** web の中継が許す行に `id: ` を足すが、値が 10 進数以外なら、今までどおり止める。
 6. `hello` に `resumed` (`after` が効いたか)・`durable` (ADR 0025) を足す。UI は未知の欄を無視する。
 7. **UI の変更は数行**: 再接続の URL に `lastSeq` と世代を付けることと、`resumed` のとき省略の印を出さないことだけ (OpenCode 対応の UI 変更と同じファイルなので、最小にする)。
 8. **遅い購読者**: DB から読んでいる間にライブのキューが溢れると、今までどおり外される。外された側は進んだ `after` で繋ぎ直すので、1 回ごとに前進する。
-9. **実装 PR への申し送り**: (a) 全セッションの合計の上限は、serve の起動時の走査で確かめる (ADR 0023 決定 6)。(b) web の `readSSEEvents` の許可リストの変更は、注入の攻撃面として、実装 PR の攻撃者視点レビューの対象にする。
+9. **実装 PR への申し送り**: (a) 全セッションの合計の上限は、serve の起動時の走査で確かめる (ADR 0027 決定 7)。(b) web の `readSSEEvents` の許可リストの変更は、注入の攻撃面として、実装 PR の攻撃者視点レビューの対象にする。
 
 ## 帰結
 
