@@ -28,7 +28,9 @@
 | [0020](0020-opencode-token-and-landlock.md) | opencode のトークンは使い捨てにし、読めても繋げない 3 重の守りを置く (M2) | 採用 |
 | [0021](0021-opencode-permission-ask.md) | opencode の承認は、セッション作成時の permissions で固定する (M2) | 採用 |
 | [0022](0022-opencode-stream-shape.md) | opencode の Stream は行のまま、HTTP と SSE は transport 層が写す (M2) | 採用 |
-| [0023](0023-chat-durable-event-log.md) | chat の耐久イベントログ: 起動単位のファイル・`after=seq` の再接続 (M2) | 採用 |
+| [0023](0023-chat-durable-event-log.md) | chat の耐久イベントログ: 起動単位のファイルに、durable だけを残す (M2) | 採用 |
+| [0024](0024-chat-sse-resume.md) | chat の SSE 再接続: `after=seq`・`generation`・Hub の境目 (M2) | 採用 |
+| [0025](0025-chat-event-log-degrade.md) | chat の耐久イベントログの失敗は、縮退して知らせる (M2) | 採用 |
 
 ## 書き方
 
