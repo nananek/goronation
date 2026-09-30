@@ -216,11 +216,11 @@ const requireLandlockEnv = "GORO_REQUIRE_BWRAP" // CI で必須にする環境�
 
 func requireLandlock(t *testing.T) {
 	t.Helper()
-	if runtime := landlockSupported(); runtime != "" {
+	if reason := landlockSupported(); reason != "" {
 		if os.Getenv(requireLandlockEnv) == "1" {
-			t.Fatalf("%s=1 だが Landlock (ABI 4 以上) を使えない: %s", requireLandlockEnv, runtime)
+			t.Fatalf("%s=1 だが Landlock (ABI 4 以上) を使えない: %s", requireLandlockEnv, reason)
 		}
-		t.Skipf("Landlock (ABI 4 以上) を使えないため skip する (%s=1 で必須になる): %s", requireLandlockEnv, runtime)
+		t.Skipf("Landlock (ABI 4 以上) を使えないため skip する (%s=1 で必須になる): %s", requireLandlockEnv, reason)
 	}
 }
 
@@ -242,6 +242,24 @@ func init() {
 // landlockProbe は、landlock-exec の下で動く子: 引数 (許可ポート・許可外ポート) に対して、試した結果を "名前 => 結果" の行で出す。
 func landlockProbe(args []string) int {
 	okPort, badPort := args[0], args[1]
+	if len(args) > 2 && args[2] == "listen" { // 檻の中: 制限の下で、自分で 2 つのポートを待ち受ける (bind は制限されない)
+		for _, p := range []string{okPort, badPort} {
+			l, err := net.Listen("tcp", "127.0.0.1:"+p)
+			if err != nil {
+				fmt.Printf("listen-%s => %v\n", p, err)
+				return 1
+			}
+			go func() {
+				for {
+					c, err := l.Accept()
+					if err != nil {
+						return
+					}
+					c.Close()
+				}
+			}()
+		}
+	}
 	out := func(name string, err error) {
 		r := "OK"
 		if err != nil {
@@ -337,28 +355,38 @@ func landlockProbe(args []string) int {
 		}
 	}
 	// 孫も同じ制限を受ける (fork された子が、許可外のポートに繋げない)。
-	cmd := exec.Command(os.Args[0], helperArg, "landlock-grandchild", badPort)
-	o, _ := cmd.Output()
+	gc := []string{helperArg, "landlock-grandchild", badPort}
+	if len(os.Args) < 2 || os.Args[1] != helperArg { // 檻の中 (偽のエージェント): 場面の名前で選ぶ
+		gc = []string{"landlock-grandchild", badPort}
+	}
+	cmd := exec.Command(os.Args[0], gc...)
+	o, err := cmd.Output()
+	if err != nil {
+		o = append([]byte("exec-error: "+err.Error()+" "), o...)
+	}
 	fmt.Printf("grandchild-connect-denied => %s\n", strings.TrimSpace(string(o)))
 	return 0
 }
 
 func init() {
-	helpers["landlock-grandchild"] = func(args []string) int {
-		c, err := net.Dial("tcp", "127.0.0.1:"+args[0])
-		if err == nil {
-			c.Close()
-			fmt.Println("OK")
-			return 0
-		}
-		var en syscall.Errno
-		if errors.As(err, &en) {
-			fmt.Println(en.Error())
-		} else {
-			fmt.Println(err.Error())
-		}
+	helpers["landlock-grandchild"] = landlockGrandchild
+}
+
+// landlockGrandchild は、landlockProbe が起こす孫: 許可外のポートに繋ぐ試みの結果 (OK か errno の文字列) を出す。
+func landlockGrandchild(args []string) int {
+	c, err := net.Dial("tcp", "127.0.0.1:"+args[0])
+	if err == nil {
+		c.Close()
+		fmt.Println("OK")
 		return 0
 	}
+	var en syscall.Errno
+	if errors.As(err, &en) {
+		fmt.Println(en.Error())
+	} else {
+		fmt.Println(err.Error())
+	}
+	return 0
 }
 
 // listenLocal は、127.0.0.1 の空きポートで待ち受け、接続を受けて閉じ続ける listener を返す。
@@ -516,4 +544,46 @@ func TestRealLockdownWiring(t *testing.T) {
 
 func runtimeFuncName(f any) string {
 	return runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
+}
+
+// fakeLandlockInCage は、檻の中の偽のエージェント: 空きポートを 2 つ選び、自分を landlock-exec の下で再実行する (landlock-incage-probe が、
+// 制限の下で、2 つのポートを自分で待ち受け、試す)。本物の init が、opencode を landlock-exec で包んで起動するのと同じ形 (ADR 0020)。
+func fakeLandlockInCage() int {
+	var ports [2]string
+	for i := range ports {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			fmt.Println("listen-error=" + err.Error())
+			return 1
+		}
+		ports[i] = strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
+		defer l.Close()
+	}
+	// 上の listener は、exec 前に閉じる (close-on-exec)。ポートの番号だけを、制限の下の子に渡す。
+	return runLandlockExec([]string{"--allow-connect", ports[0], "--", os.Args[0], "landlock-incage-probe", ports[0], ports[1], "listen"}, os.Stderr)
+}
+
+// 実 bwrap の檻 (非 root): 檻の中でも、landlock-exec の制限が効く。許可ポートには繋がり、許可外は EACCES・MPTCP・MSG_FASTOPEN・io_uring は EPERM。
+// 孫も同じ制限を受ける。bwrap の userns の中で Landlock・seccomp が掛かることの確認 (CI の runner は非 root)。
+func TestLandlockExecInBwrapCage(t *testing.T) {
+	requireLandlock(t)
+	c := newChatCageFixture(t, true, "landlock-incage")
+	out := c.runPipe(t)
+	got := map[string]string{}
+	for _, l := range strings.Split(out, "\n") {
+		if k, v, ok := strings.Cut(l, " => "); ok {
+			got[k] = v
+		}
+	}
+	for k, w := range map[string]string{
+		"bind-listen": "OK", "connect-allowed": "OK", "connect-denied": "permission denied/13",
+		"socket-mptcp": "operation not permitted/1", "sendto-fastopen": "operation not permitted/1",
+		"sendmsg-fastopen": "operation not permitted/1", "sendmmsg-fastopen": "operation not permitted/1",
+		"io_uring_setup": "operation not permitted/1", "nonewprivs": "1", "seccomp": "2",
+		"grandchild-connect-denied": "permission denied",
+	} {
+		if got[k] != w {
+			t.Errorf("%s = %q, want %q\n%s", k, got[k], w, out)
+		}
+	}
 }
