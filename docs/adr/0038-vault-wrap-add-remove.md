@@ -14,7 +14,7 @@
 2. **`addWrap` は、追加だけ。** 同じ credential ID のラップが既にあれば、エラー (単純な INSERT。置き換えない)。
 3. **追加の認可は、既存の passkey (authorizer) だけで行う。** authorizer の PRF が、同じ要求の中で、自分のラップを実際に復号できること。解錠中かどうかは見ない。追加する側 (candidate) の PRF は、検証できないので、認可には使わず、ラップを作るのにだけ使う。candidate は、web のログインに登録済みで、Vault に無い passkey だけ。その salt は、デーモンが要求の始めに作る (ADR 0033)。
 4. **`removeWrap` の条件**: 解錠済み・削除する passkey とは別の passkey (authorizer) の証明・最後の 1 つは消せない。削除は、将来の解錠だけを止める。既に本体鍵を得た者は、持ち続ける (全部の失効は reset)。
-5. **確認**: 追加・削除の challenge は、操作の種類・対象の credential ID・要求の ID に束縛する。authorizer の認証は、ADR 0035 の R1〜R4 を満たす儀式で行い、両方の画面に、操作 (「passkey の追加」「passkey の削除」) と、対象の credential ID の先頭を出す。これが無いと、乗っ取られたセッションが始めた操作を、利用者は見分けられない。守りは、既存の passkey で、利用者が「この credential を足す・消す」と知って承認することだけである。
+5. **確認**: 追加・削除の challenge は、操作の種類・対象の credential ID・要求の ID に束縛する。authorizer の認証は、ADR 0035 の R1〜R4 を満たす儀式で行い、両方の画面に、操作 (「passkey の追加」「passkey の削除」) と、対象の credential ID の先頭を出す。これが無いと、乗っ取られたセッション (M1) が始めた操作を、利用者は見分けられない。束縛と表示は `web` が担うので、`web` の乗っ取り (M2) は守れない (ADR 0037)。守りは、既存の passkey で、利用者が「この credential を足す・消す」と知って承認することだけである。
 6. **追加・削除は、監査の記録に残す** (ADR 0034 決定 5)。
 7. SAS の経路が決まるまで、追加・削除の実装は入れない (ADR 0035)。
 
