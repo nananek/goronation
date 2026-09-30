@@ -21,6 +21,7 @@ import (
 // goronation init の終了コード。子の終了コードは、そのまま返す (シグナルなら 128+番号)。
 const (
 	exitUsage    = 2   // 引数が不正
+	exitLockdown = 124 // landlock-exec: 制限を掛けられず、EXE を起動しなかった
 	exitInit     = 125 // 子を起動する前に、init 自身が失敗した
 	exitNoExec   = 126 // 子を実行できない
 	exitNotFound = 127 // 子が見つからない

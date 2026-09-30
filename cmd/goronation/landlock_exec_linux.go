@@ -25,9 +25,6 @@ EPERM にする) と no_new_privs を掛けてから、exec する (ADR 0020)。
   --allow-connect PORT[,PORT...]   connect を許す TCP のポート (1 つ以上。egress の proxy のポート)
 `
 
-// exitLockdown は、制限を掛けられず、EXE を起動しなかったときの終了コード。
-const exitLockdown = 124
-
 // Landlock・seccomp の定数 (x86_64 の syscall 番号。ほかの arch は、実行時に断る)。
 const (
 	sysLandlockCreateRuleset = 444

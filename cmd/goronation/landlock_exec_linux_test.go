@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -189,6 +190,56 @@ func TestLandlockExecFailsClosed(t *testing.T) {
 				t.Errorf("終了コード = %d, want %d", code, wantCode)
 			}
 		})
+	}
+}
+
+// Landlock・seccomp・no_new_privs・exec は、全部同じ OS スレッドで行われること (LockOSThread)。固定を外すと、ゴルーチンが手順の間に別のスレッドへ
+// 移り、制限を掛けたスレッドと違うスレッドが exec する = 制限なしで EXE が動く (黙って fail open)。各手順の間で Gosched し、
+// 他のゴルーチンが動いている状態で、手順ごとの gettid が全部同じかを、多数回確かめる。
+func TestLandlockExecStaysOnOneThread(t *testing.T) {
+	stop := make(chan struct{})
+	defer close(stop)
+	for i := 0; i < 2*runtime.GOMAXPROCS(0); i++ {
+		go func() {
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					runtime.Gosched()
+				}
+			}
+		}()
+	}
+	for i := 0; i < 3000; i++ {
+		var tids []int
+		step := func() error {
+			runtime.Gosched()
+			tids = append(tids, syscall.Gettid())
+			return nil
+		}
+		l := lockdown{
+			arch:       func() string { return "amd64" },
+			abi:        func() (int, error) { step(); return 6, nil },
+			noNewPrivs: step,
+			landlock:   func([]int) error { return step() },
+			seccomp:    step,
+			exec:       func(string, []string, []string) error { step(); return errors.New("exec を模す") },
+		}
+		done := make(chan struct{})
+		go func() { // 固定したゴルーチンは、終わるとスレッドごと捨てられる
+			defer close(done)
+			runLandlockExecWith([]string{"--allow-connect", "3128", "--", "/bin/true"}, io.Discard, l)
+		}()
+		<-done
+		for _, id := range tids {
+			if id != tids[0] {
+				t.Fatalf("反復 %d: 手順が別の OS スレッドで動いた: %v (LockOSThread が外れている)", i, tids)
+			}
+		}
+		if len(tids) != 5 {
+			t.Fatalf("手順の数 = %d, want 5", len(tids))
+		}
 	}
 }
 
