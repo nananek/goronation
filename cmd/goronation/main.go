@@ -13,6 +13,7 @@ const usage = `使い方: goronation <サブコマンド> [引数...]
   export    セッションの成果を bundle にして取り出す (goronation export -h)
   sessions  セッションの一覧を表示する (goronation sessions -h)
   auth      資格情報 (github のトークン) を、ホストのファイルに保存する (goronation auth -h)
+  vault     Vault (passkey の PRF で封じた資格情報の保管庫) を、シェルから操作する。reset だけ (goronation vault -h)
   pr        PR を作る (檻の中。goronation run --push が要る) か、ready for review にする (ホスト) (goronation pr -h)
   mcp       MCP (Model Context Protocol) のサーバーとして動く (檻の中。goronation run --push が、エージェントに自動で登録する)
   serve     UDS 越しにだけ繋がる、端末ビューの WebSocket サーバーを起こす (goronation serve -h。goronation web が使う)
@@ -39,6 +40,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return runSessions(args[1:], stdout, stderr)
 	case "auth":
 		return runAuth(args[1:], os.Stdin, stdout, stderr)
+	case "vault":
+		return runVault(args[1:], os.Stdin, stdout, stderr)
 	case "pr":
 		return runPr(args[1:], stdout, stderr)
 	case "mcp":
