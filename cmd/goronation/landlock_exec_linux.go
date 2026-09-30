@@ -18,7 +18,7 @@ import (
 
 const landlockExecUsage = `使い方: goronation landlock-exec --allow-connect PORT[,PORT...] -- EXE [ARGS...]
 
-EXE (絶対 path) を、Landlock (TCP の connect を、許可したポートだけにする) と seccomp (Landlock が止めない MPTCP・MSG_FASTOPEN・io_uring を
+EXE (絶対 path) を、Landlock (TCP の connect を、許可したポートだけにする) と seccomp (Landlock が止めない MPTCP・SCTP・UDP など TCP 以外の inet の socket・MSG_FASTOPEN・io_uring を
 EPERM にする) と no_new_privs を掛けてから、exec する (ADR 0020)。制限は EXE とその子孫に掛かる。どれか 1 つでも掛けられなければ、EXE を起動せず、
 理由を言って終わる (fail closed)。Landlock の ABI が 4 (Linux 6.7) 未満・x86_64 以外では起動しない。
 
