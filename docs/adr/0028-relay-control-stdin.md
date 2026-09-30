@@ -1,6 +1,6 @@
 # 0028. 要求の中継の control は init の標準入力にし、HTTP の解釈と上限を固定する (M2)
 
-- 状態: 採用
+- 状態: 採用 (2026-09-30 に追記: 横取りの「PR③ で再検討」は ADR 0029、ヘッダの許可リストは ADR 0030 が引き継いだ)
 - 日付: 2026-09-30
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、ADR 0012・0019・0020、`cmd/goronation/relay_http.go`・`relay_control_linux.go`・`init_relay_linux.go`
 
