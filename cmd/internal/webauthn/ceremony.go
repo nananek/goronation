@@ -157,6 +157,8 @@ func IssueBootstrapToken(ctx context.Context, st *Store, ttl time.Duration) (str
 	if err != nil {
 		return "", err
 	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
 	state, err := st.load(ctx)
 	if err != nil {
 		return "", err
@@ -367,6 +369,8 @@ func VerifySession(ctx context.Context, st *Store, token string) error {
 // 第三者が正規利用者のセッションを強制失効させられる (goronation serve のハンドラは、有効なセッション
 // cookie を提示できたときだけこれを呼ぶ)。
 func Logout(ctx context.Context, st *Store) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 	state, err := st.load(ctx)
 	if err != nil {
 		return err

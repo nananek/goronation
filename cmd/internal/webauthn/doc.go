@@ -23,6 +23,8 @@
 //
 // # 限界
 //
+//   - 状態の「読んで保存」の直列化 (Store.mu) はプロセスの中だけ。別プロセスの CLI (IssueBootstrapToken) が、web の書き込みと重なると、
+//     どちらかの更新が失われうる (ファイルロックは未実装)。
 //   - signCount のクローン検知・レート制限・total lockout は無い。S9 (iPhone 実機) で、PRF・ED の実際の挙動を確かめる。
 //   - 追加した passkey の PRF が、作成時に返らない場合の再認証は、未実装。SAS (ADR 0035) の配線も、この package の外。
 package webauthn

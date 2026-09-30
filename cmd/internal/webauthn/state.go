@@ -56,7 +56,8 @@ type persistedState struct {
 // credfile.Store 経由でホストのファイルに保存する。
 type Store struct {
 	cf *credfile.Store
-	// mu は、読んで書き換えて保存する操作 (passkey の追加・削除・signCount の更新) を、直列にする。
+	// mu は、読んで書き換えて保存する全ての操作 (passkey の追加・削除・signCount の更新・Logout・ブートストラップトークンの発行) を、
+	// 直列にする (取らない経路があると、古い状態を書き戻して、削除などを巻き戻す)。プロセスの中だけ: 別プロセスの CLI とは直列にならない。
 	mu sync.Mutex
 	// used は、使用済みの操作つきの認証 (OpAuthFinish) の challenge (期限まで)。同じ応答の再送を断る。プロセスの中だけ。
 	used map[string]int64
