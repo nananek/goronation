@@ -512,16 +512,6 @@ func TestParseCOSEPublicKeyRejectsTrailingBytes(t *testing.T) {
 	}
 }
 
-func TestParseAuthenticatorDataRejectsExtensions(t *testing.T) {
-	h := sha256.Sum256([]byte(testRPID))
-	buf := append([]byte{}, h[:]...)
-	buf = append(buf, flagUP|flagED) // AT なし・ED あり
-	buf = append(buf, 0, 0, 0, 0)
-	if _, err := parseAuthenticatorData(buf); err == nil {
-		t.Fatal("拡張データがあるのに parseAuthenticatorData が成功した")
-	}
-}
-
 func TestParseAuthenticatorDataRejectsTooShort(t *testing.T) {
 	if _, err := parseAuthenticatorData(make([]byte, 10)); err == nil {
 		t.Fatal("短すぎる authData なのに parseAuthenticatorData が成功した")

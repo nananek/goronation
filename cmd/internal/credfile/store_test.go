@@ -567,3 +567,35 @@ func TestTokenRetriesWhenReplacedWhileReading(t *testing.T) {
 	}
 	noLeak(t, "置き換わり続ける", err)
 }
+
+func TestNewSizedRaisesValueLimitOnly(t *testing.T) {
+	dir := t.TempDir()
+	big, err := NewSized(dir, 16<<10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := strings.Repeat("a", 5000)
+	if err := big.Save("wide", credential.New(value)); err != nil {
+		t.Fatalf("大きい上限の Store が、5000 バイトを保存できない: %v", err)
+	}
+	if s, err := big.Token(context.Background(), "wide"); err != nil || s.Reveal() != value {
+		t.Fatalf("Token: %v", err)
+	}
+	// 既定の Store は、1024 バイトを超える値を、保存も読みもしない。
+	def, _ := New(dir)
+	if err := def.Save("wide2", credential.New(value)); err == nil {
+		t.Fatal("既定の Store が、5000 バイトを保存した")
+	}
+	if _, err := def.Token(context.Background(), "wide"); err == nil {
+		t.Fatal("既定の Store が、大きい値を読んだ")
+	}
+	// 値の形の検査 (印字できる ASCII 1 語) は、上限に関わらず効く。
+	if err := big.Save("sp", credential.New("a b")); err == nil {
+		t.Fatal("空白を含む値を保存できた")
+	}
+	for _, n := range []int{0, -1, 64<<10 + 1} {
+		if _, err := NewSized(dir, n); err == nil {
+			t.Fatalf("NewSized(%d) が成功した", n)
+		}
+	}
+}

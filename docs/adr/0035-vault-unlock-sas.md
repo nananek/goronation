@@ -25,7 +25,7 @@ WebAuthn の RP ID・origin の検証は、「正しいサイトからの要求�
 3. **S9 で確かめること。**
    - iPhone の Safari (と Chrome) が、作成時 (`prf.enabled`) と認証時 (`prf.results`) に PRF を返すか (passkey の種類・OS の版ごと)。
    - PRF 拡張なしで作った既存の passkey で、認証時に PRF が得られるか (得られなければ、登録のやり直し)。
-   - 作成時・認証時の authenticatorData に、ED (拡張データ) フラグが立つか (`cmd/internal/webauthn/authdata.go` は ED を拒否するので、立つなら登録が失敗する)。
+   - 作成時・認証時の authenticatorData に、ED (拡張データ) フラグが立つか (`cmd/internal/webauthn/authdata.go` は、許可リスト (`hmac-secret`・`credProtect`) のキーだけを受け、他は拒否する。ADR 0039)。
    - passkey ごとの salt で、同じ出力が繰り返し出るか。同期された passkey が別の端末でも同じ出力か。複数の passkey の出力は独立か。
    - RP ID を `tailscale serve` の名前に固定できるか。PRF 出力を、iPhone のブラウザから `web` 経由でデーモンへ送る形で完結するか。
    - R1〜R4: 2 台の画面に同じコードを出せるか。手間と時間が、認証の期限内で実用に耐えるか。画面を切り替えても状態が残るか。A〜C のどれが使えるか。

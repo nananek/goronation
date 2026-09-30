@@ -23,10 +23,19 @@ import (
 const (
 	// dirName は、状態ディレクトリの下の、資格情報のディレクトリの名前。
 	dirName = "credentials"
-	// maxFile は、読むファイルの大きさの上限 (バイト)。maxValue は、値の長さの上限。
-	maxFile  = 4096
-	maxValue = 1024
+	// defaultMaxValue は、値の長さの上限の既定 (バイト)。ファイルの上限 (maxFile) は、値に改行 1 つの余裕を足したもの。
+	defaultMaxValue = 1024
+	// largestMaxValue は、NewSized が許す、値の長さの上限の最大 (バイト)。
+	largestMaxValue = 64 << 10
 )
+
+// fileLimit は、値の上限 maxValue に対する、ファイルの大きさの上限 (改行の余裕つき。以前の既定 4096 は、値 1024 の 4 倍)。
+func fileLimit(maxValue int) int {
+	if maxValue == defaultMaxValue {
+		return 4096
+	}
+	return maxValue + 16
+}
 
 var (
 	// ErrUnsafe は、ディレクトリ・ファイルが、安全な形でない (権限が緩い・所有者が違う・symlink・通常のファイルでない・ハードリンク) ときの error。
@@ -44,20 +53,29 @@ var beforeRename func()
 
 // Store は、<state>/credentials の下に資格情報を置く credential.Source。
 type Store struct {
-	dir string
+	dir      string
+	maxValue int // 値の長さの上限
+	maxFile  int // 読むファイルの大きさの上限
 }
 
 var _ credential.Source = (*Store)(nil)
 
 // New は、状態ディレクトリ stateDir (絶対・クリーン。制御文字なし) の Store を返す。何も作らない (作るのは Save)。
-func New(stateDir string) (*Store, error) {
+func New(stateDir string) (*Store, error) { return NewSized(stateDir, defaultMaxValue) }
+
+// NewSized は、New で、値の長さの上限を maxValue (1〜64 KiB) にした Store を返す。既定の 1 KiB に収まらない値 (複数の passkey の
+// 状態など) を、置く場所のため。上限を上げても、値の形の検査 (印字できる ASCII 1 語) と、ファイルの安全の検査は、そのまま。
+func NewSized(stateDir string, maxValue int) (*Store, error) {
+	if maxValue < 1 || maxValue > largestMaxValue {
+		return nil, fmt.Errorf("credfile: 値の上限 %d が範囲外 (1〜%d)", maxValue, largestMaxValue)
+	}
 	switch {
 	case !filepath.IsAbs(stateDir) || filepath.Clean(stateDir) != stateDir:
 		return nil, fmt.Errorf("credfile: 状態ディレクトリ %q が、絶対・クリーンな path でない", stateDir)
 	case strings.ContainsFunc(stateDir, func(r rune) bool { return r < 0x20 || r == 0x7f }):
 		return nil, fmt.Errorf("credfile: 状態ディレクトリ %q が、制御文字を含む", stateDir)
 	}
-	return &Store{dir: filepath.Join(stateDir, dirName)}, nil
+	return &Store{dir: filepath.Join(stateDir, dirName), maxValue: maxValue, maxFile: fileLimit(maxValue)}, nil
 }
 
 // Dir は、資格情報のディレクトリ (<state>/credentials)。
@@ -106,7 +124,7 @@ func (s *Store) readOnce(name string) (credential.Secret, error) {
 		return credential.Secret{}, err
 	}
 	defer root.Close()
-	f, err := hostfs.Open(root, name, maxFile)
+	f, err := hostfs.Open(root, name, int64(s.maxFile))
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return credential.Secret{}, fmt.Errorf("%w: %s", credential.ErrNotFound, path)
@@ -115,7 +133,7 @@ func (s *Store) readOnce(name string) (credential.Secret, error) {
 	case errors.Is(err, hostfs.ErrNotRegular):
 		return credential.Secret{}, fmt.Errorf("%w: %s が、通常のファイルでない (symlink・FIFO・ディレクトリなど)", ErrUnsafe, path)
 	case errors.Is(err, hostfs.ErrTooLarge):
-		return credential.Secret{}, fmt.Errorf("%w: %s が大きすぎる (上限 %d バイト)", ErrInvalid, path, maxFile)
+		return credential.Secret{}, fmt.Errorf("%w: %s が大きすぎる (上限 %d バイト)", ErrInvalid, path, s.maxFile)
 	case err != nil:
 		return credential.Secret{}, fmt.Errorf("credfile: %s を開けない: %w", path, err)
 	}
@@ -133,16 +151,16 @@ func (s *Store) readOnce(name string) (credential.Secret, error) {
 	if err := checkStat(path, fi, false); err != nil {
 		return credential.Secret{}, err
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxFile+1))
+	data, err := io.ReadAll(io.LimitReader(f, int64(s.maxFile)+1))
 	if err != nil {
 		return credential.Secret{}, fmt.Errorf("credfile: %s を読めない: %w", path, err)
 	}
-	if len(data) > maxFile {
-		return credential.Secret{}, fmt.Errorf("%w: %s が大きすぎる (上限 %d バイト)", ErrInvalid, path, maxFile)
+	if len(data) > s.maxFile {
+		return credential.Secret{}, fmt.Errorf("%w: %s が大きすぎる (上限 %d バイト)", ErrInvalid, path, s.maxFile)
 	}
 	v := strings.TrimSuffix(string(data), "\n") // 末尾の改行は、1 つだけ許す (Save が付ける)
 	clear(data)
-	if err := checkValue(v); err != nil {
+	if err := checkValue(v, s.maxValue); err != nil {
 		return credential.Secret{}, fmt.Errorf("%w: %s の中身が、値の形でない", ErrInvalid, path)
 	}
 	return credential.New(v), nil
@@ -155,7 +173,7 @@ func (s *Store) Save(name string, v credential.Secret) error {
 		return err
 	}
 	value := v.Reveal()
-	if err := checkValue(value); err != nil {
+	if err := checkValue(value, s.maxValue); err != nil {
 		return fmt.Errorf("%w: 書こうとした値が、値の形でない", ErrInvalid)
 	}
 	if _, err := os.Lstat(s.dir); errors.Is(err, fs.ErrNotExist) {
@@ -298,8 +316,8 @@ func checkStat(path string, fi fs.FileInfo, dir bool) error {
 	return nil
 }
 
-// checkValue は、v が、値の形 (印字できる ASCII 1 語: 0x21〜0x7e だけ・1〜1024 バイト) か確かめる。error に、v を含めない。
-func checkValue(v string) error {
+// checkValue は、v が、値の形 (印字できる ASCII 1 語: 0x21〜0x7e だけ・1〜maxValue バイト) か確かめる。error に、v を含めない。
+func checkValue(v string, maxValue int) error {
 	if v == "" || len(v) > maxValue {
 		return ErrInvalid
 	}
