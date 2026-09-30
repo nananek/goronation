@@ -102,7 +102,21 @@ func visibleASCII(s string, allowHT bool) bool {
 	return true
 }
 
-// readLine は、CRLF で終わる 1 行 (CRLF を除く) を読む。LF だけの行・上限を超える行は拒否する。
+// plainPath は、path が、上流の正規化で /api/ の外を指しうる形 (. や .. の区間・エンコードされた . / \) を含まないか。
+func plainPath(path string) bool {
+	lower := strings.ToLower(path)
+	if strings.Contains(lower, "%2e") || strings.Contains(lower, "%2f") || strings.Contains(lower, "%5c") {
+		return false
+	}
+	for _, seg := range strings.Split(path, "/") {
+		if seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// readHeadLine は、CRLF で終わる 1 行 (CRLF を除く) を読む。LF だけの行・上限を超える行は拒否する。
 func readHeadLine(br *bufio.Reader, budget *int) (string, error) {
 	line, err := br.ReadSlice('\n')
 	if err != nil {
@@ -144,6 +158,9 @@ func parseRequest(br *bufio.Reader, host, auth string) (*relayRequest, error) {
 		return nil, reject(400, "target は /api/ で始まる origin-form だけ")
 	}
 	path, _, _ := strings.Cut(target, "?")
+	if !plainPath(path) {
+		return nil, reject(400, "path に ..・. の区間・エンコードされた . / \\ は使えない (/api/ の外へ出さない)")
+	}
 
 	var (
 		headers [][2]string
