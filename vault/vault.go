@@ -361,16 +361,30 @@ func (v *Vault) cloneDoc() *document {
 	return &d
 }
 
+// write は、next を vault.json に書く。ディスクが新しい内容になった (rename 済み) なら、error (ErrNotDurable) でも、
+// メモリを next に合わせる (メモリとディスクを、常に一致させる。古い v.doc の書き戻しで、削除したラップを復活させない)。
+func (v *Vault) write(next *document) (applied bool, err error) {
+	applied, err = writeDocument(v.dir, next)
+	if applied {
+		v.doc = next
+	}
+	return applied, err
+}
+
 // commit は、監査の記録を先に追記し (書けなければ、変更しない)、next を書いて、メモリの状態を置き換える。
+// 書けなければ "-failed"、適用済みで永続化が未確認なら "-not-durable" を、記録する (適用済みなのに、失敗と記録しない)。
 func (v *Vault) commit(next *document, e auditEntry) error {
 	if err := appendAudit(v.dir, v.now(), e); err != nil {
 		return err
 	}
-	if err := writeDocument(v.dir, next); err != nil {
-		_ = appendAudit(v.dir, v.now(), auditEntry{Event: e.Event + "-failed", VaultID: e.VaultID, Credential: e.Credential, Target: e.Target})
+	if applied, err := v.write(next); err != nil {
+		suffix := "-failed"
+		if applied {
+			suffix = "-not-durable"
+		}
+		_ = appendAudit(v.dir, v.now(), auditEntry{Event: e.Event + suffix, VaultID: e.VaultID, Credential: e.Credential, Target: e.Target})
 		return err
 	}
-	v.doc = next
 	return nil
 }
 
@@ -402,11 +416,8 @@ func (v *Vault) putItem(kind, name string, plaintext []byte) error {
 		}
 		next.Items = append(next.Items, rec)
 	}
-	if err := writeDocument(v.dir, next); err != nil {
-		return err
-	}
-	v.doc = next
-	return nil
+	_, err = v.write(next)
+	return err
 }
 
 // getItem は、項目を復号して返す (呼び手が clear する)。無ければ (nil, false, nil)。

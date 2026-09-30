@@ -215,43 +215,54 @@ func (d *document) validate() error {
 	return nil
 }
 
+// ErrNotDurable は、vault.json を新しい内容に置き換えた (rename 済み) が、ディレクトリの fsync に失敗したときの error。
+// 変更は適用済みで、メモリも新しい内容に合わせてある (永続化が未確認なだけ)。errors.Is で判定する。
+var ErrNotDurable = errors.New("vault: applied but not confirmed durable")
+
+// syncDirFn は、ディレクトリの fsync (テストで、失敗を注入する)。
+var syncDirFn = syncDir
+
 // writeDocument は、vault.json を、一時ファイル (0600・O_EXCL) への書き込み・fsync・rename・ディレクトリの fsync で、
-// 原子的に置き換える。
-func writeDocument(dir string, d *document) error {
+// 原子的に置き換える。applied は、rename が成功した (ディスクが新しい内容になった) こと。applied なのに error のときは、
+// ErrNotDurable を包む。
+func writeDocument(dir string, d *document) (applied bool, err error) {
 	data, err := json.Marshal(d)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(data) > maxFileSize {
-		return fmt.Errorf("%w: 書く内容が大きすぎる", ErrInvalidInput)
+		return false, fmt.Errorf("%w: 書く内容が大きすぎる", ErrInvalidInput)
 	}
 	tmp := filepath.Join(dir, tmpName)
 	if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return false, err
 	}
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|noFollow, 0o600)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		os.Remove(tmp)
-		return err
+		return false, err
 	}
 	if err := f.Sync(); err != nil {
 		f.Close()
 		os.Remove(tmp)
-		return err
+		return false, err
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
-		return err
+		return false, err
 	}
 	if err := os.Rename(tmp, filepath.Join(dir, fileName)); err != nil {
 		os.Remove(tmp)
-		return err
+		return false, err
 	}
-	return syncDir(dir)
+	if err := syncDirFn(dir); err != nil {
+		return true, fmt.Errorf("%w: %v", ErrNotDurable, err)
+	}
+	return true, nil
 }
 
 func syncDir(dir string) error {
