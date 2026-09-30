@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -22,7 +23,8 @@ import (
 //   - 第 2 引数が spoof なら、子 (spoof-child) に、自分以外のすべてのプロセス (init を含む) への奪取を試させ、結果を出す。さらに、自分 (偽の opencode) が、
 //     unix domain socket の fd を 1 つも持たないことを "child:unix-sockets-in-agent => N" で出す (control の socket が、子に継承されていない)。
 func fakeRelayUpstream(args []string) int {
-	os.Stdout = os.Stderr // init は標準出力を読み捨てる。記録は標準エラー出力へ
+	realOut := os.Stdout  // init が読む、起動の証明の 1 行は、ここへ (ADR 0029)
+	os.Stdout = os.Stderr // 以後の記録は標準エラー出力へ
 	if len(args) < 1 {
 		return 2
 	}
@@ -30,7 +32,25 @@ func fakeRelayUpstream(args []string) int {
 	if err != nil {
 		return 2
 	}
-	l, err := net.Listen("tcp", "127.0.0.1:"+args[0])
+	mode := ""
+	if len(args) > 1 {
+		mode = args[len(args)-1]
+	}
+	if mode == "exit3" { // 起動の証明の前に終わる
+		return 3
+	}
+	lc := net.ListenConfig{}
+	stubborn := mode == "reuseport-stubborn" // 標準入力が閉じても終わらない子 (init が、失敗のとき、SIGKILL で止めることの確認)
+	if mode == "reuseport" || stubborn {     // SO_REUSEPORT を付けて待ち受ける (init が、起動を拒否する)
+		lc.Control = func(_, _ string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) { syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, soReusePort, 1) })
+		}
+	}
+	host := "127.0.0.1"
+	if mode == "wildcard" { // 全部の interface で待ち受ける (init の、待ち受けソケットの確認が断る)
+		host = "0.0.0.0"
+	}
+	l, err := lc.Listen(context.Background(), "tcp", host+":"+args[0])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "listen-error="+err.Error())
 		return 1
@@ -38,16 +58,42 @@ func fakeRelayUpstream(args []string) int {
 	go func() {
 		io.Copy(io.Discard, os.Stdin)
 		fmt.Fprintln(os.Stderr, "STDIN-EOF")
-		os.Exit(0)
+		if !stubborn {
+			os.Exit(0)
+		}
 	}()
-	if len(args) > 1 && args[1] == "spoof" {
+	if mode == "spoof" {
 		go func() {
 			unixSockets()
 			pid1IsInit()
 			fakeSpoof(nil)
 		}()
 	}
+	// 環境 (トークンは、子の環境変数 OPENCODE_PASSWORD にだけ来る。旧名は消えている) と、argv にトークンが出ていないことの記録 (init が argv を作る)。
+	fmt.Fprintf(os.Stderr, "TOKEN-ENV %s\n", os.Getenv("OPENCODE_PASSWORD"))
+	fmt.Fprintf(os.Stderr, "LEGACY-ENV %q\n", os.Getenv("OPENCODE_SERVER_PASSWORD"))
 	fmt.Fprintf(os.Stderr, "UPSTREAM-READY %d\n", port)
+	fmt.Fprintf(os.Stderr, "ARGV %q\n", os.Args)
+	fmt.Fprintf(os.Stderr, "PID %d\n", os.Getpid())
+	st, _ := os.ReadFile("/proc/self/status") // landlock-exec の下で起動されたか (no_new_privs・seccomp)
+	for _, l := range strings.Split(string(st), "\n") {
+		if strings.HasPrefix(l, "NoNewPrivs:") || strings.HasPrefix(l, "Seccomp:") {
+			fmt.Fprintf(os.Stderr, "SANDBOX %s\n", strings.Join(strings.Fields(l), " "))
+		}
+	}
+	switch mode {
+	case "noproof": // 起動の証明を出さない (待ち受けは始める。init が、証明の前に要求を受け付けないこと・期限で失敗することの確認)
+	case "wrongurl":
+		fmt.Fprintf(realOut, "{\"url\":\"http://127.0.0.1:%d\"}\n", port+1)
+	case "notjson":
+		fmt.Fprintf(realOut, "http://127.0.0.1:%d\n", port)
+	case "longline":
+		fmt.Fprintf(realOut, "%s\n", strings.Repeat("a", 4096))
+	case "extrakeys": // url が合っていて、ほかのキーがあっても、通る (url だけを見る)
+		fmt.Fprintf(realOut, "{\"url\":\"http://127.0.0.1:%d\",\"x\":1}\n", port)
+	default:
+		fmt.Fprintf(realOut, "{\"url\":\"http://127.0.0.1:%d\"}\n", port)
+	}
 	for {
 		c, err := l.Accept()
 		if err != nil {

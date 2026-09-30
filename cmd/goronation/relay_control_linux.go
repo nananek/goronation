@@ -126,10 +126,22 @@ func (c *relayClient) Dial() (net.Conn, error) {
 }
 
 // HTTPClient は、Dial だけで繋ぐ http.Client。宛先 (URL のホスト) は無視され、init が上流を決める。接続の再利用は止める
-// (1 つの接続は 1 つの要求)。
+// (1 つの接続は 1 つの要求)。init は、要求のヘッダを許可リストで通す (ADR 0030) ので、net/http が勝手に足す User-Agent・Accept-Encoding は付けない。
 func (c *relayClient) HTTPClient() *http.Client {
-	return &http.Client{Transport: &http.Transport{
-		DialContext:       func(_ context.Context, _, _ string) (net.Conn, error) { return c.Dial() },
-		DisableKeepAlives: true,
-	}}
+	return &http.Client{Transport: noDefaultHeaders{&http.Transport{
+		DialContext:        func(_ context.Context, _, _ string) (net.Conn, error) { return c.Dial() },
+		DisableKeepAlives:  true,
+		DisableCompression: true, // Accept-Encoding: gzip を付けない
+	}}}
+}
+
+// noDefaultHeaders は、User-Agent を空にして、net/http が既定の値を付けないようにする RoundTripper (空の値は、送られない)。
+type noDefaultHeaders struct{ http.RoundTripper }
+
+func (n noDefaultHeaders) RoundTrip(r *http.Request) (*http.Response, error) {
+	if _, ok := r.Header["User-Agent"]; !ok {
+		r = r.Clone(r.Context())
+		r.Header["User-Agent"] = []string{""}
+	}
+	return n.RoundTripper.RoundTrip(r)
 }

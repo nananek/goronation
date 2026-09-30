@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
-	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -141,26 +139,6 @@ func runLandlockExecWith(args []string, stderr io.Writer, l lockdown) int {
 		return fail(exitNotFound, "%v", err)
 	}
 	return fail(exitNoExec, "起動できない: %v", err)
-}
-
-// parsePorts は、"3128,8080" の形の、1 つ以上のポート (1〜65535。重複は 1 つにまとめる) を返す。
-func parsePorts(s string) ([]int, error) {
-	if s == "" {
-		return nil, errors.New("--allow-connect に、1 つ以上のポートが要る")
-	}
-	var out []int
-	seen := map[int]bool{}
-	for _, f := range strings.Split(s, ",") {
-		p, err := strconv.Atoi(f)
-		if err != nil || p < 1 || p > 65535 || strconv.Itoa(p) != f {
-			return nil, fmt.Errorf("--allow-connect のポートが不正: %q (1〜65535 の 10 進数)", f)
-		}
-		if !seen[p] {
-			seen[p] = true
-			out = append(out, p)
-		}
-	}
-	return out, nil
 }
 
 // landlockABI は、kernel の Landlock の ABI の版を返す。使えなければ error (ENOSYS: 無い、EOPNOTSUPP: 無効)。

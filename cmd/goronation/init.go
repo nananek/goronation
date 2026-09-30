@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -48,7 +49,18 @@ init は、檻を作らず、自分が檻の中にいることも確かめない
                     127.0.0.1:--relay-port の上流に、Authorization を付け直して中継する。子の標準入出力は、init が別に作る pipe にする
                     (--non-dumpable が要る。ADR 0019・0028)
   --relay-port PORT --relay-control の上流のポート
+  --relay-token-env NAME   --relay-control のとき、init が作る、この起動だけのトークンを、子の環境変数 NAME にだけ渡す (argv には出さない)。
+                    上流への Authorization (Basic opencode:<トークン>) にも使う。NAME が既に環境にあれば消す。opencode なら OPENCODE_PASSWORD。
+                    子の環境の OPENCODE_SERVER_PASSWORD (旧名) は、消す (ADR 0020・0030)
+  --landlock-connect PORT[,PORT...]   子を goronation landlock-exec で包んで起動する (TCP の connect を、許可したポートだけにし、seccomp・
+                    no_new_privs を掛ける。掛けられなければ子は動かない。ADR 0020)。--relay-control のときだけ。子のコマンドは絶対 path
+  --relay-version-prefix PREFIX   --relay-control のとき、子の --version (同じ包みの下で実行) の出力が PREFIX で始まらなければ、起動しない (ADR 0018・0030)
+  --relay-control のとき、子は {"url":"http://127.0.0.1:<--relay-port>"} の 1 行を標準出力に出すまで (30 秒) 要求を受けない (起動の証明。ADR 0029)。
+                    init の状態は、標準出力に {"ready":true} か {"error":"<理由>"} を 1 行だけ出す (ADR 0030)
 `
+
+// envNameRE は、環境変数の名前の形。
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 
 // proxyEnvKeys は、init が子に設定する、proxy を指す環境変数。
 var proxyEnvKeys = []string{"HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"}
@@ -80,6 +92,10 @@ type initConfig struct {
 	setCtty    bool     // 子を、標準入力 (pty の slave) を制御端末にする、新しいセッションの leader にする
 	relayCtl   bool     // init の標準入力を control にして、要求の fd を上流へ中継する
 	relayPort  int      // 上流 (127.0.0.1) のポート
+	// 以下は --relay-control のとき (ADR 0030)。
+	relayTokenEnv string // トークンを渡す子の環境変数の名前
+	landlock      string // 空でなければ、子を landlock-exec で包む (--allow-connect の値)
+	versionPrefix string // 空でなければ、子の --version の出力の先頭の検査
 }
 
 // parseInitArgs は goronation init の引数を解釈する。不正なら、理由と使い方を stderr に出して error を返す。
@@ -97,6 +113,9 @@ func parseInitArgs(args []string, stderr io.Writer) (initConfig, error) {
 	flags.BoolVar(&cfg.nonDump, "non-dumpable", false, "")
 	flags.BoolVar(&cfg.relayCtl, "relay-control", false, "")
 	flags.IntVar(&cfg.relayPort, "relay-port", 0, "")
+	flags.StringVar(&cfg.relayTokenEnv, "relay-token-env", "", "")
+	flags.StringVar(&cfg.landlock, "landlock-connect", "", "")
+	flags.StringVar(&cfg.versionPrefix, "relay-version-prefix", "", "")
 	if err := flags.Parse(args); err != nil {
 		return cfg, err // flag が、理由と使い方を出している
 	}
@@ -131,8 +150,19 @@ func parseInitArgs(args []string, stderr io.Writer) (initConfig, error) {
 		if cfg.setCtty {
 			return fail("--relay-control と --set-ctty は、同時に使えない (標準入力は control になる)")
 		}
-	} else if cfg.relayPort != 0 {
-		return fail("--relay-port は --relay-control のときだけ")
+		if !envNameRE.MatchString(cfg.relayTokenEnv) {
+			return fail("--relay-control には、トークンを渡す環境変数の名前 (--relay-token-env。英数字と _) が要る: %q", cfg.relayTokenEnv)
+		}
+		if cfg.landlock != "" {
+			if _, err := parsePorts(cfg.landlock); err != nil {
+				return fail("--landlock-connect: %v", err)
+			}
+			if !filepath.IsAbs(cfg.argv[0]) {
+				return fail("--landlock-connect のとき、子のコマンドは絶対 path が要る: %q", cfg.argv[0])
+			}
+		}
+	} else if cfg.relayPort != 0 || cfg.relayTokenEnv != "" || cfg.landlock != "" || cfg.versionPrefix != "" {
+		return fail("--relay-port・--relay-token-env・--landlock-connect・--relay-version-prefix は --relay-control のときだけ")
 	}
 	return cfg, nil
 }
@@ -147,32 +177,59 @@ func runInit(args []string, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// 起動の失敗: 理由を標準エラーに出す。--relay-control のときは、標準出力にも {"error":…} を 1 行出す (ADR 0030)。
+	bail := func(code int, format string, a ...any) int {
+		msg := fmt.Sprintf(format, a...)
+		fmt.Fprintf(stderr, "goronation init: %s\n", msg)
+		if cfg.relayCtl {
+			reportStartup(os.Stdout, msg)
+		}
+		return code
+	}
 	if cfg.nonDump {
 		if err := setNonDumpable(); err != nil {
-			fmt.Fprintf(stderr, "goronation init: dumpable を 0 にできない: %v\n", err)
-			return exitInit
+			return bail(exitInit, "dumpable を 0 にできない: %v", err)
 		}
 	}
 	l, err := net.Listen("tcp", cfg.listen)
 	if err != nil {
-		fmt.Fprintf(stderr, "goronation init: 待ち受けられない: %v\n", err)
-		return exitInit
+		return bail(exitInit, "待ち受けられない: %v", err)
 	}
 	defer l.Close()
 	go newRelay(cfg.upstream, maxConns).serve(l)
 
-	cmd := exec.Command(cfg.argv[0], cfg.argv[1:]...)
+	env := childEnv(os.Environ(), l.Addr().String(), !cfg.noProxyEnv)
+	name, argv := cfg.argv[0], cfg.argv[1:]
+	if cfg.landlock != "" { // 子を landlock-exec で包む (ADR 0020)
+		if name, argv, err = landlockWrap(cfg.landlock, cfg.argv); err != nil {
+			return bail(exitInit, "landlock-exec を起動する形を作れない: %v", err)
+		}
+	}
+	if cfg.versionPrefix != "" { // 版の検査 (ADR 0018): 子と同じ包みの下で --version を実行する
+		vname, vargs := cfg.argv[0], []string{"--version"}
+		if cfg.landlock != "" {
+			if vname, vargs, err = landlockWrap(cfg.landlock, []string{cfg.argv[0], "--version"}); err != nil {
+				return bail(exitInit, "landlock-exec を起動する形を作れない: %v", err)
+			}
+		}
+		if err := checkChildVersion(vname, vargs, withoutEnv(env, cfg.relayTokenEnv, legacyTokenEnv), cfg.versionPrefix); err != nil {
+			return bail(exitInit, "子の版の検査に通らない: %v", err)
+		}
+	}
+
+	cmd := exec.Command(name, argv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	var relay *relayRun
 	if cfg.relayCtl {
 		// init の標準入出力は、子に渡さない (control は init だけのもの)。子の標準入出力は、init が別に作る pipe。
 		if relay, err = prepareRelay(cmd, cfg.relayPort); err != nil {
-			fmt.Fprintf(stderr, "goronation init: 中継の control を用意できない: %v\n", err)
-			return exitInit
+			return bail(exitInit, "中継の control を用意できない: %v", err)
 		}
 		defer relay.close()
+		// トークンは、子の環境変数にだけ渡す (argv・bwrap の --setenv には出さない。/proc/<pid>/cmdline に見える)。
+		env = append(withoutEnv(env, cfg.relayTokenEnv, legacyTokenEnv), cfg.relayTokenEnv+"="+relay.token)
 	}
-	cmd.Env = childEnv(os.Environ(), l.Addr().String(), !cfg.noProxyEnv)
+	cmd.Env = env
 	if cfg.setCtty {
 		// 子 (エージェント) を、新しいセッションの leader にし、標準入力 (渡された pty の slave) を、その制御端末
 		// にする (fork の直後、exec の前に、子自身が行う。init 自身のセッションの状態には左右されない: bwrap が
@@ -185,27 +242,18 @@ func runInit(args []string, stderr io.Writer) int {
 	signal.Notify(sigs, forwardedSignals...)
 	defer signal.Stop(sigs)
 
+	if relay != nil {
+		relay.attach(cmd) // 子の pidfd (生存確認用) を取る
+	}
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(stderr, "goronation init: 子を起動できない: %v\n", err)
+		code := exitNoExec
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
-			return exitNotFound
+			code = exitNotFound
 		}
-		return exitNoExec
+		return bail(code, "子を起動できない: %v", err)
 	}
 	done := make(chan struct{})
 	defer close(done)
-	if relay != nil {
-		// ホストが control を閉じた (会話の終了・ホストの終了) ら、子を止める。SIGTERM を無視する子は、猶予のあとに SIGKILL で止める
-		// (done: 子が終わったら、回収済みの pid に送らない)。
-		relay.started(func() {
-			signalTerm(cmd.Process)
-			select {
-			case <-time.After(relayKillGrace):
-				signalKill(cmd.Process)
-			case <-done:
-			}
-		})
-	}
 	go func() {
 		for {
 			select {
@@ -220,6 +268,25 @@ func runInit(args []string, stderr io.Writer) int {
 			}
 		}
 	}()
+	if relay != nil {
+		// ADR 0029 L0: 子の起動の証明が済むまで、control を読まない (要求を受け付けない)。失敗したら子を止めて、fail closed。
+		if err := relay.prove(cfg.relayPort, relayProofTimeout); err != nil {
+			signalKill(cmd.Process)
+			waitChild(cmd.Process.Pid, io.Discard, func() {})
+			return bail(exitInit, "子の起動を確かめられない: %v", err)
+		}
+		// ホストが control を閉じた (会話の終了・ホストの終了) ら、子を止める。SIGTERM を無視する子は、猶予のあとに SIGKILL で止める
+		// (done: 子が終わったら、回収済みの pid に送らない)。
+		relay.started(func() {
+			signalTerm(cmd.Process)
+			select {
+			case <-time.After(relayKillGrace):
+				signalKill(cmd.Process)
+			case <-done:
+			}
+		})
+		reportReady(os.Stdout)
+	}
 
 	code := waitChild(cmd.Process.Pid, stderr, func() {
 		if relay != nil {
