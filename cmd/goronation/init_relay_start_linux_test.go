@@ -206,7 +206,7 @@ func TestInitRelayNoProofFailsClosed(t *testing.T) {
 // 起動の証明が合わない (別のポート・JSON でない・長すぎる・子が先に終わる) と、fail closed。url 以外のキーがあっても、url が合えば通る。
 func TestInitRelayProofMismatch(t *testing.T) {
 	for _, tc := range []struct{ mode, want string }{
-		{"wrongurl", "一致しない"}, {"notjson", "一致しない"}, {"longline", "超える"}, {"exit3", "終わった"},
+		{"wrongurl", "一致しない"}, {"notjson", "一致しない"}, {"longline", "超える"}, {"exit3", "終わった"}, {"wildcard", "待ち受け"},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			r := startInit(t, fakeOpencodeScript(t, ""), nil, tc.mode)
@@ -491,4 +491,108 @@ func (a *atomicString) String() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.s
+}
+
+// 待ち受けソケットの同一性 (ADR 0029 の L1): /proc/net/tcp の、127.0.0.1:port の LISTEN の inode を読む。ソケットを閉じて、同じポートを別のソケットが bind すると、
+// inode が変わる (squatter を見分ける)。
+func TestListenerInode(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	f, _ := l.(*net.TCPListener).File()
+	var st syscall.Stat_t
+	if err := syscall.Fstat(int(f.Fd()), &st); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	got, err := listenerInode(port)
+	if err != nil || got != st.Ino {
+		t.Fatalf("listenerInode = %d, %v (ソケットの inode は %d)", got, err, st.Ino)
+	}
+	l.Close()
+	if _, err := listenerInode(port); err == nil {
+		t.Error("閉じたソケットの inode が返った")
+	}
+	l2, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		t.Skip("同じポートを bind し直せない:", err)
+	}
+	defer l2.Close()
+	if again, err := listenerInode(port); err != nil || again == got {
+		t.Errorf("別のソケットが同じ inode: %d → %d (%v)", got, again, err)
+	}
+}
+
+func TestParseListenerInode(t *testing.T) {
+	const head = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+	line := func(local, st, ino string) string {
+		return "   0: " + local + " 00000000:0000 " + st + " 00000000:00000000 00:00000000 00000000  1000        0 " + ino + " 1 0000000000000000 100 0 0 10 0\n"
+	}
+	for name, tc := range map[string]struct {
+		table string
+		want  uint64
+		ok    bool
+	}{
+		"1 つ":             {head + line("0100007F:1F90", "0A", "4242"), 4242, true},
+		"別のポートと状態は無視":     {head + line("0100007F:1F91", "0A", "1") + line("0100007F:1F90", "01", "2") + line("0100007F:1F90", "0A", "4242"), 4242, true},
+		"無い":              {head + line("0100007F:1F91", "0A", "1"), 0, false},
+		"全 interface は別物": {head + line("00000000:1F90", "0A", "5"), 0, false},
+		"2 つ":             {head + line("0100007F:1F90", "0A", "5") + line("0100007F:1F90", "0A", "6"), 0, false},
+		"inode が 0":       {head + line("0100007F:1F90", "0A", "0"), 0, false},
+		"inode が数字でない":    {head + line("0100007F:1F90", "0A", "x"), 0, false},
+		"空":               {"", 0, false},
+	} {
+		got, err := parseListenerInode(tc.table, 0x1F90)
+		if (err == nil) != tc.ok || got != tc.want {
+			t.Errorf("%s: %d, %v", name, got, err)
+		}
+	}
+}
+
+// upstreamValid (ADR 0029 の L1): 子が生きていて、待ち受けが、起動の証明のときと同じソケットのときだけ true。
+// 待ち受けが別のソケット (squatter)・閉じた・子が終わった・inode を記録していない、はどれも false。
+func TestUpstreamValid(t *testing.T) {
+	var pidfd int
+	cmd := exec.Command("sleep", "30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{PidFD: &pidfd}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cmd.Process.Kill(); cmd.Wait(); syscall.Close(pidfd) }()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	ino, err := listenerInode(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &relayRun{pidfd: pidfd, port: port}
+	if r.upstreamValid() {
+		t.Error("inode を記録していないのに、true")
+	}
+	r.listenIno.Store(ino)
+	if !r.upstreamValid() {
+		t.Fatal("生きている子・同じソケットなのに、false")
+	}
+	r.listenIno.Store(ino + 1)
+	if r.upstreamValid() {
+		t.Error("inode が違うのに、true")
+	}
+	r.listenIno.Store(ino)
+	l.Close() // 元のソケットが閉じた (子の死の途中)
+	if r.upstreamValid() {
+		t.Error("待ち受けが無いのに、true")
+	}
+	l2, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port)) // squatter
+	if err != nil {
+		t.Skip(err)
+	}
+	if r.upstreamValid() {
+		t.Error("別のソケットが同じポートを待ち受けているのに、true (子は生きている = pidfd だけなら、通ってしまう)")
+	}
+	l2.Close()
 }

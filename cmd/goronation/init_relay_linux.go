@@ -16,6 +16,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -32,6 +34,10 @@ type relayRun struct {
 	childOut *os.File
 	token    string // この起動だけのトークン (init のメモリと、子の環境変数にだけ置く。ADR 0020)
 	pidfd    int    // 子の pidfd (生存確認用。attach が、起動の時に取る)。取れていなければ -1
+	// listenIno は、起動の証明のとき (prove) の、127.0.0.1:<ポート> の待ち受けソケットの inode。要求ごとに、いまの待ち受けが同じソケットかを確かめる
+	// (0 なら、確かめられない = 要求を通さない)。atomic: prove の後に設定され、要求の処理の goroutine が読む。
+	listenIno atomic.Uint64
+	port      int
 }
 
 // prepareRelay は、--relay-control の準備をする: init の標準入力 (ホストとの socketpair) を control にし、子の標準入出力を、init が別に作る
@@ -51,8 +57,8 @@ func prepareRelay(cmd *exec.Cmd, port int) (*relayRun, error) {
 		ctl.Close()
 		return nil, err
 	}
-	r := &relayRun{ctl: ctl, relay: newRequestRelay(port, func() string { return tok }), token: tok, pidfd: -1}
-	r.relay.alive = r.childAlive
+	r := &relayRun{ctl: ctl, relay: newRequestRelay(port, func() string { return tok }), token: tok, pidfd: -1, port: port}
+	r.relay.alive = r.upstreamValid
 	cin, stdinW, err := os.Pipe()
 	if err != nil {
 		ctl.Close()
@@ -122,6 +128,19 @@ func (r *relayRun) attach(cmd *exec.Cmd) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.PidFD = &r.pidfd
+}
+
+// upstreamValid は、要求ごとの、トークンを書く前の確認 (ADR 0029 の L1): 子が生きていて (pidfd)、127.0.0.1:<ポート> の待ち受けが、起動の証明のときと
+// 同じソケットであること (inode)。pidfd は、子の終了の通知 (exit_notify) でしか変わらず、待ち受けの解放 (exit_files) より後になる。その間に、同じ uid の別の
+// プロセスが同じポートを bind して接続を受けると、pidfd だけでは見えない (実測: 子を SIGKILL した直後に、要求を送り続けて、トークンが届いた)。
+// 別のソケットなら、inode が違う。元のソケットは、閉じたら戻らない。
+func (r *relayRun) upstreamValid() bool {
+	want := r.listenIno.Load()
+	if want == 0 || !r.childAlive() {
+		return false
+	}
+	got, err := listenerInode(r.port)
+	return err == nil && got == want
 }
 
 // childAlive は、子が生きているか (pidfd が「終了」を示していないか)。pidfd が無い・poll の失敗は、生きていない扱い (fail closed)。
@@ -196,8 +215,46 @@ func (r *relayRun) prove(port int, timeout time.Duration) error {
 	} else if taken {
 		return fmt.Errorf("127.0.0.1:%d の持ち主が SO_REUSEPORT を付けている (別のプロセスが同じポートを共有できる)", port)
 	}
+	ino, err := listenerInode(port)
+	if err != nil {
+		return fmt.Errorf("待ち受けのソケットを確かめられない: %w", err)
+	}
+	r.listenIno.Store(ino)
 	go io.Copy(io.Discard, br)
 	return nil
+}
+
+// listenerInode は、127.0.0.1:port で LISTEN しているソケットの inode を、/proc/net/tcp から返す (init の名前空間の、TCP のソケット。読むのに権限は要らない)。
+// ちょうど 1 つでなければ、エラー。
+func listenerInode(port int) (uint64, error) {
+	b, err := os.ReadFile("/proc/net/tcp")
+	if err != nil {
+		return 0, err
+	}
+	return parseListenerInode(string(b), port)
+}
+
+// parseListenerInode は、/proc/net/tcp の内容から、127.0.0.1:port の LISTEN (st=0A) の inode を返す。
+func parseListenerInode(table string, port int) (uint64, error) {
+	want := fmt.Sprintf("0100007F:%04X", port)
+	var ino uint64
+	n := 0
+	for _, line := range strings.Split(table, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 10 || f[1] != want || f[3] != "0A" {
+			continue
+		}
+		v, err := strconv.ParseUint(f[9], 10, 64)
+		if err != nil || v == 0 {
+			return 0, fmt.Errorf("inode を読めない: %q", f[9])
+		}
+		ino = v
+		n++
+	}
+	if n != 1 {
+		return 0, fmt.Errorf("127.0.0.1:%d の待ち受けが %d 個 (1 個のはず)", port, n)
+	}
+	return ino, nil
 }
 
 // portSharable は、127.0.0.1:port に、SO_REUSEPORT つきで bind できるか (できたら、すぐ閉じる)。EADDRINUSE (持ち主が付けていない) なら false。

@@ -46,7 +46,11 @@ func fakeRelayUpstream(args []string) int {
 			return c.Control(func(fd uintptr) { syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, soReusePort, 1) })
 		}
 	}
-	l, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:"+args[0])
+	host := "127.0.0.1"
+	if mode == "wildcard" { // 全部の interface で待ち受ける (init の、待ち受けソケットの確認が断る)
+		host = "0.0.0.0"
+	}
+	l, err := lc.Listen(context.Background(), "tcp", host+":"+args[0])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "listen-error="+err.Error())
 		return 1
