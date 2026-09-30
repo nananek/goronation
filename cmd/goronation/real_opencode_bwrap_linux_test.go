@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -46,7 +47,7 @@ func TestRealOpencodeInCage(t *testing.T) {
 	// 偽の provider と、偽の egress (http の proxy)。
 	// 要求に tools があれば会話の本体 (1 回目は shell の tool 呼び出し、tool の結果のあとは "done")。無ければ、opencode が別に出す題名の生成。
 	llm := openai.NewServer(
-		openai.Step{ToolCalls: []openai.ToolCall{{ID: "call_1", Name: "shell", Arguments: json.RawMessage(`{"command":"echo goro-hi","description":"say hi"}`)}}},
+		openai.Step{ToolCalls: []openai.ToolCall{{ID: "call_1", Name: "shell", Arguments: json.RawMessage(`{"command":"echo goro-hi; ls -l /proc/self/fd; echo ---TCP; cat /proc/net/tcp","description":"say hi"}`)}}},
 		openai.Step{Content: "done"},
 	)
 	titles := openai.NewServer(openai.Step{Content: "Say hi"})
@@ -271,13 +272,53 @@ finished:
 	if !strings.Contains(viaProxy.String(), "fake-provider.test") {
 		t.Errorf("provider への通信が、proxy (egress) を経由していない: %q", viaProxy.String())
 	}
-	if n := len(llm.Requests()); n < 2 {
+	reqs := llm.Requests()
+	if n := len(reqs); n < 2 {
 		t.Errorf("provider への要求 = %d 個 (tool の結果を含む 2 回目が要る)", n)
+	} else {
+		var m struct {
+			Messages []struct{ Role, Content string }
+		}
+		json.Unmarshal(reqs[len(reqs)-1].Body, &m)
+		for _, x := range m.Messages {
+			if x.Role == "tool" {
+				checkToolFds(t, x.Content)
+			}
+		}
 	}
 	pair.In.Close() // control を閉じる: 檻が終わる
 	select {
 	case <-done:
 	case <-time.After(30 * time.Second):
 		t.Error("control を閉じても、檻が終わらない")
+	}
+}
+
+// checkToolFds は、tool (shell) が `ls -l /proc/self/fd; echo ---TCP; cat /proc/net/tcp` で出した結果を調べる (ADR 0029 の限界 L-1・L-2 の前提): tool が、
+// opencode の待ち受けのソケット (TCP) も、init の子の標準出力の pipe (起動の証明の書き側) も、継承していないこと。
+func checkToolFds(t *testing.T, out string) {
+	t.Helper()
+	fds, tcp, ok := strings.Cut(out, "---TCP")
+	if !ok || !strings.Contains(out, "goro-hi") {
+		t.Errorf("tool の結果が想定と違う: %q", out)
+		return
+	}
+	t.Logf("tool の fd:\n%s", fds)
+	if strings.Contains(fds, "pipe:[") {
+		t.Errorf("tool が pipe を継承している (起動の証明の書き側かもしれない):\n%s", fds)
+	}
+	tcpInodes := map[string]bool{}
+	for _, line := range strings.Split(tcp, "\n")[1:] {
+		if f := strings.Fields(line); len(f) >= 10 {
+			tcpInodes[f[9]] = true
+		}
+	}
+	if len(tcpInodes) == 0 {
+		t.Errorf("/proc/net/tcp に、待ち受けが 1 つも無い (読めていない)")
+	}
+	for _, m := range regexp.MustCompile(`socket:\[(\d+)\]`).FindAllStringSubmatch(fds, -1) {
+		if tcpInodes[m[1]] {
+			t.Errorf("tool が TCP のソケット (inode %s) を継承している (待ち受けの fd の継承。ADR 0029 の L-2)", m[1])
+		}
 	}
 }
