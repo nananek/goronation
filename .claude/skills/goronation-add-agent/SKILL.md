@@ -35,3 +35,4 @@ description: goronation run に、新しいエージェント (claude・opencode
 - onboarding の完了が保存されず、ログインしたのに、次の起動でまたログインを求められた (claude)。
 - PATH のエージェントがラッパースクリプトで、檻の中で実体が見えず 127 で終わった (Arch の claude)。
 - 環境変数の名前が存在しても、止めたい通信が止まらなかった。egress の拒否一覧で、効果を測る。
+- **エージェントの版が上がって、前提が変わった** (claude 2.1.285: 既定の権限モードが `default` から `auto` になり、`--permission-prompt-tool stdio` でも承認の要求が出ず、tool が承認なしで実行された。ADR 0017)。偽のエージェントのテストは、これに気づけない。**エージェントを更新したら、実物を fake provider に向けて、フレーム (`init` の権限モード・承認の要求・許可/拒否の結果) を採り直して確かめる** (`spec/testdata/golden/capture.sh --check`・`permission-interactive-*`)。採取した版は `capture.sh` のコメントに書いてあるので、版が変わったら更新する。
