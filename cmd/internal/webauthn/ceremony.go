@@ -1,19 +1,14 @@
 package webauthn
 
 import (
+	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"math/big"
 	"time"
-
-	"github.com/fxamacker/cbor/v2"
 )
 
 // challengeTTL は、発行した challenge (state token) を受け付ける期限。
@@ -46,6 +41,31 @@ type CreationOptions struct {
 	Timeout                int                    `json:"timeout"`
 	Attestation            string                 `json:"attestation"`
 	AuthenticatorSelection authenticatorSelection `json:"authenticatorSelection"`
+	// ExcludeCredentials は、すでにある passkey (AddBegin で、同じ passkey を、2 重に登録させない)。
+	ExcludeCredentials []credDescriptor `json:"excludeCredentials,omitempty"`
+	// Extensions は、PRF の評価 (AddBegin で、追加する passkey の salt を渡す)。
+	Extensions *creationExtensions `json:"extensions,omitempty"`
+}
+
+// creationExtensions は、登録時の拡張 (WebAuthn の prf)。
+type creationExtensions struct {
+	PRF prfCreate `json:"prf"`
+}
+type prfCreate struct {
+	Eval *prfSalt `json:"eval,omitempty"`
+}
+
+// prfSalt は、PRF の評価の入力 (first だけ。second は使わない)。base64url の文字列。
+type prfSalt struct {
+	First string `json:"first"`
+}
+
+// requestExtensions は、認証時の拡張 (WebAuthn の prf)。EvalByCredential は、credential ID (base64url) ごとの salt
+// (passkey ごとに違う salt を渡す。ADR 0033 決定 3)。
+type requestExtensions struct {
+	PRF struct {
+		EvalByCredential map[string]prfSalt `json:"evalByCredential"`
+	} `json:"prf"`
 }
 
 type rpEntity struct {
@@ -68,11 +88,12 @@ type authenticatorSelection struct {
 
 // RequestOptions は、PublicKeyCredentialRequestOptions (navigator.credentials.get に渡す形)。
 type RequestOptions struct {
-	RPID             string           `json:"rpId"`
-	Challenge        string           `json:"challenge"`
-	AllowCredentials []credDescriptor `json:"allowCredentials,omitempty"`
-	Timeout          int              `json:"timeout"`
-	UserVerification string           `json:"userVerification"`
+	RPID             string             `json:"rpId"`
+	Challenge        string             `json:"challenge"`
+	AllowCredentials []credDescriptor   `json:"allowCredentials,omitempty"`
+	Timeout          int                `json:"timeout"`
+	UserVerification string             `json:"userVerification"`
+	Extensions       *requestExtensions `json:"extensions,omitempty"`
 }
 type credDescriptor struct {
 	Type string `json:"type"`
@@ -87,6 +108,7 @@ type AttestationResponse struct {
 		ClientDataJSON    string `json:"clientDataJSON"`
 		AttestationObject string `json:"attestationObject"`
 	} `json:"response"`
+	ClientExtensionResults ClientExtensionResults `json:"clientExtensionResults"`
 }
 
 // AssertionResponse は、ブラウザが AuthenticateFinish へ送る形 (AttestationResponse と同じく、base64url
@@ -98,6 +120,7 @@ type AssertionResponse struct {
 		AuthenticatorData string `json:"authenticatorData"`
 		Signature         string `json:"signature"`
 	} `json:"response"`
+	ClientExtensionResults ClientExtensionResults `json:"clientExtensionResults"`
 }
 
 // stateClaims は、challenge を運ぶ state token (登録・ログインの begin と finish の間) の中身。
@@ -105,6 +128,13 @@ type stateClaims struct {
 	Purpose   string `json:"purpose"` // "register" か "authenticate"
 	Challenge []byte `json:"challenge"`
 	Expiry    int64  `json:"exp"`
+	// 以下は、操作つきの儀式 (ops.go) だけ。
+	Op        string   `json:"op,omitempty"`
+	Target    []byte   `json:"target,omitempty"`
+	RequestID string   `json:"request_id,omitempty"`
+	Allowed   [][]byte `json:"allowed,omitempty"` // 応答してよい passkey
+	WantPRF   bool     `json:"want_prf,omitempty"`
+	Salt      []byte   `json:"salt,omitempty"` // add-register: 追加する passkey の PRF の salt
 }
 
 // sessionClaims は、ログイン成功後に発行するセッション token の中身。
@@ -127,6 +157,8 @@ func IssueBootstrapToken(ctx context.Context, st *Store, ttl time.Duration) (str
 	if err != nil {
 		return "", err
 	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
 	state, err := st.load(ctx)
 	if err != nil {
 		return "", err
@@ -150,7 +182,7 @@ func RegisterBegin(ctx context.Context, cfg Config, st *Store, bootstrapToken st
 	if err != nil {
 		return nil, "", err
 	}
-	if state.Credential != nil {
+	if len(state.Credentials) > 0 {
 		return nil, "", ErrAlreadyRegistered
 	}
 	if err := checkBootstrapToken(state, bootstrapToken); err != nil {
@@ -194,79 +226,41 @@ func checkBootstrapToken(state persistedState, in string) error {
 }
 
 // RegisterFinish は、state (RegisterBegin が返した token) と、ブラウザの attestation 応答を検証し、通れば
-// credential を保存する。attestation は "none" だけを受理する (信頼チェーンは検証しない)。
+// credential を保存する (最初の 1 つ。2 つ目以降は、AddBegin・AddFinish・CommitAdd)。attestation は "none" だけを受理する
+// (信頼チェーンは検証しない)。
 func RegisterFinish(ctx context.Context, cfg Config, st *Store, state string, resp AttestationResponse) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 	persisted, err := st.load(ctx)
 	if err != nil {
 		return err
 	}
-	if persisted.Credential != nil {
+	if len(persisted.Credentials) > 0 {
 		return ErrAlreadyRegistered
 	}
 	claims, err := verifyStateToken(persisted.SessionSecret, state, "register")
 	if err != nil {
 		return err
 	}
-	clientDataJSON, err := b64.DecodeString(resp.Response.ClientDataJSON)
-	if err != nil {
-		return fmt.Errorf("webauthn: clientDataJSON が base64url でない: %w", err)
-	}
-	if err := verifyClientData(clientDataJSON, "webauthn.create", claims.Challenge, cfg.Origin); err != nil {
-		return err
-	}
-	attObjBytes, err := b64.DecodeString(resp.Response.AttestationObject)
-	if err != nil {
-		return fmt.Errorf("webauthn: attestationObject が base64url でない: %w", err)
-	}
-	var attObj struct {
-		Fmt      string                 `cbor:"fmt"`
-		AttStmt  map[string]interface{} `cbor:"attStmt"`
-		AuthData []byte                 `cbor:"authData"`
-	}
-	if err := cbor.Unmarshal(attObjBytes, &attObj); err != nil {
-		return fmt.Errorf("webauthn: attestationObject を読めない: %w", err)
-	}
-	if attObj.Fmt != "none" {
-		return fmt.Errorf("webauthn: 対応していない attestation の形式 (fmt=%q、\"none\" だけに対応)", attObj.Fmt)
-	}
-	authData, err := parseAuthenticatorData(attObj.AuthData)
+	att, err := verifyAttestation(cfg, claims.Challenge, resp, false)
 	if err != nil {
 		return err
 	}
-	if err := checkRPIDHash(authData.RPIDHash, cfg.RPID); err != nil {
-		return err
-	}
-	if !authData.UserPresent() {
-		return errors.New("webauthn: user present フラグが立っていない")
-	}
-	if len(authData.CredentialID) == 0 {
-		return errors.New("webauthn: 登録の authenticatorData に credential が無い")
-	}
-	respID, err := b64.DecodeString(resp.ID)
-	if err != nil || subtle.ConstantTimeCompare(respID, authData.CredentialID) != 1 {
-		return errors.New("webauthn: 応答の id と、authenticatorData の credentialId が一致しない")
-	}
-	pub, err := parseCOSEPublicKey(authData.CredentialPublicKey)
-	if err != nil {
-		return err
-	}
-	persisted.Credential = &storedCredential{
-		ID: authData.CredentialID, PublicKeyX: pub.X.Bytes(), PublicKeyY: pub.Y.Bytes(),
-		SignCount: authData.SignCount, RPID: cfg.RPID,
-	}
+	att.cred.CreatedAt = time.Now().Unix()
+	persisted.Credentials = []storedCredential{att.cred}
 	persisted.BootstrapToken = nil
 	persisted.BootstrapExpiry = 0
 	return st.save(persisted)
 }
 
-// AuthenticateBegin は、登録済みの credential へのログインを求める PublicKeyCredentialRequestOptions と、
+// AuthenticateBegin は、登録済みの passkey のどれかでのログインを求める PublicKeyCredentialRequestOptions と、
 // 対応する state token を返す。
 func AuthenticateBegin(ctx context.Context, cfg Config, st *Store) (*RequestOptions, string, error) {
 	state, err := st.load(ctx)
 	if err != nil {
 		return nil, "", err
 	}
-	if state.Credential == nil {
+	if len(state.Credentials) == 0 {
 		return nil, "", ErrNotRegistered
 	}
 	challenge, err := randomBytes(32)
@@ -276,7 +270,7 @@ func AuthenticateBegin(ctx context.Context, cfg Config, st *Store) (*RequestOpti
 	opts := &RequestOptions{
 		RPID:             cfg.RPID,
 		Challenge:        b64.EncodeToString(challenge),
-		AllowCredentials: []credDescriptor{{Type: "public-key", ID: b64.EncodeToString(state.Credential.ID)}},
+		AllowCredentials: descriptors(state.Credentials, nil),
 		Timeout:          int(challengeTTL / time.Millisecond),
 		UserVerification: "preferred",
 	}
@@ -286,13 +280,28 @@ func AuthenticateBegin(ctx context.Context, cfg Config, st *Store) (*RequestOpti
 	return opts, stateToken, nil
 }
 
-// AuthenticateFinish は、state と、ブラウザの assertion 応答を検証し、通ればセッション token を返す。
+// descriptors は、creds (except を除く) の allowCredentials を作る。
+func descriptors(creds []storedCredential, except []byte) []credDescriptor {
+	out := make([]credDescriptor, 0, len(creds))
+	for _, c := range creds {
+		if except != nil && bytes.Equal(c.ID, except) {
+			continue
+		}
+		out = append(out, credDescriptor{Type: "public-key", ID: b64.EncodeToString(c.ID)})
+	}
+	return out
+}
+
+// AuthenticateFinish は、state と、ブラウザの assertion 応答を検証し、通ればセッション token を返す。応答の passkey は、
+// 登録済みのどれでもよい (応答の id で引く)。
 func AuthenticateFinish(ctx context.Context, cfg Config, st *Store, state string, resp AssertionResponse) (string, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 	persisted, err := st.load(ctx)
 	if err != nil {
 		return "", err
 	}
-	if persisted.Credential == nil {
+	if len(persisted.Credentials) == 0 {
 		return "", ErrNotRegistered
 	}
 	claims, err := verifyStateToken(persisted.SessionSecret, state, "authenticate")
@@ -300,47 +309,20 @@ func AuthenticateFinish(ctx context.Context, cfg Config, st *Store, state string
 		return "", err
 	}
 	respID, err := b64.DecodeString(resp.ID)
-	if err != nil || subtle.ConstantTimeCompare(respID, persisted.Credential.ID) != 1 {
+	if err != nil {
 		return "", errors.New("webauthn: 応答の id が、登録済みの credential と一致しない")
 	}
-	clientDataJSON, err := b64.DecodeString(resp.Response.ClientDataJSON)
+	cred := persisted.credential(respID)
+	if cred == nil {
+		return "", errors.New("webauthn: 応答の id が、登録済みの credential と一致しない")
+	}
+	authData, err := verifyAssertion(cfg, cred, claims.Challenge, resp, false)
 	if err != nil {
-		return "", fmt.Errorf("webauthn: clientDataJSON が base64url でない: %w", err)
-	}
-	if err := verifyClientData(clientDataJSON, "webauthn.get", claims.Challenge, cfg.Origin); err != nil {
-		return "", err
-	}
-	authDataBytes, err := b64.DecodeString(resp.Response.AuthenticatorData)
-	if err != nil {
-		return "", fmt.Errorf("webauthn: authenticatorData が base64url でない: %w", err)
-	}
-	authData, err := parseAuthenticatorData(authDataBytes)
-	if err != nil {
-		return "", err
-	}
-	if err := checkRPIDHash(authData.RPIDHash, cfg.RPID); err != nil {
-		return "", err
-	}
-	if !authData.UserPresent() {
-		return "", errors.New("webauthn: user present フラグが立っていない")
-	}
-	sig, err := b64.DecodeString(resp.Response.Signature)
-	if err != nil {
-		return "", fmt.Errorf("webauthn: signature が base64url でない: %w", err)
-	}
-	pub := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     new(big.Int).SetBytes(persisted.Credential.PublicKeyX),
-		Y:     new(big.Int).SetBytes(persisted.Credential.PublicKeyY),
-	}
-	clientDataHash := sha256.Sum256(clientDataJSON)
-	signed := append(append([]byte{}, authDataBytes...), clientDataHash[:]...)
-	if err := verifyES256(pub, signed, sig); err != nil {
 		return "", err
 	}
 	// signCount のクローン検知はしない (doc.go の「限界」を参照): 増えたときだけ反映する。
 	if authData.SignCount > 0 {
-		persisted.Credential.SignCount = authData.SignCount
+		cred.SignCount = authData.SignCount
 	}
 	if err := st.save(persisted); err != nil {
 		return "", err
@@ -387,6 +369,8 @@ func VerifySession(ctx context.Context, st *Store, token string) error {
 // 第三者が正規利用者のセッションを強制失効させられる (goronation serve のハンドラは、有効なセッション
 // cookie を提示できたときだけこれを呼ぶ)。
 func Logout(ctx context.Context, st *Store) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 	state, err := st.load(ctx)
 	if err != nil {
 		return err

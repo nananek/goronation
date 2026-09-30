@@ -30,8 +30,7 @@ type coseEC2Key struct {
 
 // parseCOSEPublicKey は、b (credentialPublicKey。CBOR の COSE_Key) を、ES256 (P-256) の公開鍵として解釈
 // する。それ以外のアルゴリズム・曲線は、このバージョンでは対応しない (error)。b は、余分なバイトを含まない
-// こと (cbor.Unmarshal が、末尾の余りを error にする。authenticatorData の拡張データを受け付けない設計と
-// 対になる)。
+// こと (cbor.Unmarshal が、末尾の余りを error にする。parseAuthenticatorData が、鍵の CBOR を 1 つ分だけ切り出して渡す)。
 func parseCOSEPublicKey(b []byte) (*ecdsa.PublicKey, error) {
 	var k coseEC2Key
 	if err := cbor.Unmarshal(b, &k); err != nil {

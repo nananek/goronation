@@ -44,6 +44,7 @@
 | [0036](0036-vault-import-rules.md) | `vault/` を import してよいのは `cmd/**` だけで、`vault/` は `core/` と標準ライブラリだけに依存する (M2) | 採用 |
 | [0037](0037-vault-process-layout.md) | Vault の本体鍵は、専用のデーモンだけが持ち、他のプロセスは UDS で引く (M2) | 採用 |
 | [0038](0038-vault-wrap-add-remove.md) | passkey の追加と削除は、既存の passkey の証明と、両方の画面での確認を要る (M2) | 採用 |
+| [0039](0039-webauthn-multi-passkey.md) | webauthn は、複数の passkey と、操作に束縛した再認証を持ち、ED は許可リストで受ける (M2) | 採用 |
 
 ## 書き方
 

@@ -1,31 +1,30 @@
-// Package webauthn は、goronation serve の Web ログイン (WebAuthn によるセッション認証) を実装する。
+// Package webauthn は、goronation serve の Web ログインと、Vault の操作 (解錠・passkey の追加・削除) の認証を、WebAuthn で実装する。
 //
-// 対応するのは、1 ユーザー・1 passkey・ES256 (P-256 ECDSA) だけの最小限の骨組み: 登録 (シェルで発行した
-// 1 回限りのブートストラップトークンで、最初の 1 回だけ) → ログイン → 署名済みのセッション token を発行する。
-// Vault (PRF) は範囲外 (goronation-serve-plan §4-2 (b)。後回し)。
+// ADR 0033・0038・0039 に従う。1 ユーザー・ES256 (P-256 ECDSA)・複数の passkey (最大 16)。最初の 1 つは、シェルで発行した 1 回限りのブートストラップトークン。
+// 2 つ目以降は、既存の passkey の認可で足す。
 //
 // # 使い方
 //
-//	st, err := webauthn.NewStore(stateDir)
-//	cfg := webauthn.Config{RPID: "example.com", Origin: "https://example.com"}
-//	opts, state, err := webauthn.RegisterBegin(ctx, cfg, st, token) // ブラウザへ返す
-//	err = webauthn.RegisterFinish(ctx, cfg, st, state, resp)        // 検証して保存
-//	session, err := webauthn.AuthenticateFinish(ctx, cfg, st, state, resp) // ログイン成功時
+//	opts, state, err := webauthn.RegisterBegin(ctx, cfg, st, token)        // 最初の 1 つ → RegisterFinish
+//	opts, state, err := webauthn.AuthenticateBegin(ctx, cfg, st)            // ログイン → AuthenticateFinish
+//	opts, state, err := webauthn.OpAuthBegin(ctx, cfg, st, binding, evals)  // 操作つきの再認証 (UV・PRF) → OpAuthFinish
+//	opts, state, err := webauthn.AddBegin(ctx, cfg, st, requestID)          // passkey の追加 → AddFinish → CommitAdd
+//	err = webauthn.RemoveCredential(ctx, st, target, authz)                 // passkey の削除
 //
 // # 規則
 //
-//   - stateless: challenge はサーバー側に保存せず、HMAC 署名した token (state) に載せてブラウザへ返し、
-//     検証の要求にそのまま付けて返させる (token.go)。credential は常に高々 1 つ、すでにあれば登録は断る
-//     (作り直すには状態ファイルを消す。goronation serve reset のようなコマンドは無い)。
-//   - none-attestation: 登録は attestation "none" だけを要求・受理する (信頼チェーンの検証はしない)。
-//     対応する COSE のアルゴリズムは ES256 だけ。拡張データ (authenticatorData の ED フラグ) は拒否する。
-//   - state-file: 状態は、credfile.Store 経由で <state>/credentials/webauthn に置く (0600・pinned・
-//     atomic write は credfile に委ねる)。中身は JSON で、[]byte のフィールドは base64 になる。
-//   - session-epoch: セッション token は発行時点の世代番号 (SessionEpoch) を埋め込む。Logout は世代を
-//     進め、それ以前の token (盗まれたものも含む) を一括で失効させる (credential・state token は変えない)。
+//   - stateless: challenge は、HMAC 署名した state token に載せて往復する (token.go)。操作つきの state は、操作の種類・対象の
+//     credential ID・要求の ID・応えてよい passkey も署名の中に持ち、Finish は、呼び手の値との一致を見る。応答は 1 回しか通らない。
+//   - none-attestation: attestation "none" だけ。ED フラグの拡張データは、許可リスト (hmac-secret・credProtect) だけ受け、
+//     未知のキー・型違い・余りは拒否する (authdata.go)。
+//   - prf-unverified: PRF の出力は clientExtensionResults (署名の外) にあり、検証できない。呼び手は、復号を試す入力にだけ使い、
+//     Wipe で消す。追加・削除の認可は、署名の検証 (UV 必須) と、呼び手の vault の証明で行う。
+//   - state-file: credfile.NewSized 経由で <state>/credentials/webauthn (16 KiB まで)。単数だった版の形は、読むときに移す。
 //
 // # 限界
 //
-//   - 1 ユーザー・1 credential 固定。RP ID を変えると既存の credential は使えなくなるが、登録し直す手段は無い。
-//   - signCount のクローン検知・レート制限・total lockout は、この package にも呼び手にも無い。
+//   - 状態の「読んで保存」の直列化 (Store.mu) はプロセスの中だけ。別プロセスの CLI (IssueBootstrapToken) が、web の書き込みと重なると、
+//     どちらかの更新が失われうる (ファイルロックは未実装)。
+//   - signCount のクローン検知・レート制限・total lockout は無い。S9 (iPhone 実機) で、PRF・ED の実際の挙動を確かめる。
+//   - 追加した passkey の PRF が、作成時に返らない場合の再認証は、未実装。SAS (ADR 0035) の配線も、この package の外。
 package webauthn
