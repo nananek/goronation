@@ -1147,3 +1147,38 @@ test('L-H2: 進み具合 (%) を出す', () => {
   h.advance(600);
   assert.ok(/いま [1-9][0-9]?%/.test(dlg.textContent), dlg.textContent.slice(0, 300));
 });
+
+// ---- PR⑧: 権限モード (claude 2.1.285 の既定が auto: 承認なしで tool が実行された) ----
+
+test('権限モード: default 以外は、警告を出す。default では出さない。無い・空 (確認できない) も出す。敵対的な値は印になる', () => {
+  const noticeText = (h) => h.doc.byId.notices.textContent;
+  for (const [mode, warn] of [['default', false], [undefined, true], ['', true], ['auto', true], ['acceptEdits', true], ['bypassPermissions', true], ['x\ny' + cp(0x202e), true]]) {
+    const h = harness();
+    h.hello();
+    h.fire(ev(0, 'session.started', {agent: 'claude', model: 'm', cwd: '/work', permission_mode: mode}));
+    h.runTimers();
+    assert.strictEqual(noticeText(h).includes('警告'), warn, String(mode) + ': ' + noticeText(h));
+    if (warn) {
+      assert.ok(noticeText(h).includes('承認なしで実行されうる'));
+      assert.ok(!noticeText(h).includes(cp(0x202e)) && !noticeText(h).includes('\n'));
+    }
+  }
+  // session.started が、まだ無ければ、警告は出ない (確認する前)。
+  const h0 = harness();
+  h0.hello();
+  h0.runTimers();
+  assert.ok(!h0.doc.byId.notices.textContent.includes('警告'));
+  // 世代が変わる (serve の再起動) と、警告も作り直される。
+  const h = harness();
+  h.hello(G1);
+  h.fire(ev(0, 'session.started', {agent: 'claude', permission_mode: 'auto'}));
+  h.runTimers();
+  assert.ok(h.doc.byId.notices.textContent.includes('警告'));
+  h.es().fire('error', {});
+  h.runTimers();
+  h.runTimers();
+  h.es().fire('hello', {first_seq: 0, generation: G2});
+  h.es().fire('message', ev(0, 'session.started', {agent: 'claude', permission_mode: 'default'}));
+  h.runTimers();
+  assert.ok(!h.doc.byId.notices.textContent.includes('警告'));
+});

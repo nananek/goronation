@@ -222,10 +222,27 @@ func TestAgentLookup(t *testing.T) {
 	if l.Args()[0] != "-p" {
 		t.Error("Args が、内部の slice を返している")
 	}
-	joined := strings.Join(l.Args(), " ")
-	for _, want := range []string{"--input-format stream-json", "--output-format stream-json", "--permission-prompt-tool stdio"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("引数に %q が無い: %s", want, joined)
+	// フラグと値は、トークンの完全一致で見る (部分文字列だと、`--setting-sources user,project` も通る)。フラグは 1 回だけ。
+	args := l.Args()
+	for flag, want := range map[string]string{
+		"--input-format":           "stream-json",
+		"--output-format":          "stream-json",
+		"--permission-prompt-tool": "stdio",
+		"--permission-mode":        "default",
+		"--setting-sources":        "user",
+	} {
+		n := 0
+		for i, tok := range args {
+			if tok != flag {
+				continue
+			}
+			n++
+			if i+1 >= len(args) || args[i+1] != want {
+				t.Errorf("%s の値が %q でない: %q", flag, want, args)
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s が %d 回 (1 回だけのはず): %q", flag, n, args)
 		}
 	}
 }

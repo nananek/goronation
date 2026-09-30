@@ -98,6 +98,19 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return fail("%v", err)
 	}
 
+	// UDS の path が長いと、後で失敗する (セッションと檻を作った後になる: L-D)。何も作る前に、確かめる (ID は同じ長さの仮のものでよい)。
+	earlyWhat, earlySock := "端末ビュー", termSocketPath
+	if *chatFlag {
+		earlyWhat, earlySock = "チャット", chatSocketPath
+	}
+	earlyPath := *socketFlag
+	if earlyPath == "" {
+		earlyPath = earlySock(stateDir, defaultGroup, chatSockPlaceholderID)
+	}
+	if err := checkSockPath(earlyPath, earlyWhat); err != nil {
+		return fail("%v", err)
+	}
+
 	// goronation serve は、goronation run のような、ホストの端末を檻と共有する前提の signal 処理 (sigWatch) を
 	// 使わない (端末ビューは WebSocket 越しで、檻とホストの制御端末は無関係)。SIGINT・SIGTERM・SIGHUP
 	// は、単純に ctx を取り消すだけにする (serve_signals.go)。

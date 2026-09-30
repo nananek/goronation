@@ -24,7 +24,10 @@ func Agent(name string) (Launch, error) {
 			name: name,
 			// PR⓪ の採取で決まった組 (ADR 0010)。--permission-prompt-tool stdio は、隠しフラグ。initialize は、アダプタが、最初の prompt の
 			// raw の先頭に含める (起動直後に別に送らない)。
-			args:      []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"},
+			// --permission-mode default を明示する: claude 2.1.285 は、既定の権限モードが auto (分類器が許可を決める) に変わり、
+			// --permission-prompt-tool stdio を付けても can_use_tool の要求が出ず、tool が、人間の承認なしで実行された (2.1.284 は default。PR⑧ の実物の確認で発見)。
+			// --setting-sources user は、repo の .claude/settings.local.json の allow・.claude/settings.json の hooks (どちらも承認なしで tool を実行させる) を切る (ADR 0017)。HOME の設定と、managed settings (host の root だけが書ける) は切れない。
+			args:      []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio", "--permission-mode", "default", "--setting-sources", "user"},
 			newStream: claude.Adapter{}.NewStream,
 		}, nil
 	}

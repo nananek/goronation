@@ -68,7 +68,7 @@ func runFakeChat(mode string, stdin io.Reader, stdout io.Writer) int {
 			turn++
 			toolID, reqID := fmt.Sprintf("toolu_%d", turn), fmt.Sprintf("perm-%d", turn)
 			input := map[string]any{"file_path": "/work/new.txt", "content": fmt.Sprintf("turn %d\n", turn)}
-			emit(map[string]any{"type": "system", "subtype": "init", "session_id": "sess-1", "cwd": "/work", "model": "fake", "tools": []string{"Write"}})
+			emit(map[string]any{"type": "system", "subtype": "init", "session_id": "sess-1", "cwd": "/work", "model": "fake", "tools": []string{"Write"}, "permissionMode": "default"})
 			emit(assistant(fmt.Sprintf("m%da", turn), map[string]any{"type": "text", "text": "書きます。"}))
 			emit(assistant(fmt.Sprintf("m%db", turn), map[string]any{"type": "tool_use", "id": toolID, "name": "Write", "input": input}))
 			emit(map[string]any{"type": "control_request", "request_id": reqID, "request": map[string]any{
@@ -87,7 +87,24 @@ func runFakeChat(mode string, stdin io.Reader, stdout io.Writer) int {
 			resp, _ := got["response"].(map[string]any)
 			body, _ := resp["response"].(map[string]any)
 			seen, _ := json.Marshal(body)
-			emit(assistant(fmt.Sprintf("m%dc", turn), map[string]any{"type": "text", "text": fmt.Sprintf("request=%v response=%s", resp["request_id"], seen)}))
+			// 檻の中 (実際の /opt/claude/claude) では、許可された tool を、実際に実行する (E2E: 許可 → tool の実行、拒否 → 実行されない)。
+			executed := false
+			if os.Args[0] == "/opt/claude/claude" && body["behavior"] == "allow" {
+				if in, ok := body["updatedInput"].(map[string]any); ok {
+					path, _ := in["file_path"].(string)
+					content, _ := in["content"].(string)
+					if path != "" && os.WriteFile(path, []byte(content), 0o644) == nil {
+						executed = true
+					}
+				}
+			}
+			result := "wrote " + toolID
+			if body["behavior"] != "allow" {
+				result = "denied"
+			}
+			emit(map[string]any{"type": "user", "session_id": "sess-1", "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": toolID, "content": result, "is_error": body["behavior"] != "allow"}}}})
+			emit(assistant(fmt.Sprintf("m%dc", turn), map[string]any{"type": "text", "text": fmt.Sprintf("request=%v response=%s executed=%v", resp["request_id"], seen, executed)}))
 			emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "done", "session_id": "sess-1",
 				"duration_ms": 0, "num_turns": turn, "total_cost_usd": 0, "usage": map[string]any{"input_tokens": 1, "output_tokens": 1}})
 		}

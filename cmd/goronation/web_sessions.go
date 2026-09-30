@@ -18,6 +18,7 @@ type sessionInfoDTO struct {
 	Created string `json:"created"`
 	Repo    string `json:"repo"`
 	Agent   string `json:"agent"`
+	Chat    bool   `json:"chat"` // chat.sock がある (会話を見られる。serve --chat が動いている印)
 }
 
 // handleSessionsPage は、requireSession で保護された、セッション一覧・repo のファイルブラウザの
@@ -40,7 +41,7 @@ func (s *webServer) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		if agent == "" {
 			agent = legacySessionAgent
 		}
-		out[i] = sessionInfoDTO{ID: in.ID, Created: in.Created.Format("2006-01-02T15:04:05Z"), Repo: in.Repo, Agent: agent}
+		out[i] = sessionInfoDTO{ID: in.ID, Created: in.Created.Format("2006-01-02T15:04:05Z"), Repo: in.Repo, Agent: agent, Chat: chatSockExists(s.stateDir, in.ID)}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
