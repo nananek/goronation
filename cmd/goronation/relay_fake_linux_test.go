@@ -40,7 +40,8 @@ func fakeRelayUpstream(args []string) int {
 		return 3
 	}
 	lc := net.ListenConfig{}
-	if mode == "reuseport" { // SO_REUSEPORT を付けて待ち受ける (init が、起動を拒否する)
+	stubborn := mode == "reuseport-stubborn" // 標準入力が閉じても終わらない子 (init が、失敗のとき、SIGKILL で止めることの確認)
+	if mode == "reuseport" || stubborn {     // SO_REUSEPORT を付けて待ち受ける (init が、起動を拒否する)
 		lc.Control = func(_, _ string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) { syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, soReusePort, 1) })
 		}
@@ -53,7 +54,9 @@ func fakeRelayUpstream(args []string) int {
 	go func() {
 		io.Copy(io.Discard, os.Stdin)
 		fmt.Fprintln(os.Stderr, "STDIN-EOF")
-		os.Exit(0)
+		if !stubborn {
+			os.Exit(0)
+		}
 	}()
 	if mode == "spoof" {
 		go func() {
@@ -75,8 +78,7 @@ func fakeRelayUpstream(args []string) int {
 		}
 	}
 	switch mode {
-	case "noproof": // 起動の証明を出さない (init が、要求を受け付けないこと・期限で失敗することの確認)
-		select {}
+	case "noproof": // 起動の証明を出さない (待ち受けは始める。init が、証明の前に要求を受け付けないこと・期限で失敗することの確認)
 	case "wrongurl":
 		fmt.Fprintf(realOut, "{\"url\":\"http://127.0.0.1:%d\"}\n", port+1)
 	case "notjson":

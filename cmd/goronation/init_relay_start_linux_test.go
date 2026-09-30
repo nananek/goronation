@@ -247,7 +247,8 @@ func TestInitRelayPortSquatted(t *testing.T) {
 
 // 持ち主が SO_REUSEPORT を付けていると (別のプロセスが同じポートを共有できる)、証明が合っていても、起動を拒否する。付けていなければ通る (上の通しのテスト)。
 func TestInitRelayRefusesReusePort(t *testing.T) {
-	r := startInit(t, fakeOpencodeScript(t, ""), nil, "reuseport")
+	// 標準入力が閉じても終わらない子でも、init が SIGKILL で止める (でないと、ポートが解放されない)。
+	r := startInit(t, fakeOpencodeScript(t, ""), nil, "reuseport-stubborn")
 	line := r.statusLine()
 	if !strings.HasPrefix(line, `{"error":"`) || !strings.Contains(line, "SO_REUSEPORT") {
 		t.Errorf("状態の行 = %q", line)
