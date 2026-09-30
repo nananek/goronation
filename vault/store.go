@@ -17,7 +17,6 @@ import (
 const (
 	fileName    = "vault.json"
 	tmpName     = "vault.json.tmp"
-	lockName    = "lock"
 	auditName   = "audit.log"
 	maxFileSize = 32 << 20 // vault.json を読む上限
 	maxWraps    = 16
@@ -102,12 +101,17 @@ func checkDir(dir string) error {
 // openFlags は、symlink を辿らない開き方。
 const noFollow = syscall.O_NOFOLLOW
 
-// lockDir は、dir の lock ファイルの flock (排他・待たない) を取る。取れなければ ErrInUse。返す File を閉じると、解ける
-// (kernel は、プロセスが死んでも解く)。
+// lockDir は、dir 自身 (ディレクトリの fd) の flock (排他・待たない) を取る。取れなければ ErrInUse。返す File を閉じると、解ける
+// (kernel は、プロセスが死んでも解く)。ファイルでなくディレクトリの inode に掛けるので、lock ファイルの rename・差し替え・
+// hardlink で、2 人目の持ち主を作れない (ADR 0034 決定 7)。
 func lockDir(dir string) (*os.File, error) {
-	f, err := os.OpenFile(filepath.Join(dir, lockName), os.O_RDWR|os.O_CREATE|noFollow, 0o600)
+	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_DIRECTORY|noFollow, 0)
 	if err != nil {
-		return nil, fmt.Errorf("vault: lock ファイルを開けない: %w", err)
+		return nil, fmt.Errorf("vault: %s を開けない: %w", dir, err)
+	}
+	if err := checkOwned(f, dir, true); err != nil {
+		f.Close()
+		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
@@ -119,6 +123,27 @@ func lockDir(dir string) (*os.File, error) {
 	return f, nil
 }
 
+// checkOwned は、開いた f (fstat) が、通常のファイル (wantDir なら、ディレクトリ)・自分 (euid) の所有・自分だけが入れる権限であることを
+// 確かめる (path でなく fd で見るので、検査と使用の間の差し替えに強い)。
+func checkOwned(f *os.File, name string, wantDir bool) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	switch {
+	case wantDir && !fi.IsDir():
+		return fmt.Errorf("vault: %s は実ディレクトリでない", name)
+	case !wantDir && !fi.Mode().IsRegular():
+		return fmt.Errorf("vault: %s は通常のファイルでない", name)
+	case fi.Mode().Perm()&0o077 != 0:
+		return fmt.Errorf("vault: %s の権限 %o が広い (0700・0600 にする)", name, fi.Mode().Perm())
+	case !ok || int(st.Uid) != os.Geteuid():
+		return fmt.Errorf("vault: %s の所有者が、自分 (euid) でない", name)
+	}
+	return nil
+}
+
 // readRegular は、dir の下の name を、通常のファイル・自分の所有・0600 相当・上限以内であることを確かめて読む。
 // 無ければ (nil, os.ErrNotExist を包んだ error)。
 func readRegular(dir, name string, limit int64) ([]byte, error) {
@@ -127,19 +152,14 @@ func readRegular(dir, name string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
+	if err := checkOwned(f, name, false); err != nil {
+		return nil, err
+	}
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	switch {
-	case !fi.Mode().IsRegular():
-		return nil, fmt.Errorf("vault: %s は通常のファイルでない", name)
-	case fi.Mode().Perm()&0o077 != 0:
-		return nil, fmt.Errorf("vault: %s の権限 %o が広い (0600 にする)", name, fi.Mode().Perm())
-	case !ok || int(st.Uid) != os.Geteuid():
-		return nil, fmt.Errorf("vault: %s の所有者が、自分 (euid) でない", name)
-	case fi.Size() > limit:
+	if fi.Size() > limit {
 		return nil, fmt.Errorf("vault: %s が大きすぎる", name)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))

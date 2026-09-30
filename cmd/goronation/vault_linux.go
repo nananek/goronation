@@ -86,8 +86,10 @@ func runVault(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	if err != nil || strings.TrimSpace(line) != want {
 		return fail("確認が合わない。中止した (何も消していない)")
 	}
-	gone, err := vault.Reset(dir, vault.ResetOptions{})
+	gone, err := vault.Reset(dir, vault.ResetOptions{ExpectID: id})
 	switch {
+	case errors.Is(err, vault.ErrVaultChanged):
+		return fail("確認したあとに、Vault が差し替わった。何も消していない。もう一度実行する")
 	case errors.Is(err, vault.ErrInUse):
 		return fail("Vault のデーモンが動いている (lock を持っている)。止めてから、もう一度実行する (何も消していない)")
 	case err != nil:

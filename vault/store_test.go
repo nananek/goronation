@@ -64,7 +64,7 @@ func TestOpenRejectsUnsafeDir(t *testing.T) {
 func TestFilesArePrivate(t *testing.T) {
 	v, dir := initVault(t)
 	addPasskey(t, v, "cred-b", "b")
-	for _, name := range []string{fileName, auditName, lockName} {
+	for _, name := range []string{fileName, auditName} {
 		fi, err := os.Stat(filepath.Join(dir, name))
 		if err != nil || fi.Mode().Perm() != 0o600 {
 			t.Errorf("%s = %v, %v (0600)", name, fi, err)

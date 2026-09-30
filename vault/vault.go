@@ -34,7 +34,7 @@ var (
 	ErrLastWrap = errors.New("vault: cannot remove the last wrap")
 	// ErrSameCredential は、削除する passkey 自身を、認可に使おうとしたときの error。
 	ErrSameCredential = errors.New("vault: authorizer must differ from the removed passkey")
-	// ErrInUse は、別の持ち主が、Vault の lock (flock) を持っているときの error。
+	// ErrInUse は、別の持ち主が、Vault の dir の flock を持っているときの error。
 	ErrInUse = errors.New("vault: in use by another process")
 	// ErrClosed は、Close 済みの Vault を使ったときの error。
 	ErrClosed = errors.New("vault: closed")
@@ -66,7 +66,7 @@ type WrapInfo struct {
 	Salt         []byte
 }
 
-// Vault は、Vault の本体。1 つの dir を、flock で占有する。全ての method は、並行に呼んでよい。
+// Vault は、Vault の本体。1 つの dir を、dir 自身への flock で占有する。全ての method は、並行に呼んでよい。
 //
 // 呼び手が渡した PRF 出力・salt の slice は、Vault は保持しない (呼び手が clear する)。
 type Vault struct {
@@ -84,7 +84,7 @@ var (
 	_ corevault.LoginStore = (*Vault)(nil)
 )
 
-// Open は、dir の Vault を開く。dir は、自分の持つ 0700 の実ディレクトリ (無ければ作る)。lock (flock) を取れなければ ErrInUse。
+// Open は、dir の Vault を開く。dir は、自分の持つ 0700 の実ディレクトリ (無ければ作る)。dir の flock を取れなければ ErrInUse。
 // vault.json が無ければ、未初期化の Vault を返す。読めない・版が違う vault.json は ErrFormat (Reset で壊せる)。
 // 開いた直後は、施錠中。
 func Open(dir string) (*Vault, error) {
@@ -148,7 +148,7 @@ func NewSalt() ([]byte, error) { return randBytes(SaltSize) }
 func (v *Vault) WrapInfos() []WrapInfo {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.doc == nil {
+	if v.doc == nil || v.closed {
 		return nil
 	}
 	out := make([]WrapInfo, 0, len(v.doc.Wraps))

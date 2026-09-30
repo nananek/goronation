@@ -39,9 +39,14 @@ func appendAudit(dir string, now time.Time, e auditEntry) error {
 		return err
 	}
 	line = append(line, '\n')
-	f, err := os.OpenFile(filepath.Join(dir, auditName), os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	// O_NONBLOCK: FIFO で、読み手を待って止まらない (開けなければ error)。fd で、通常のファイル・自分の所有・0600 相当を確かめる (fail closed)。
+	f, err := os.OpenFile(filepath.Join(dir, auditName), os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		return fmt.Errorf("vault: 監査の記録を開けない: %w", err)
+	}
+	if err := checkOwned(f, auditName, false); err != nil {
+		f.Close()
+		return fmt.Errorf("vault: 監査の記録が使えない: %w", err)
 	}
 	if _, err := f.Write(line); err != nil {
 		f.Close()
