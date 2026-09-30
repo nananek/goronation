@@ -36,6 +36,12 @@
 | [0028](0028-relay-control-stdin.md) | 要求の中継の control は init の標準入力にし、HTTP の解釈と上限を固定する (M2) | 採用 |
 | [0029](0029-opencode-port-squat-layers.md) | opencode のポートの横取りは、起動の証明・接続後の生存確認・1 起動 1 トークンで抑える (M2) | 採用 |
 | [0030](0030-relay-init-startup-contract.md) | init は起動の結果を stdout の 1 行で知らせ、要求のヘッダは許可リストで通す (M2) | 採用 |
+| [0031](0031-vault-responsibility.md) | Vault は保管と署名だけを持ち、egress は使うたびに Vault から引く (M2) | 採用 |
+| [0032](0032-vault-core-ports.md) | Vault の port は core に置き、資格情報の取り出しは既存の `credential.Source` を使う (M2) | 採用 |
+| [0033](0033-vault-key-hierarchy.md) | Vault の鍵は、passkey の PRF から作るラップ鍵で、本体鍵を包む (M2) | 採用 |
+| [0034](0034-vault-reset.md) | `goronation vault reset` は、Vault の中身を壊すだけで、読まず、記録を残す (M2) | 採用 |
+| [0035](0035-vault-unlock-sas.md) | 解錠の儀式は、操作対象と確認コードを両方の画面に出す。経路は S9 の後に決める (M2) | 提案 |
+| [0036](0036-vault-import-rules.md) | `vault/` を import してよいのは `cmd/**` だけで、`vault/` は `core/` と標準ライブラリだけに依存する (M2) | 採用 |
 
 ## 書き方
 
