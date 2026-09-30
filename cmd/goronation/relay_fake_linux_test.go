@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -54,22 +55,20 @@ func fakeRelayUpstream(args []string) int {
 	}
 }
 
-// unixSockets は、自分が持つ fd のうち、unix domain socket (/proc/net/unix に inode がある socket) の数を出す。
+// unixSockets は、自分が持つ fd のうち、unix domain socket の数を出す (getsockname の型で数える。/proc/net/unix は、別の netns で作られた socket
+// (ホストが作った control) を載せないので、使えない)。
 func unixSockets() {
-	inodes := map[string]bool{}
-	if b, err := os.ReadFile("/proc/net/unix"); err == nil {
-		for _, line := range strings.Split(string(b), "\n")[1:] {
-			if f := strings.Fields(line); len(f) >= 7 {
-				inodes[f[6]] = true
-			}
-		}
-	}
 	n := 0
 	ents, _ := os.ReadDir("/proc/self/fd")
 	for _, e := range ents {
-		link, err := os.Readlink("/proc/self/fd/" + e.Name())
-		if err == nil && strings.HasPrefix(link, "socket:[") && inodes[strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]")] {
-			n++
+		fd, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		if sa, err := syscall.Getsockname(fd); err == nil {
+			if _, ok := sa.(*syscall.SockaddrUnix); ok {
+				n++
+			}
 		}
 	}
 	fmt.Fprintf(os.Stderr, "child:unix-sockets-in-agent => %d\n", n)

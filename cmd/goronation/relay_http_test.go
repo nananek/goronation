@@ -421,6 +421,11 @@ func TestRequestRelayBodyLength(t *testing.T) {
 	if len(reqs) != 1 || !strings.HasSuffix(reqs[0], "\r\n\r\nabc") {
 		t.Fatalf("上流が受けた要求 = %q", reqs)
 	}
+	up.mu.Lock()
+	defer up.mu.Unlock()
+	if len(up.extra) != 0 {
+		t.Errorf("本文の後の余りが上流に届いた: %q", up.extra)
+	}
 }
 
 // 拒否された要求は、上流に何も届かない (接続もされない)。ホストには、理由の status が返る。
