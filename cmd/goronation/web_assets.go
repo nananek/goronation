@@ -200,10 +200,12 @@ async function loadSessions() {
     a.href = '/s/' + encodeURIComponent(s.id);
     a.textContent = s.id + '  ' + (s.repo || '-') + '  ' + (s.agent || '-') + '  ' + s.created;
     li.appendChild(a);
-    const chatLink = document.createElement('a');
-    chatLink.href = '/s/' + encodeURIComponent(s.id) + '/chat';
-    chatLink.textContent = '  [チャット]';
-    li.appendChild(chatLink);
+    if (s.chat) { // chat.sock がある (会話を見られる)
+      const chatLink = document.createElement('a');
+      chatLink.href = '/s/' + encodeURIComponent(s.id) + '/chat';
+      chatLink.textContent = '  [チャット]';
+      li.appendChild(chatLink);
+    }
     list.appendChild(li);
   }
 }
@@ -227,19 +229,28 @@ async function loadRepos() {
   }
   for (const name of repos) {
     const li = document.createElement('li');
+    li.appendChild(document.createTextNode(name + '  '));
     const btn = document.createElement('button');
-    btn.textContent = name;
-    btn.addEventListener('click', async () => {
+    btn.textContent = '端末で開始';
+    const chatBtn = document.createElement('button');
+    chatBtn.textContent = 'チャットで開始';
+    // 押したら、両方の開始ボタンを無効にする (二重クリックで、二重に起動しない。失敗したら戻す)。
+    async function start(path, dest) {
       btn.disabled = true;
+      chatBtn.disabled = true;
       try {
-        const r = await postJSON('/api/repos/start', {repo: name});
-        location.href = '/s/' + encodeURIComponent(r.id);
+        const r = await postJSON(path, {repo: name});
+        location.href = '/s/' + encodeURIComponent(r.id) + dest;
       } catch (e) {
         setStatus('開始に失敗しました: ' + e.message);
         btn.disabled = false;
+        chatBtn.disabled = false;
       }
-    });
+    }
+    btn.addEventListener('click', () => { start('/api/repos/start', ''); });
+    chatBtn.addEventListener('click', () => { start('/api/chat/start', '/chat'); });
     li.appendChild(btn);
+    li.appendChild(chatBtn);
     list.appendChild(li);
   }
 }

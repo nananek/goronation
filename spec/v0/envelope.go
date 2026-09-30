@@ -34,7 +34,7 @@ type Command struct {
 // イベントの type。各定数の doc に、claude (stream-json) と opencode (run --format json) の、どのフレームから作るかを書く。
 // 「合成」は、フレームが無く、アダプタが作ることを指す。
 const (
-	// TypeSessionStarted は、セッションの開始 (durable)。data は agent・agent_session・cwd など。claude は system/init
+	// TypeSessionStarted は、セッションの開始 (durable)。data は agent・agent_session・cwd・permission_mode (claude。default 以外は、tool が承認なしで実行されうる) など。claude は system/init
 	// (ただし 1 回の起動で、ターンごとに繰り返し出る。2 つ目以降は TypeAgentFrame にする)。opencode は init が無いので、
 	// 最初のフレームの sessionID から合成する。
 	TypeSessionStarted = "session.started"

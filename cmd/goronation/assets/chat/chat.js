@@ -83,7 +83,7 @@
         case 'session':
           e.className = 'item item-session';
           e.appendChild(el('span', 'label', 'セッション開始'));
-          e.appendChild(el('span', 'meta', [it.agent, it.model, it.cwd].filter(Boolean).join('  ')));
+          e.appendChild(el('span', 'meta', [it.agent, it.model, it.cwd, it.permissionMode ? '権限モード: ' + it.permissionMode : ''].filter(Boolean).join('  ')));
           break;
         case 'user':
           e.className = 'item item-user';
@@ -153,6 +153,8 @@
       // 再接続のボタンは、この関数の外で足す。ここでは、ボタン以外の注意書きだけを作り直す。
       for (const c of Array.from(notices.children)) if (c.tagName !== 'button') notices.removeChild(c);
       if (state.omitted || state.trimmed) notices.appendChild(el('div', 'notice', '古い分は省略している'));
+      // 権限モードが default でない (auto・acceptEdits など): tool が、人間の承認なしで実行されうる。権限ダイアログは出ない (PR⑧ の実物の確認で、claude 2.1.285 の既定が auto と分かった)。
+      if (state.permissionMode !== '' && state.permissionMode !== 'default') notices.appendChild(el('div', 'notice notice-danger', '警告: 権限モードが "' + state.permissionMode + '"。tool が、人間の承認なしで実行されうる (権限ダイアログは出ない)'));
       if (state.ended) notices.appendChild(el('div', 'notice notice-end', '終了' + (state.ended.exit !== null ? ' (exit ' + state.ended.exit + ')' : '')));
     }
 

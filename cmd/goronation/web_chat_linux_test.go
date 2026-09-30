@@ -64,16 +64,35 @@ func fastRelay() chatRelayConfig {
 // newChatWeb は、ログイン済みの web (relay の設定・http.Server の ReadTimeout・WriteTimeout つき) を起こす。状態のディレクトリは、UDS の path (107 バイト) に収まる短さ。
 func newChatWeb(t *testing.T, relay chatRelayConfig, readTimeout, writeTimeout time.Duration) *chatWeb {
 	t.Helper()
-	stateDir := shortDir(t)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newChatWebFull(t, relay, readTimeout, writeTimeout, "", self)
+}
+
+// newChatWebFull は、newChatWeb の、reposDir (--repos-dir)・self (goronation serve を起こす実行ファイル) を指定できる形。
+func newChatWebFull(t *testing.T, relay chatRelayConfig, readTimeout, writeTimeout time.Duration, reposDir, self string) *chatWeb {
+	t.Helper()
+	return newChatWebIn(t, relay, readTimeout, writeTimeout, reposDir, self, shortDir(t))
+}
+
+// newChatWebLongState は、state-dir を指定する (長い path の確認用)。
+func newChatWebLongState(t *testing.T, reposDir, self, stateDir string) *chatWeb {
+	t.Helper()
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return newChatWebIn(t, fastRelay(), webReadTimeout, webWriteTimeout, reposDir, self, stateDir)
+}
+
+func newChatWebIn(t *testing.T, relay chatRelayConfig, readTimeout, writeTimeout time.Duration, reposDir, self, stateDir string) *chatWeb {
+	t.Helper()
 	store, err := iwebauthn.NewStore(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sessStore, err := session.NewStore(stateDir, bwrap.CurrentHost())
-	if err != nil {
-		t.Fatal(err)
-	}
-	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +109,7 @@ func newChatWeb(t *testing.T, relay chatRelayConfig, readTimeout, writeTimeout t
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	handler = newWebMuxChat(cfg, store, origin, sessStore, "", stateDir, self, relay)
+	handler = newWebMuxChat(cfg, store, origin, sessStore, reposDir, stateDir, self, relay)
 	return &chatWeb{t: t, web: srv, client: loggedInClient(t, srv, store, "127.0.0.1", origin), origin: origin, stateDir: stateDir}
 }
 

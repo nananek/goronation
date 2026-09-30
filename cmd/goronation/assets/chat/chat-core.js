@@ -197,6 +197,7 @@
       dirty: new Map(),   // id → 項目 (描画が要る)
       removed: [],        // 描画から外す項目の id
       reset: false,       // 表示を全部作り直す (世代が変わった)
+      permissionMode: '', // claude の権限モード (session.started の permission_mode。default 以外は、tool が承認なしで実行されうる。無ければ '')
       turnActive: false,  // ターンの途中か (turn.started から turn.completed まで。送信欄を無効にする)
       turnCount: 0,       // 受けた turn.started の数 (送った指示が、受け付けられたかの確認に使う)
     };
@@ -261,6 +262,7 @@
       state.ended = null;
       state.turnActive = false;
       state.turnCount = 0;
+      state.permissionMode = '';
       state.reset = true;
     }
     state.generation = gen;
@@ -289,7 +291,8 @@
     const d = obj(e.data);
     switch (e.type) {
       case 'session.started': {
-        add(state, {kind: 'session', agent: short(d.agent), model: short(d.model), cwd: short(d.cwd)});
+        state.permissionMode = short(d.permission_mode);
+        add(state, {kind: 'session', agent: short(d.agent), model: short(d.model), cwd: short(d.cwd), permissionMode: state.permissionMode});
         return true;
       }
       case 'turn.started': {

@@ -4,6 +4,7 @@ header { position: sticky; top: 0; display: flex; gap: 1em; align-items: baselin
 #status { font-weight: bold; }
 #notices { padding: 0 12px; }
 .notice { margin: 6px 0; padding: 4px 8px; border-left: 3px solid #a80; background: #a802; }
+.notice-danger { border-left-color: #c44; background: #c442; font-weight: bold; }
 .notice-end { border-left-color: #888; }
 #log { padding: 8px 12px 40px; }
 /* 敵対入力: 長い行で横に広がらない・双方向の上書きが、ほかの要素に及ばない・改行を保つ */

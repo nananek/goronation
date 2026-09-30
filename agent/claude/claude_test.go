@@ -73,7 +73,7 @@ func wantTypes(t *testing.T, es []v0.Envelope, want ...string) {
 func TestSimpleText(t *testing.T) {
 	es := decodeAll(t, "simple-text")
 	wantTypes(t, es, v0.TypeSessionStarted, v0.TypeMessageText, v0.TypeUsage, v0.TypeTurnCompleted)
-	if d := data(t, es[0]); d["agent"] != "claude" || d["agent_session"] != "<uuid:1>" || d["cwd"] != "/work" {
+	if d := data(t, es[0]); d["agent"] != "claude" || d["agent_session"] != "<uuid:1>" || d["cwd"] != "/work" || d["permission_mode"] != "default" {
 		t.Errorf("session.started の data = %v", d)
 	}
 	if d := data(t, es[1]); d["message_id"] != "msg_fake_000" || d["text"] != "こんにちは。フレーム採取用の fake サーバーです。" {

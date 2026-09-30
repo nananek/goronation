@@ -323,6 +323,7 @@ func newWebMuxChat(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, 
 	mux.HandleFunc("GET /api/sessions", s.requireSession(s.handleSessionsList))
 	mux.HandleFunc("GET /api/repos", s.requireSession(handleReposList(reposDir)))
 	mux.HandleFunc("POST /api/repos/start", s.requireSession(s.handleRepoStart))
+	mux.HandleFunc("POST /api/chat/start", s.requireSession(s.handleChatStart)) // 構造化チャットで開始 (書き込みの関門つき)
 	mux.HandleFunc("GET /s/{id}", s.requireSession(s.handleTerminalPage))
 	mux.HandleFunc("GET /s/{id}/ws", s.requireSession(s.handleTerminalProxy))
 	// 構造化チャットの画面 (表示だけ。ページは requireSession。静的なファイルは、ほかの /static と同じく認証なし)。
@@ -340,15 +341,16 @@ func newWebMuxChat(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, 
 
 // webServer は、ハンドラが共有する、リクエストをまたいで変わらない値。
 type webServer struct {
-	cfg      iwebauthn.Config
-	store    *iwebauthn.Store
-	origin   string // --origin (末尾の / なし。書き込みの Origin ヘッダの検査に使う)
-	chat     *chatRelay
-	secure   bool // origin が https か (cookie の Secure 属性に使う。開発用の http://localhost では false)
-	sessions *session.Store
-	reposDir string // --repos-dir (絶対 path。空なら未設定)
-	stateDir string
-	self     string // goronation 自身の実行ファイル (symlink を辿った実体。goronation serve を起こすときに使う)
+	cfg        iwebauthn.Config
+	store      *iwebauthn.Store
+	origin     string // --origin (末尾の / なし。書き込みの Origin ヘッダの検査に使う)
+	chat       *chatRelay
+	chatStarts chatStartGuard // POST /api/chat/start の、二重起動の防ぎ
+	secure     bool           // origin が https か (cookie の Secure 属性に使う。開発用の http://localhost では false)
+	sessions   *session.Store
+	reposDir   string // --repos-dir (絶対 path。空なら未設定)
+	stateDir   string
+	self       string // goronation 自身の実行ファイル (symlink を辿った実体。goronation serve を起こすときに使う)
 }
 
 func hasHTTPSScheme(origin string) bool { return len(origin) >= 8 && origin[:8] == "https://" }

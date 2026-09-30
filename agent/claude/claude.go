@@ -119,6 +119,8 @@ type frame struct {
 	Cwd       lenient[string]   `json:"cwd"`
 	Model     lenient[string]   `json:"model"`
 	Tools     lenient[[]string] `json:"tools"`
+	// PermissionMode は、権限モード (default・auto・acceptEdits など)。default 以外は、tool が人間の承認なしで実行されうる。
+	PermissionMode lenient[string] `json:"permissionMode"`
 
 	// assistant・user
 	IsAPIErrorMessage lenient[bool] `json:"is_api_error_message"`
@@ -217,11 +219,12 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		}
 		s.sawInit = true
 		e, err := ev(v0.TypeSessionStarted, true, map[string]any{
-			"agent":         Name,
-			"agent_session": f.SessionID.V,
-			"cwd":           f.Cwd.V,
-			"model":         f.Model.V,
-			"tools":         f.Tools.V,
+			"agent":           Name,
+			"agent_session":   f.SessionID.V,
+			"cwd":             f.Cwd.V,
+			"model":           f.Model.V,
+			"tools":           f.Tools.V,
+			"permission_mode": f.PermissionMode.V,
 		})
 		return []v0.Envelope{e}, err
 

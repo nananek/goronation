@@ -35,7 +35,7 @@ func leaves(v any, path string, out *[]leaf) {
 // 書き換えずに載せると約束した値 (tool の input・tool_result の content・テキスト) と、封筒の語彙が必要とする識別子だけ。
 var allowedPaths = map[string][]string{
 	"system/permission_denied": {".tool_name", ".tool_use_id"},
-	"system/init":              {".session_id", ".cwd", ".model", ".tools"},
+	"system/init":              {".session_id", ".cwd", ".model", ".tools", ".permissionMode"},
 	"assistant":                {".message.id", ".message.content.*.text", ".message.content.*.id", ".message.content.*.name", ".message.content.*.input"},
 	"user":                     {".message.content.*.tool_use_id", ".message.content.*.content"},
 	"result":                   {".stop_reason", ".result", ".terminal_reason"},
@@ -123,7 +123,7 @@ func containedInAllowed(x, l string, ok []leaf) bool {
 // TestDataKeysAreFixed は、data のキーが、語彙 (spec/v0 の doc) の名前だけであることを固定する。値の漏れを、キーの側から見る。
 func TestDataKeysAreFixed(t *testing.T) {
 	want := map[string][]string{
-		v0.TypeSessionStarted:      {"agent", "agent_session", "cwd", "model", "tools"},
+		v0.TypeSessionStarted:      {"agent", "agent_session", "cwd", "model", "permission_mode", "tools"},
 		v0.TypeMessageText:         {"message_id", "text"},
 		v0.TypeToolCall:            {"call_id", "input", "kind", "name", "status"},
 		v0.TypeToolUpdate:          {"call_id", "output", "status"},

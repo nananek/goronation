@@ -6,7 +6,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -315,4 +317,99 @@ func (s *webServer) handleChatPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Write(b)
+}
+
+// maxChatStarts は、同時に起動待ちにできる chat の数 (serve の起動は、最大 spawnReadyTimeout かかり、その間、web の接続を使う)。
+const maxChatStarts = 4
+
+// chatStartGuard は、POST /api/chat/start の、二重起動の防ぎ: 同じ repo の起動待ちは 1 つだけ (二重クリック・二重送信で、
+// 同じ repo の chat が 2 つ起動して、クレジットを 2 重に使わない)。
+type chatStartGuard struct {
+	mu   sync.Mutex
+	busy map[string]bool
+}
+
+// acquire は、repo (path) の起動待ちの枠を取る。すでに待っている (同じ repo) なら dup、全体の上限なら full。
+func (g *chatStartGuard) acquire(repo string) (release func(), dup, full bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.busy[repo] {
+		return nil, true, false
+	}
+	if len(g.busy) >= maxChatStarts {
+		return nil, false, true
+	}
+	if g.busy == nil {
+		g.busy = map[string]bool{}
+	}
+	g.busy[repo] = true
+	return func() {
+		g.mu.Lock()
+		delete(g.busy, repo)
+		g.mu.Unlock()
+	}, false, false
+}
+
+// chatSockPlaceholderID は、まだ作っていないセッションの ID の代わり (同じ長さ。UDS の path の長さの検査に使う)。
+const chatSockPlaceholderID = "00000000-000000-000000"
+
+// chatSockExists は、id の chat.sock (ソケットのファイル) が、あるか。serve --chat が動いているか、動いていた印 (前の serve の残りは、
+// 繋がるまで分からない。会話の画面は、繋がらなければ、そう表示する)。
+func chatSockExists(stateDir, id string) bool {
+	fi, err := os.Lstat(chatSocketPath(stateDir, defaultGroup, id))
+	return err == nil && fi.Mode()&os.ModeSocket != 0
+}
+
+// handleChatStart は、requireSession で保護された POST /api/chat/start {repo}: --repos-dir 直下の repo (name) を、goronation serve --chat --repo で
+// 新しいセッションとして起動し、{id} を返す (最初の指示は、チャットの画面から送る: 起動しただけでは、エージェントに何も送らず、クレジットを使わない)。
+// 書き込みの関門 (Origin・Sec-Fetch-Site・Content-Type) を通す。同じ repo の起動待ちが、すでにあれば 409 (二重起動しない)。
+// 端末ビューの POST /api/repos/start は、変えない。
+func (s *webServer) handleChatStart(w http.ResponseWriter, r *http.Request) {
+	if !s.checkChatWrite(w, r) {
+		return
+	}
+	var req repoStartRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "壊れた要求")
+		return
+	}
+	repoPath, err := resolveRepoName(s.reposDir, req.Repo)
+	if err != nil {
+		var he httpError
+		if errors.As(err, &he) {
+			writeError(w, he.status, he.label)
+			return
+		}
+		writeError(w, http.StatusBadRequest, "repo を解決できない")
+		return
+	}
+	// serve は、UDS の path が長いと、セッションを作ってから失敗する (L-D)。作る前に、断る。
+	if len(chatSocketPath(s.stateDir, defaultGroup, chatSockPlaceholderID)) > maxSockPath {
+		writeError(w, http.StatusInternalServerError, "state-dir が長すぎて、chat.sock を作れない (--state-dir を短くする)")
+		return
+	}
+	release, dup, full := s.chatStarts.acquire(repoPath)
+	if dup {
+		writeError(w, http.StatusConflict, "この repo のチャットを起動中 (少し待つ)")
+		return
+	}
+	if full {
+		w.Header().Set("Retry-After", "5")
+		writeError(w, http.StatusServiceUnavailable, "起動待ちのチャットが多すぎる")
+		return
+	}
+	defer release()
+	id, err := spawnServe(s.stateDir, s.self, []string{"--chat", "--repo", repoPath})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "goronation web: チャットを起動できない: %s\n", sanitize(err.Error()))
+		if strings.Contains(err.Error(), "root では動かせない") {
+			writeError(w, http.StatusInternalServerError, "チャットは root では動かせない (goronation web を、非 root の利用者で動かす)")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "チャットを起動できない")
+		return
+	}
+	writeJSON(w, http.StatusOK, repoStartResponse{ID: id})
 }
