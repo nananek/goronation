@@ -260,13 +260,20 @@ func landlockProbe(args []string) int {
 		}
 		return err
 	}
-	// bind は制限しない (opencode は、自分のポートを待ち受ける)。
-	if l, err := net.Listen("tcp", "127.0.0.1:0"); err != nil {
-		out("bind-listen", err)
+	// bind は制限しない (opencode は、自分のポート (固定) を待ち受ける)。ポートは、空いている値を探して、閉じてから bind し直す。
+	var bindErr error
+	if l0, err := net.Listen("tcp", "127.0.0.1:0"); err != nil {
+		bindErr = err
 	} else {
-		l.Close()
-		out("bind-listen", nil)
+		addr := l0.Addr().String()
+		l0.Close()
+		if l, err := net.Listen("tcp", addr); err != nil {
+			bindErr = err
+		} else {
+			l.Close()
+		}
 	}
+	out("bind-listen", bindErr)
 	out("connect-allowed", dial(okPort))
 	out("connect-denied", dial(badPort))
 	// MPTCP の socket (IPPROTO_MPTCP = 262)。
@@ -407,6 +414,7 @@ func TestLandlockExecRestrictsRealProcess(t *testing.T) {
 	badPort, badAccepted := listenLocal(t)
 	got := probeUnder(t, okPort, okPort, badPort)
 	want := map[string]string{
+		"bind-listen":               "OK",
 		"connect-allowed":           "OK",
 		"connect-denied":            "permission denied/13",
 		"socket-mptcp":              "operation not permitted/1",
