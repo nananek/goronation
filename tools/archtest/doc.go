@@ -18,6 +18,9 @@
 //     動的に呼べる) は、同じ場所だけ (unsafe を import せずに、unsafe.Pointer を得て、任意のアドレスへ書き込める入口)。
 //     メソッドは型情報が無いので、名前だけで検出し、同名の無関係なものも検出する。
 //   - dep-core・dep-agent-sandbox・impl-only-from-cmd: 依存方向。
+//   - dep-vault: vault/** が import してよいのは、標準ライブラリと core/**・vault/** だけ (外部 module・agent・sandbox・egress・hostfs・cmd・spec は不可。
+//     許可リスト方式で、_test.go も対象)。vault/** を import してよいのは cmd/** だけ (impl-only-from-cmd に含む)。
+//   - vault-no-require: vault/go.mod は、require も tool も持たない (workspace では、他の module の require で外部 module を解決できてしまうため)。
 //
 // 検査器 (archtest.go) に組み込んだもの。許可される場所は無く、理由は各規則 ID の定数のコメントに書く:
 //

@@ -120,6 +120,42 @@ func TestFixtures(t *testing.T) {
 			"cmd/goronation/main.go:3: v0-only-in-chat",
 			"egress/x.go:3: v0-only-in-chat",
 		}},
+		// vault/** は、標準ライブラリと core/**・vault/** だけを import できる (ADR 0036)。egress・agent・hostfs・cmd・spec・
+		// 外部 module (x/sys・cbor) は違反。_test.go も対象。ok.go は許可の対照 (crypto/hkdf と core/credential)。
+		// agent.go・cbor.go・spec.go は、別の規則 (impl-only-from-cmd・webauthn-only-dep・v0-only-in-chat) にも当たる。
+		{"dep-vault", 9, []string{
+			"vault/agent.go:3: agent-only-in-chat",
+			"vault/agent.go:3: dep-vault",
+			"vault/agent.go:3: impl-only-from-cmd",
+			"vault/cbor.go:3: dep-vault",
+			"vault/cbor.go:3: webauthn-only-dep",
+			"vault/cmd.go:3: dep-vault",
+			"vault/egress.go:3: dep-vault",
+			"vault/hostfs.go:3: dep-vault",
+			"vault/spec.go:3: dep-vault",
+			"vault/spec.go:3: v0-only-in-chat",
+			"vault/third.go:3: dep-vault",
+			"vault/x_test.go:3: dep-vault",
+		}},
+		// vault/** を import してよいのは cmd/** だけ (ADR 0036。impl-only-from-cmd)。cmd/goronation と cmd/internal は許可の対照。
+		// core は dep-core にも当たる。vault 自身の側の import (vault/self.go) も違反 (impl-only-from-cmd の既存の性質。
+		// そのため、vault/ の下の package は、互いに import できない)。
+		{"vault-import", 9, []string{
+			"agent/bad.go:3: impl-only-from-cmd",
+			"core/bad.go:3: dep-core",
+			"core/bad.go:3: impl-only-from-cmd",
+			"egress/bad.go:3: impl-only-from-cmd",
+			"hostfs/bad.go:3: impl-only-from-cmd",
+			"sandbox/bad.go:3: impl-only-from-cmd",
+			"vault/self.go:3: impl-only-from-cmd",
+		}},
+		// vault/go.mod は、require (単独・ブロック) も tool も持てない (ADR 0036)。workspace では、go.mod に require が無くても、
+		// 他の module (cmd) の require で外部 module を解決できるため、go.mod の空を別に検査する。core/go.mod の require は、対照 (違反にしない)。
+		{"vault-no-require", 2, []string{
+			"vault/go.mod:5: vault-no-require",
+			"vault/go.mod:8: vault-no-require",
+			"vault/go.mod:11: vault-no-require",
+		}},
 		// 走査しないディレクトリ (.hidden / _hidden / testdata / vendor) は、明示的に import されると
 		// go tool は build する。その import を違反にする。scanned = 1 は、それらを走査していない確認。
 		// sub / testdatax / 外部の testdata は、対照 (違反にしない)。
@@ -273,6 +309,7 @@ func TestFixtures(t *testing.T) {
 // TestGoldenOutput は、出力文字列の書式を固定する。
 func TestGoldenOutput(t *testing.T) {
 	const m = "github.com/nananek/goronation"
+	const allowVault = m + "/core/**, " + m + "/vault/** だけ"
 	cases := []struct {
 		name string
 		want []string
@@ -288,6 +325,25 @@ func TestGoldenOutput(t *testing.T) {
 			`core/x/x.go:3: dep-core: core/** から import "` + m + `/sandbox/bwrap" は使えない`,
 			`core/x/x.go:3: impl-only-from-cmd: import "` + m + `/sandbox/bwrap" は cmd/** 以外では使えない`,
 			`core/z/z.go:3: dep-core: core/** から import "` + m + `/control" は使えない`,
+		}},
+		{"dep-vault", []string{
+			`vault/agent.go:3: agent-only-in-chat: import "` + m + `/agent/claude" は agent/**, core/**, spec/**, cmd/internal/chat/** 以外では使えない`,
+			`vault/agent.go:3: dep-vault: vault/** から import "` + m + `/agent/claude" は使えない (標準ライブラリと ` + allowVault + `)`,
+			`vault/agent.go:3: impl-only-from-cmd: import "` + m + `/agent/claude" は cmd/** 以外では使えない`,
+			`vault/cbor.go:3: dep-vault: vault/** から import "github.com/fxamacker/cbor/v2" は使えない (標準ライブラリと ` + allowVault + `)`,
+			`vault/cbor.go:3: webauthn-only-dep: import "github.com/fxamacker/cbor/v2" は cmd/internal/webauthn/** 以外では使えない`,
+			`vault/cmd.go:3: dep-vault: vault/** から import "` + m + `/cmd/internal/chat" は使えない (標準ライブラリと ` + allowVault + `)`,
+			`vault/egress.go:3: dep-vault: vault/** から import "` + m + `/egress/gateway" は使えない (標準ライブラリと ` + allowVault + `)`,
+			`vault/hostfs.go:3: dep-vault: vault/** から import "` + m + `/hostfs" は使えない (標準ライブラリと ` + allowVault + `)`,
+			`vault/spec.go:3: dep-vault: vault/** から import "` + m + `/spec/v0" は使えない (標準ライブラリと ` + allowVault + `)`,
+			`vault/spec.go:3: v0-only-in-chat: import "` + m + `/spec/v0" は agent/**, core/**, spec/**, cmd/internal/chat/** 以外では使えない`,
+			`vault/third.go:3: dep-vault: vault/** から import "golang.org/x/sys/unix" は使えない (標準ライブラリと ` + allowVault + `)`,
+			`vault/x_test.go:3: dep-vault: vault/** から import "` + m + `/sandbox" は使えない (標準ライブラリと ` + allowVault + `)`,
+		}},
+		{"vault-no-require", []string{
+			`vault/go.mod:5: vault-no-require: vault の go.mod は require を持てない (外部の module に依存しない。workspace では、他の module の require で解決できてしまう)`,
+			`vault/go.mod:8: vault-no-require: vault の go.mod は require を持てない (外部の module に依存しない。workspace では、他の module の require で解決できてしまう)`,
+			`vault/go.mod:11: vault-no-require: vault の go.mod は tool を持てない (外部の module に依存しない。workspace では、他の module の require で解決できてしまう)`,
 		}},
 		{"exec-call", []string{
 			`egress/dot.go:3: exec-call: import . "syscall" は呼び出しを判定できないため、sandbox/**, cmd/** 以外では使えない`,
@@ -776,6 +832,49 @@ func TestMatch(t *testing.T) {
 	for _, tc := range cases {
 		if got := match(tc.pattern, tc.p); got != tc.want {
 			t.Errorf("match(%q, %q) = %v, want %v", tc.pattern, tc.p, got, tc.want)
+		}
+	}
+}
+
+// TestDepVaultForms は、dep-vault が、import の書き方 (別名・blank・dot・ブロック)・ビルドタグ・入れ子の package に依らず効き、
+// vault/** の外 (名前の接頭辞だけが似た vaultx を含む) には効かないことを確かめる。
+func TestDepVaultForms(t *testing.T) {
+	const m = "github.com/nananek/goronation"
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"vault/alias.go":      "package vault\n\nimport u \"golang.org/x/sys/unix\"\n\nvar _ = u.X\n",
+		"vault/blank.go":      "package vault\n\nimport _ \"golang.org/x/sys/unix\"\n",
+		"vault/dot.go":        "package vault\n\nimport . \"golang.org/x/sys/unix\"\n",
+		"vault/block.go":      "package vault\n\nimport (\n\t\"crypto/hkdf\"\n\t\"golang.org/x/sys/unix\"\n)\n",
+		"vault/tag_darwin.go": "//go:build darwin\n\npackage vault\n\nimport _ \"golang.org/x/sys/unix\"\n",
+		"vault/sub/a.go":      "package sub\n\nimport _ \"" + m + "/egress\"\n",
+		"vault/ok.go":         "package vault\n\nimport (\n\t\"crypto/hkdf\"\n\t\"net/http\"\n\t\"os\"\n\t_ \"" + m + "/core/credential\"\n\t_ \"" + m + "/core/vault\"\n)\n",
+		"vaultx/a.go":         "package vaultx\n\nimport _ \"golang.org/x/sys/unix\"\n",
+		"cmd/x.go":            "package main\n\nimport _ \"golang.org/x/sys/unix\"\n",
+	})
+	vs, _, err := Check(root, DefaultRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, v := range vs {
+		if v.Rule == "dep-vault" {
+			got = append(got, fmt.Sprintf("%s:%d", v.Path, v.Line))
+		}
+	}
+	want := []string{"vault/alias.go:3", "vault/blank.go:3", "vault/block.go:5", "vault/dot.go:3", "vault/sub/a.go:3", "vault/tag_darwin.go:5"}
+	if !slices.Equal(got, want) {
+		t.Errorf("dep-vault の違反 = %v, want %v", got, want)
+	}
+}
+
+func TestIsStdlib(t *testing.T) {
+	for p, want := range map[string]bool{
+		"os": true, "crypto/hkdf": true, "net/http/cgi": true, "unsafe": true, "C": true,
+		"golang.org/x/sys/unix": false, "github.com/a/b": false, "example.com": false, "go.uber.org/zap": false,
+	} {
+		if got := isStdlib(p); got != want {
+			t.Errorf("isStdlib(%q) = %v, want %v", p, got, want)
 		}
 	}
 }

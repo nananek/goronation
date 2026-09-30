@@ -94,6 +94,22 @@ type ForbidImport struct {
 	Imports []string // import path のパターン
 }
 
+// OnlyImport は「In に合うファイルが import してよいのは、標準ライブラリと Allow だけ」という規則 (許可リスト)。
+// 標準ライブラリは、import path の最初の要素に "." が無いもの。go.mod の module 行は modpath が規約に固定する
+// ので、"." の無い別の module は、作れない。
+type OnlyImport struct {
+	ID    string
+	In    []string // repo 相対のファイル path のパターン
+	Allow []string // import path のパターン
+}
+
+// NoRequire は「Dirs (repo 相対の module の dir) の go.mod は、require と tool を持たない」という規則。
+// workspace では、go.mod の require が無くても、他の module の require で解決できてしまうため、go.mod の空を、別に検査する。
+type NoRequire struct {
+	ID   string
+	Dirs []string
+}
+
 // Func は import path と関数名の組。
 type Func struct {
 	Pkg  string
@@ -117,6 +133,8 @@ type Rules struct {
 	Module        string
 	AllowImports  []AllowImport
 	ForbidImports []ForbidImport
+	OnlyImports   []OnlyImport
+	NoRequires    []NoRequire
 	Calls         []CallRule
 }
 
@@ -413,6 +431,11 @@ func (c *checker) checkGo(file, rel string) error {
 				c.add(rel, line, r.ID, fmt.Sprintf("%s から import %q は使えない", strings.Join(r.In, ", "), ipath))
 			}
 		}
+		for _, r := range c.rules.OnlyImports {
+			if matchAny(r.In, rel) && !isStdlib(ipath) && !matchAny(r.Allow, ipath) {
+				c.add(rel, line, r.ID, fmt.Sprintf("%s から import %q は使えない (標準ライブラリと %s だけ)", strings.Join(r.In, ", "), ipath, strings.Join(r.Allow, ", ")))
+			}
+		}
 	}
 
 	for _, cg := range f.Comments {
@@ -543,6 +566,27 @@ func (c *checker) checkReplace(rel string, stmts []modStmt) {
 	}
 }
 
+// isStdlib は、ipath が標準ライブラリの import path か (最初の要素に "." が無い)。
+func isStdlib(ipath string) bool {
+	first, _, _ := strings.Cut(ipath, "/")
+	return !strings.Contains(first, ".")
+}
+
+// checkNoRequire は、NoRequires の対象の dir の go.mod にある、require と tool の文を違反にする。
+func (c *checker) checkNoRequire(rel string, stmts []modStmt) {
+	dir := path.Dir(rel)
+	for _, r := range c.rules.NoRequires {
+		if !slices.Contains(r.Dirs, dir) {
+			continue
+		}
+		for _, s := range stmts {
+			if s.Verb == "require" || s.Verb == "tool" {
+				c.add(rel, s.Line, r.ID, fmt.Sprintf("%s の go.mod は %s を持てない (外部の module に依存しない。workspace では、他の module の require で解決できてしまう)", dir, s.Verb))
+			}
+		}
+	}
+}
+
 // checkGoMod は、go.mod の module 行が Module + "/" + <相対dir> と一致することと、
 // replace が無いことを確認する。
 func (c *checker) checkGoMod(file, rel string) error {
@@ -551,6 +595,7 @@ func (c *checker) checkGoMod(file, rel string) error {
 		return err
 	}
 	c.checkReplace(rel, stmts)
+	c.checkNoRequire(rel, stmts)
 
 	want := c.rules.Module
 	if dir := path.Dir(rel); dir != "." {
