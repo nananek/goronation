@@ -90,6 +90,9 @@ var testAgentProfile = agentProfile{
 //	await NAME OLD        ready を出し、認証用ディレクトリの NAME の中身が、空でも OLD でもなくなるのを待ち、"changed=<引用した中身>" を出す (実行中の檻への伝わり)
 //	sigcount              ready を出し、最初のシグナルから 1 秒間の SIGINT・SIGQUIT の数を出す
 //	hold                  ready を出し、殺されるまで待つ
+//	relay-upstream PORT [spoof]
+//	                      127.0.0.1:PORT で、偽の opencode の HTTP サーバーになる (relay_bwrap_linux_test.go)。受けた要求を、標準エラー出力に
+//	                      "REQ <引用した全体>" で出す。/api/event は SSE。spoof なら、init への奪取の試みも、標準エラー出力に出す
 //	spoof                 chat の標準入出力への偽のフレームの書き込みを、子プロセスに試させ、結果 (child:...) を出す (chat_stdio_bwrap_linux_test.go)
 //	exit N                終了コード N で終わる
 //	rawtty [hold]         標準入力の端末を raw・-echo・-isig にして、raw-set を出す。hold なら、殺されるまで待つ。そうでなければ、
@@ -301,6 +304,8 @@ func fakeClaude(args []string) int {
 				return 0
 			}
 		}
+	case "relay-upstream":
+		return fakeRelayUpstream(args[1:])
 	case "spoof":
 		return fakeSpoof(args[1:])
 	case "spoof-child":

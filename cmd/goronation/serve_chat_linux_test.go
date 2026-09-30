@@ -51,6 +51,60 @@ func TestCageSpecNonDumpable(t *testing.T) {
 	}
 }
 
+// 中継 (ADR 0019): RelayPort が 0 でなければ、init に --relay-control --relay-port が、子のコマンドの前に付く。0 (既定) なら出ない。
+func TestCageSpecRelay(t *testing.T) {
+	argv, err := cageSpec(testCage()).Argv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range argv {
+		if a == "--relay-control" || a == "--relay-port" {
+			t.Errorf("既定の檻に %s が出ている", a)
+		}
+	}
+	c := testCage()
+	c.NonDumpable = true
+	c.RelayPort = 4321
+	argv, err = cageSpec(c).Argv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.Index(argv, "--relay-control")
+	if i < 0 || argv[slices.Index(argv, "--relay-port")+1] != "4321" {
+		t.Fatalf("--relay-control --relay-port 4321 が無い: %q", argv)
+	}
+	nd, dd := slices.Index(argv, "--non-dumpable"), slices.Index(argv[slices.Index(argv, "init"):], "--")+slices.Index(argv, "init")
+	if nd < 0 || nd > dd || i > dd {
+		t.Errorf("--non-dumpable・--relay-control は、init の引数 (子のコマンドの前) に出るはず: %q", argv)
+	}
+}
+
+// 中継の control は、dumpable=0 でなければ奪われる (ADR 0012・0028): RelayPort だけを立てても、檻の init には --non-dumpable が付く。
+func TestCageSpecRelayForcesNonDumpable(t *testing.T) {
+	c := testCage()
+	c.RelayPort = 4321 // NonDumpable は立てない
+	argv, err := cageSpec(c).Argv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(argv, "--non-dumpable") {
+		t.Errorf("RelayPort があるのに --non-dumpable が無い: %q", argv)
+	}
+}
+
+// --relay-control に --non-dumpable が無ければ、引数の解釈が断る (runInit 経由の検査は、標準入力が socket の環境では別の理由で
+// 落ちうるので、parseInitArgs を直接確かめる)。
+func TestParseInitArgsRelayNeedsNonDumpable(t *testing.T) {
+	base := []string{"--listen", "127.0.0.1:0", "--upstream", "/run/x.sock", "--relay-control", "--relay-port", "4096", "--", "c"}
+	if _, err := parseInitArgs(base, &bytes.Buffer{}); err == nil {
+		t.Fatal("--non-dumpable が無いのに、--relay-control が通った")
+	}
+	ok := append([]string{"--non-dumpable"}, base...)
+	if _, err := parseInitArgs(ok, &bytes.Buffer{}); err != nil {
+		t.Fatalf("--non-dumpable つきは通るはず: %v", err)
+	}
+}
+
 func TestInitParsesNonDumpable(t *testing.T) {
 	cfg, err := parseInitArgs([]string{"--listen", "127.0.0.1:0", "--upstream", "/run/x.sock", "--non-dumpable", "--", "c"}, &bytes.Buffer{})
 	if err != nil || !cfg.nonDump {

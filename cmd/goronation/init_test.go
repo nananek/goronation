@@ -450,23 +450,25 @@ func TestParseInitArgs(t *testing.T) {
 			want initConfig
 		}{
 			{"-- あり", append(append([]string{}, base...), "--", "claude", "-p"),
-				initConfig{listen, upstream, false, []string{"claude", "-p"}, false, false, false}},
+				initConfig{listen, upstream, false, []string{"claude", "-p"}, false, false, false, false, 0}},
 			{"-- なし。CMD 以降は、flag に見えても子の引数", append(append([]string{}, base...), "claude", "--listen", "x"),
-				initConfig{listen, upstream, false, []string{"claude", "--listen", "x"}, false, false, false}},
+				initConfig{listen, upstream, false, []string{"claude", "--listen", "x"}, false, false, false, false, 0}},
 			{"-- の後の - で始まるコマンド", append(append([]string{}, base...), "--", "--odd"),
-				initConfig{listen, upstream, false, []string{"--odd"}, false, false, false}},
+				initConfig{listen, upstream, false, []string{"--odd"}, false, false, false, false, 0}},
 			{"--no-proxy-env", append(append([]string{}, base...), "--no-proxy-env", "--", "c"),
-				initConfig{listen, upstream, true, []string{"c"}, false, false, false}},
+				initConfig{listen, upstream, true, []string{"c"}, false, false, false, false, 0}},
 			{"--no-forward-tty", append(append([]string{}, base...), "--no-forward-tty", "--", "c"),
-				initConfig{listen, upstream, false, []string{"c"}, true, false, false}},
+				initConfig{listen, upstream, false, []string{"c"}, true, false, false, false, 0}},
 			{"--set-ctty", append(append([]string{}, base...), "--set-ctty", "--", "c"),
-				initConfig{listen, upstream, false, []string{"c"}, false, false, true}},
+				initConfig{listen, upstream, false, []string{"c"}, false, false, true, false, 0}},
 			{"= で書く", []string{"--listen=127.0.0.1:8080", "--upstream=" + upstream, "c"},
-				initConfig{"127.0.0.1:8080", upstream, false, []string{"c"}, false, false, false}},
+				initConfig{"127.0.0.1:8080", upstream, false, []string{"c"}, false, false, false, false, 0}},
 			{"IPv6 の loopback", []string{"--listen", "[::1]:0", "--upstream", upstream, "c"},
-				initConfig{"[::1]:0", upstream, false, []string{"c"}, false, false, false}},
+				initConfig{"[::1]:0", upstream, false, []string{"c"}, false, false, false, false, 0}},
+			{"--relay-control", append(append([]string{}, base...), "--non-dumpable", "--relay-control", "--relay-port", "4096", "--", "c"),
+				initConfig{listen, upstream, false, []string{"c"}, false, true, false, true, 4096}},
 			{"127.0.0.0/8 の loopback", []string{"--listen", "127.0.0.2:0", "--upstream", upstream, "c"},
-				initConfig{"127.0.0.2:0", upstream, false, []string{"c"}, false, false, false}},
+				initConfig{"127.0.0.2:0", upstream, false, []string{"c"}, false, false, false, false, 0}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				var stderr bytes.Buffer
@@ -502,6 +504,12 @@ func TestParseInitArgs(t *testing.T) {
 		{"ポートなし", append([]string{"--listen", "127.0.0.1", "--upstream", upstream}, touch...), "loopback"},
 		{"ポートが範囲外", append([]string{"--listen", "127.0.0.1:65536", "--upstream", upstream}, touch...), "loopback"},
 		{"未知の flag", append([]string{"--bogus", "--listen", listen, "--upstream", upstream}, touch...), "flag provided but not defined"},
+		{"--relay-control に --non-dumpable が無い", append([]string{"--listen", listen, "--upstream", upstream, "--relay-control", "--relay-port", "4096"}, touch...), "--relay-control には --non-dumpable が要る"},
+		{"--relay-control に --relay-port が無い", append([]string{"--listen", listen, "--upstream", upstream, "--relay-control", "--non-dumpable"}, touch...), "--relay-port が要る"},
+		{"--relay-port が範囲外", append([]string{"--listen", listen, "--upstream", upstream, "--relay-control", "--non-dumpable", "--relay-port", "65536"}, touch...), "--relay-port が要る"},
+		{"--relay-port が 0", append([]string{"--listen", listen, "--upstream", upstream, "--relay-control", "--non-dumpable", "--relay-port", "0"}, touch...), "--relay-port が要る"},
+		{"--relay-control と --set-ctty", append([]string{"--listen", listen, "--upstream", upstream, "--relay-control", "--non-dumpable", "--relay-port", "4096", "--set-ctty"}, touch...), "同時に使えない"},
+		{"--relay-port だけ", append([]string{"--listen", listen, "--upstream", upstream, "--relay-port", "4096"}, touch...), "--relay-control のときだけ"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stderr bytes.Buffer

@@ -33,6 +33,7 @@
 | [0025](0025-chat-event-log-degrade.md) | chat の耐久イベントログの失敗は、縮退して知らせる (M2) | 採用 |
 | [0026](0026-sqlite-dependency-exception.md) | 耐久イベントログに限り、`modernc.org/sqlite` を使う (依存ゼロの方針の例外) | 採用 |
 | [0027](0027-chat-event-log-async-writer.md) | chat の耐久イベントログの書き込みは、Hub の Mutex の外の専用 goroutine で行い、量を有界にする (M2) | 採用 |
+| [0028](0028-relay-control-stdin.md) | 要求の中継の control は init の標準入力にし、HTTP の解釈と上限を固定する (M2) | 採用 |
 
 ## 書き方
 

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // goronation init の終了コード。子の終了コードは、そのまま返す (シグナルなら 128+番号)。
@@ -25,7 +26,7 @@ const (
 	exitNotFound = 127 // 子が見つからない
 )
 
-const initUsage = `使い方: goronation init --listen 127.0.0.1:PORT --upstream PATH [--no-proxy-env] [--no-forward-tty] [--set-ctty] [--] CMD [ARGS...]
+const initUsage = `使い方: goronation init --listen 127.0.0.1:PORT --upstream PATH [--no-proxy-env] [--no-forward-tty] [--set-ctty] [--relay-control --relay-port PORT --non-dumpable] [--] CMD [ARGS...]
 
 檻の中で最初に動く小さなリレー (goronation run が起動する)。檻の loopback の TCP を、ホストの egress の Unix ドメインソケットへ
 中継しながら、子 (CMD) を起動する。子には、標準入出力と環境変数を引き継ぎ、HTTPS_PROXY・HTTP_PROXY (小文字も) を、待ち受け先を
@@ -42,6 +43,10 @@ init は、檻を作らず、自分が檻の中にいることも確かめない
                     書き換える・ptrace することを、kernel の許可検査で断る。子には、fork で引き継がれるが、exec で dumpable に戻る)
   --set-ctty        子を、新しいセッションの leader にし、標準入力 (pty の slave) を、その制御端末にする
                     (goronation run が、専用の pty を中継するときに渡す)
+  --relay-control   init の標準入力 (ホストとの socketpair) を control にして、ホストが要求ごとに送ってくる fd (SCM_RIGHTS) の HTTP の要求を、
+                    127.0.0.1:--relay-port の上流に、Authorization を付け直して中継する。子の標準入出力は、init が別に作る pipe にする
+                    (--non-dumpable が要る。ADR 0019・0028)
+  --relay-port PORT --relay-control の上流のポート
 `
 
 // proxyEnvKeys は、init が子に設定する、proxy を指す環境変数。
@@ -72,6 +77,8 @@ type initConfig struct {
 	noFwdTTY   bool     // 端末のシグナル (ttySignals) を、子に転送しない
 	nonDump    bool     // init 自身を dumpable=0 にする
 	setCtty    bool     // 子を、標準入力 (pty の slave) を制御端末にする、新しいセッションの leader にする
+	relayCtl   bool     // init の標準入力を control にして、要求の fd を上流へ中継する
+	relayPort  int      // 上流 (127.0.0.1) のポート
 }
 
 // parseInitArgs は goronation init の引数を解釈する。不正なら、理由と使い方を stderr に出して error を返す。
@@ -87,6 +94,8 @@ func parseInitArgs(args []string, stderr io.Writer) (initConfig, error) {
 	flags.BoolVar(&cfg.noFwdTTY, "no-forward-tty", false, "")
 	flags.BoolVar(&cfg.setCtty, "set-ctty", false, "")
 	flags.BoolVar(&cfg.nonDump, "non-dumpable", false, "")
+	flags.BoolVar(&cfg.relayCtl, "relay-control", false, "")
+	flags.IntVar(&cfg.relayPort, "relay-port", 0, "")
 	if err := flags.Parse(args); err != nil {
 		return cfg, err // flag が、理由と使い方を出している
 	}
@@ -109,6 +118,20 @@ func parseInitArgs(args []string, stderr io.Writer) (initConfig, error) {
 	}
 	if len(cfg.argv) == 0 {
 		return fail("起動するコマンドが要る")
+	}
+	if cfg.relayCtl {
+		// control の socket (init の標準入力) を、同じ uid の檻の中の子に、fd の奪取・メモリの書き換えで、乗っ取らせない。
+		if !cfg.nonDump {
+			return fail("--relay-control には --non-dumpable が要る")
+		}
+		if cfg.relayPort < 1 || cfg.relayPort > 65535 {
+			return fail("--relay-control には、1〜65535 の --relay-port が要る: %d", cfg.relayPort)
+		}
+		if cfg.setCtty {
+			return fail("--relay-control と --set-ctty は、同時に使えない (標準入力は control になる)")
+		}
+	} else if cfg.relayPort != 0 {
+		return fail("--relay-port は --relay-control のときだけ")
 	}
 	return cfg, nil
 }
@@ -139,6 +162,15 @@ func runInit(args []string, stderr io.Writer) int {
 
 	cmd := exec.Command(cfg.argv[0], cfg.argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	var relay *relayRun
+	if cfg.relayCtl {
+		// init の標準入出力は、子に渡さない (control は init だけのもの)。子の標準入出力は、init が別に作る pipe。
+		if relay, err = prepareRelay(cmd, cfg.relayPort); err != nil {
+			fmt.Fprintf(stderr, "goronation init: 中継の control を用意できない: %v\n", err)
+			return exitInit
+		}
+		defer relay.close()
+	}
 	cmd.Env = childEnv(os.Environ(), l.Addr().String(), !cfg.noProxyEnv)
 	if cfg.setCtty {
 		// 子 (エージェント) を、新しいセッションの leader にし、標準入力 (渡された pty の slave) を、その制御端末
@@ -161,6 +193,18 @@ func runInit(args []string, stderr io.Writer) int {
 	}
 	done := make(chan struct{})
 	defer close(done)
+	if relay != nil {
+		// ホストが control を閉じた (会話の終了・ホストの終了) ら、子を止める。SIGTERM を無視する子は、猶予のあとに SIGKILL で止める
+		// (done: 子が終わったら、回収済みの pid に送らない)。
+		relay.started(func() {
+			signalTerm(cmd.Process)
+			select {
+			case <-time.After(relayKillGrace):
+				signalKill(cmd.Process)
+			case <-done:
+			}
+		})
+	}
 	go func() {
 		for {
 			select {
@@ -176,7 +220,11 @@ func runInit(args []string, stderr io.Writer) int {
 		}
 	}()
 
-	code := waitChild(cmd.Process.Pid, stderr)
+	code := waitChild(cmd.Process.Pid, stderr, func() {
+		if relay != nil {
+			relay.stop() // 死んだ子の待ち受けを、誰かが奪う窓を狭める (ADR 0028): 子の死を回収した直後に、要求の受け付けを止める
+		}
+	})
 	l.Close()
 	return code
 }
@@ -228,7 +276,7 @@ func childEnv(env []string, proxyAddr string, setProxy bool) []string {
 // waitChild は、pid の子が終わるまで待ち、その終了コードを返す (シグナルで死んだら 128+番号)。
 // 自分が PID 1 のときは、孤児になったプロセスも回収する (wait4(-1))。
 // cmd.Wait は使わない。PID 1 の wait4(-1) が子の終了を先に回収すると、cmd.Wait は終了コードを失うため。
-func waitChild(pid int, stderr io.Writer) int {
+func waitChild(pid int, stderr io.Writer, onExit func()) int {
 	target := pid
 	if os.Getpid() == 1 {
 		target = -1
@@ -246,6 +294,7 @@ func waitChild(pid int, stderr io.Writer) int {
 		if got != pid { // 回収した孤児
 			continue
 		}
+		onExit()
 		switch {
 		case ws.Exited():
 			return ws.ExitStatus()
