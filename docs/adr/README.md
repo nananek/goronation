@@ -42,6 +42,8 @@
 | [0034](0034-vault-reset.md) | `goronation vault reset` は、Vault の中身を壊すだけで、読まず、記録を残す (M2) | 採用 |
 | [0035](0035-vault-unlock-sas.md) | 解錠の儀式は、操作対象と確認コードを両方の画面に出す。経路は S9 の後に決める (M2) | 提案 |
 | [0036](0036-vault-import-rules.md) | `vault/` を import してよいのは `cmd/**` だけで、`vault/` は `core/` と標準ライブラリだけに依存する (M2) | 採用 |
+| [0037](0037-vault-process-layout.md) | Vault の本体鍵は、専用のデーモンだけが持ち、他のプロセスは UDS で引く (M2) | 採用 |
+| [0038](0038-vault-wrap-add-remove.md) | passkey の追加と削除は、既存の passkey の証明と、両方の画面での確認を要る (M2) | 採用 |
 
 ## 書き方
 

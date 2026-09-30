@@ -21,10 +21,10 @@
 ## 帰結
 
 - 秘密を扱うコードは、`vault/` の 1 か所に集まり、呼べる場所が `cmd/**` に限られる。egress が Vault を直接 import する形は、作れない。
-- `cmd/**` は、`vault/` の全ての操作 (解錠・passkey の追加・reset) を呼べる。`cmd/**` の中でも、呼ぶのは、`goronation web`・`goronation vault`・`goronation serve` の、限られた場所にする (レビューの対象)。
+- `cmd/**` は、`vault/` の全ての操作を呼べる。呼ぶのは、Vault のデーモン (`goronation vault serve`。ADR 0037) と、`goronation vault` の限られた場所だけにする (レビューの対象)。
 - `vault/` 用の新規則を足すまで、この決定は、archtest では強制されない (`vault/` は未作成)。
 
 ## 代替案
 
 - `cmd/internal/vault` に置く: `cmd/` の他のコードから、import の規則で分けられない。egress が使う port と、実装が、同じ module に入る。
-- `vault/` が `hostfs/` を使ってよいことにする: `hostfs` は、檻が書いたファイルを読む部品で、Vault の保管は、檻の入力を読まない。
+- `vault/` が `hostfs/` を使ってよいことにする: `vault/` は、檻が書いたファイルを、path で開かない (読むのは `cmd/` で、`hostfs` を通し、名前と内容のバイト列だけを渡す)。渡された内容 (ログイン状態。ADR 0032) は、敵対入力として、名前・大きさ・数を検査して保管する。
