@@ -67,6 +67,7 @@ func fakeRelayUpstream(args []string) int {
 	fmt.Fprintf(os.Stderr, "LEGACY-ENV %q\n", os.Getenv("OPENCODE_SERVER_PASSWORD"))
 	fmt.Fprintf(os.Stderr, "UPSTREAM-READY %d\n", port)
 	fmt.Fprintf(os.Stderr, "ARGV %q\n", os.Args)
+	fmt.Fprintf(os.Stderr, "PID %d\n", os.Getpid())
 	st, _ := os.ReadFile("/proc/self/status") // landlock-exec の下で起動されたか (no_new_privs・seccomp)
 	for _, l := range strings.Split(string(st), "\n") {
 		if strings.HasPrefix(l, "NoNewPrivs:") || strings.HasPrefix(l, "Seccomp:") {

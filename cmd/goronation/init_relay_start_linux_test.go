@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -384,4 +385,109 @@ func TestInitArgsRelayFlags(t *testing.T) {
 			t.Errorf("--relay-control なしで %v が通った", f)
 		}
 	}
+}
+
+// 横取りの窓の測定 (ADR 0029 の L1): 子 (偽の opencode) を SIGKILL で殺した直後に、同じ uid の別のプロセス (squatter) が同じポートを bind し、
+// 待ち受ける。その間も、ホストが要求を送り続ける。squatter に、トークン (Authorization) が届いた試行の数を数える。
+// 試行の数は GORO_SQUAT_TRIALS (未設定なら skip)。0 件が期待だが、0 でなければ、その率を ADR に書く (推測で 0 と言わない)。
+func TestInitRelayKillAndSquatWindow(t *testing.T) {
+	trials, _ := strconv.Atoi(os.Getenv("GORO_SQUAT_TRIALS"))
+	if trials == 0 {
+		t.Skip("GORO_SQUAT_TRIALS (試行の数) が無い")
+	}
+	leaked, reachedSquatter := 0, 0
+	for i := 0; i < trials; i++ {
+		r := startInit(t, fakeOpencodeScript(t, ""), nil)
+		if got := r.statusLine(); got != `{"ready":true}` {
+			t.Fatalf("試行 %d: 状態の行 = %q", i, got)
+		}
+		pid, _ := strconv.Atoi(r.record("PID"))
+		var got atomicString
+		stop := make(chan struct{})
+		squatted := make(chan struct{})
+		go func() { // squatter: ポートが空くまで bind を試し続け、取れたら、届いたものを記録する
+			var l net.Listener
+			for {
+				var err error
+				if l, err = net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(r.port)); err == nil {
+					break
+				}
+				select {
+				case <-stop:
+					return
+				default:
+				}
+			}
+			defer l.Close()
+			close(squatted)
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					defer c.Close()
+					c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+					b, _ := io.ReadAll(c)
+					got.add(string(b))
+				}()
+			}
+		}()
+		var senders sync.WaitGroup
+		for k := 0; k < 8; k++ { // 要求を送り続ける (子が死んだ後も、control が閉じるまで)
+			senders.Add(1)
+			go func() {
+				defer senders.Done()
+				hc := r.rc.HTTPClient()
+				hc.Timeout = 500 * time.Millisecond
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					resp, err := hc.Get("http://opencode.invalid/api/info")
+					if err != nil && strings.Contains(err.Error(), "broken pipe") {
+						return
+					}
+					if err == nil {
+						io.Copy(io.Discard, resp.Body)
+						resp.Body.Close()
+					}
+				}
+			}()
+		}
+		time.Sleep(20 * time.Millisecond)
+		syscall.Kill(pid, syscall.SIGKILL)
+		r.exitCode()
+		time.Sleep(50 * time.Millisecond)
+		close(stop)
+		senders.Wait()
+		select {
+		case <-squatted:
+			reachedSquatter++
+		default:
+		}
+		if strings.Contains(got.String(), "Authorization: Basic") {
+			leaked++
+			t.Logf("試行 %d: squatter にトークンが届いた:\n%s", i, got.String())
+		}
+		r.ctl.Close()
+	}
+	t.Logf("試行 %d 回・squatter が bind できた %d 回・トークンが届いた %d 回", trials, reachedSquatter, leaked)
+	if leaked != 0 {
+		t.Errorf("トークンが squatter に届いた: %d / %d", leaked, trials)
+	}
+}
+
+type atomicString struct {
+	mu sync.Mutex
+	s  string
+}
+
+func (a *atomicString) add(s string) { a.mu.Lock(); a.s += s; a.mu.Unlock() }
+func (a *atomicString) String() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.s
 }

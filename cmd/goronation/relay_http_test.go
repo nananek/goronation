@@ -696,7 +696,16 @@ func TestRequestRelayLivenessBetweenConnectAndToken(t *testing.T) {
 			if !connectedAtCheck {
 				t.Error("子の生存確認が、上流への接続より前に行われた")
 			}
-			got := <-upData
+			var got string
+			select {
+			case got = <-upData:
+			case <-time.After(5 * time.Second): // 接続が張られなかった (生存確認が、接続より前に行われた)
+				l.Close()
+				if !connectedAtCheck {
+					return
+				}
+				t.Fatal("上流が、接続の後のデータを読み終えない")
+			}
 			if alive {
 				if !strings.Contains(got, "SECRET-TOKEN") && !strings.Contains(got, basicAuth("SECRET-TOKEN")) {
 					t.Errorf("生きているのに、トークンが届かない: %q", got)
