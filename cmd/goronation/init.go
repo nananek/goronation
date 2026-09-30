@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // goronation init の終了コード。子の終了コードは、そのまま返す (シグナルなら 128+番号)。
@@ -190,12 +191,20 @@ func runInit(args []string, stderr io.Writer) int {
 		}
 		return exitNoExec
 	}
-	if relay != nil {
-		// ホストが control を閉じた (会話の終了・ホストの終了) ら、子を止める。
-		relay.started(func() { signalTerm(cmd.Process) })
-	}
 	done := make(chan struct{})
 	defer close(done)
+	if relay != nil {
+		// ホストが control を閉じた (会話の終了・ホストの終了) ら、子を止める。SIGTERM を無視する子は、猶予のあとに SIGKILL で止める
+		// (done: 子が終わったら、回収済みの pid に送らない)。
+		relay.started(func() {
+			signalTerm(cmd.Process)
+			select {
+			case <-time.After(relayKillGrace):
+				signalKill(cmd.Process)
+			case <-done:
+			}
+		})
+	}
 	go func() {
 		for {
 			select {
@@ -211,7 +220,11 @@ func runInit(args []string, stderr io.Writer) int {
 		}
 	}()
 
-	code := waitChild(cmd.Process.Pid, stderr)
+	code := waitChild(cmd.Process.Pid, stderr, func() {
+		if relay != nil {
+			relay.stop() // 死んだ子の待ち受けを、誰かが奪う窓を狭める (ADR 0023): 子の死を回収した直後に、要求の受け付けを止める
+		}
+	})
 	l.Close()
 	return code
 }
@@ -263,7 +276,7 @@ func childEnv(env []string, proxyAddr string, setProxy bool) []string {
 // waitChild は、pid の子が終わるまで待ち、その終了コードを返す (シグナルで死んだら 128+番号)。
 // 自分が PID 1 のときは、孤児になったプロセスも回収する (wait4(-1))。
 // cmd.Wait は使わない。PID 1 の wait4(-1) が子の終了を先に回収すると、cmd.Wait は終了コードを失うため。
-func waitChild(pid int, stderr io.Writer) int {
+func waitChild(pid int, stderr io.Writer, onExit func()) int {
 	target := pid
 	if os.Getpid() == 1 {
 		target = -1
@@ -281,6 +294,7 @@ func waitChild(pid int, stderr io.Writer) int {
 		if got != pid { // 回収した孤児
 			continue
 		}
+		onExit()
 		switch {
 		case ws.Exited():
 			return ws.ExitStatus()

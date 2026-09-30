@@ -100,7 +100,7 @@ func cageSpec(c cageConfig) bwrap.Spec {
 	if c.PTY {
 		cmd = append(cmd, "--set-ctty")
 	}
-	if c.NonDumpable {
+	if c.NonDumpable || c.RelayPort != 0 { // 中継の control (init の標準入力) は、dumpable=0 でなければ、子に奪われる (ADR 0012・0023)
 		cmd = append(cmd, "--non-dumpable")
 	}
 	if c.RelayPort != 0 {

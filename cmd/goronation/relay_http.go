@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,8 +28,7 @@ const (
 	relayMaxBody = 1 << 20
 
 	// relayHeadTimeout は、要求の先頭を読み切るまで。relayBodyIdle は、本文の読みの 1 回ごとの、無通信の上限。
-	relayHeadTimeout = 10 * time.Second
-	relayBodyIdle    = 10 * time.Second
+	relayBodyIdle = 10 * time.Second
 	// relayWriteTimeout は、ホスト (fd の相手) への 1 回の書き込みの上限 (読まない相手で、goroutine が居座るのを避ける)。
 	relayWriteTimeout = 30 * time.Second
 	// relayUpstreamIdle は、上流が何も返さない時間の上限 (SSE は、心拍で超えない)。
@@ -42,6 +42,9 @@ const (
 	relayStreamPath = "/api/event"
 )
 
+// relayHeadTimeout は、要求の先頭を読み切るまでの上限 (テストで縮めるので var)。
+var relayHeadTimeout = 10 * time.Second
+
 // relayMethods は、通す HTTP メソッド (opencode の API が使うもの)。CONNECT・TRACE・OPTIONS などは拒否する。
 var relayMethods = map[string]bool{"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
 
@@ -50,8 +53,7 @@ var relayMethods = map[string]bool{"GET": true, "POST": true, "PUT": true, "PATC
 var relayDrop = map[string]bool{
 	"authorization": true, "proxy-authorization": true, "host": true, "connection": true, "keep-alive": true,
 	"proxy-connection": true, "te": true, "trailer": true, "forwarded": true, "via": true,
-	"x-forwarded-for": true, "x-forwarded-host": true, "x-forwarded-proto": true, "x-forwarded-port": true,
-	"x-forwarded-prefix": true, "x-real-ip": true, "content-length": true,
+	"x-real-ip": true, "content-length": true,
 }
 
 // relayReject は、要求を拒否するヘッダ (小文字)。Transfer-Encoding は本文の長さの解釈が分かれる (smuggling) ので通さない。
@@ -208,7 +210,7 @@ func parseRequest(br *bufio.Reader, host, auth string) (*relayRequest, error) {
 			clen = n
 			continue
 		}
-		if relayDrop[lower] {
+		if relayDrop[lower] || strings.HasPrefix(lower, "x-forwarded-") {
 			continue
 		}
 		headers = append(headers, [2]string{name, value})
@@ -263,7 +265,11 @@ type requestRelay struct {
 	short chan struct{} // 短い要求の上限
 	sse   chan struct{} // SSE の上限 (短い要求が、SSE に枠を取られて通らなくならないように分ける)
 	wg    sync.WaitGroup
+	quit  atomic.Bool // 立つと、新しい fd を受け付けず、上流への接続の前の要求も閉じる
 }
+
+// stop は、要求の受け付けを止める (上流が死んだあと、同じポートを別のプロセスが bind しても、トークンを送らない)。
+func (r *requestRelay) stop() { r.quit.Store(true) }
 
 // 同時数の上限。
 const (
@@ -281,6 +287,10 @@ func newRequestRelay(port int, token func() string) *requestRelay {
 
 // accept は、client (受けた fd の接続) の処理を始める。上限に達していれば、何も読まずに閉じる (待たせない)。
 func (r *requestRelay) accept(client net.Conn) {
+	if r.quit.Load() {
+		client.Close()
+		return
+	}
 	select {
 	case r.all <- struct{}{}:
 	default:
@@ -322,6 +332,10 @@ func (r *requestRelay) handle(client net.Conn) {
 		return
 	}
 
+	if r.quit.Load() {
+		writeStatus(client, 503)
+		return
+	}
 	up, err := net.DialTimeout("tcp", host, relayDialTimeout)
 	if err != nil {
 		writeStatus(client, 502)

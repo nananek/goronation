@@ -573,3 +573,44 @@ func TestRequestRelayBadGatewayAndPanic(t *testing.T) {
 func newRequest(method, url, body string) (*http.Request, error) {
 	return http.NewRequest(method, url, strings.NewReader(body))
 }
+
+// 先頭を読み切るまでの期限: 先頭の途中で止まった送り手の fd は、期限で閉じられ、上流には繋がない。
+func TestRequestRelayHeadTimeout(t *testing.T) {
+	old := relayHeadTimeout
+	relayHeadTimeout = 200 * time.Millisecond
+	defer func() { relayHeadTimeout = old }()
+	up := newRelayUpstream(t, okResponse("pong"))
+	r := newRequestRelay(up.port(), func() string { return "TOKEN" })
+	cl, sv := relayPair(t)
+	r.accept(sv)
+	fmt.Fprintf(cl, "GET /api/info HTTP/1.1\r\nX-Slow: ") // 先頭を終えない
+	start := time.Now()
+	cl.SetReadDeadline(time.Now().Add(testTimeout))
+	if _, err := io.ReadAll(cl); err != nil {
+		t.Fatalf("期限で閉じられるはず: %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("閉じるまで %v かかった", d)
+	}
+	r.wg.Wait()
+	if n := len(up.requests()); n != 0 {
+		t.Errorf("上流に %d 個の要求が届いた", n)
+	}
+}
+
+// stop のあとは、新しい fd も、検査中の要求も、上流に繋がない (トークンを送らない)。
+func TestRequestRelayStop(t *testing.T) {
+	up := newRelayUpstream(t, okResponse("pong"))
+	r := newRequestRelay(up.port(), func() string { return "TOKEN" })
+	cl, sv := relayPair(t)
+	r.stop()
+	r.accept(sv)
+	fmt.Fprintf(cl, "GET /api/info HTTP/1.1\r\n\r\n")
+	if got := readAll(t, cl); got != "" {
+		t.Errorf("stop のあとに応答が返った: %q", got)
+	}
+	r.wg.Wait()
+	if n := len(up.requests()); n != 0 {
+		t.Errorf("上流に %d 個の要求が届いた", n)
+	}
+}

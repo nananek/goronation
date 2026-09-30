@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"time"
 )
 
 type relayRun struct{}
@@ -15,4 +16,8 @@ func prepareRelay(*exec.Cmd, int) (*relayRun, error) {
 }
 func (*relayRun) started(func()) {}
 func (*relayRun) close()         {}
+func (*relayRun) stop()          {}
 func signalTerm(*os.Process)     {}
+func signalKill(*os.Process)     {}
+
+const relayKillGrace = 5 * time.Second

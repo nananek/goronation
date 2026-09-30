@@ -79,6 +79,32 @@ func TestCageSpecRelay(t *testing.T) {
 	}
 }
 
+// 中継の control は、dumpable=0 でなければ奪われる (ADR 0012・0023): RelayPort だけを立てても、檻の init には --non-dumpable が付く。
+func TestCageSpecRelayForcesNonDumpable(t *testing.T) {
+	c := testCage()
+	c.RelayPort = 4321 // NonDumpable は立てない
+	argv, err := cageSpec(c).Argv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(argv, "--non-dumpable") {
+		t.Errorf("RelayPort があるのに --non-dumpable が無い: %q", argv)
+	}
+}
+
+// --relay-control に --non-dumpable が無ければ、引数の解釈が断る (runInit 経由の検査は、標準入力が socket の環境では別の理由で
+// 落ちうるので、parseInitArgs を直接確かめる)。
+func TestParseInitArgsRelayNeedsNonDumpable(t *testing.T) {
+	base := []string{"--listen", "127.0.0.1:0", "--upstream", "/run/x.sock", "--relay-control", "--relay-port", "4096", "--", "c"}
+	if _, err := parseInitArgs(base, &bytes.Buffer{}); err == nil {
+		t.Fatal("--non-dumpable が無いのに、--relay-control が通った")
+	}
+	ok := append([]string{"--non-dumpable"}, base...)
+	if _, err := parseInitArgs(ok, &bytes.Buffer{}); err != nil {
+		t.Fatalf("--non-dumpable つきは通るはず: %v", err)
+	}
+}
+
 func TestInitParsesNonDumpable(t *testing.T) {
 	cfg, err := parseInitArgs([]string{"--listen", "127.0.0.1:0", "--upstream", "/run/x.sock", "--non-dumpable", "--", "c"}, &bytes.Buffer{})
 	if err != nil || !cfg.nonDump {

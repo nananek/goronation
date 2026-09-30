@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // relayRun は、--relay-control のときの init の追加の状態 (PR② は、子の起動と、トークンの渡し方を持たない: PR③)。
@@ -88,5 +89,15 @@ func newRelayToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// signalTerm は、子に SIGTERM を送る。
+// relayKillGrace は、control が閉じられてから、SIGTERM を無視する子を SIGKILL で止めるまでの猶予。
+const relayKillGrace = 5 * time.Second
+
+// stop は、要求の受け付けを止める (子が死んだとき。control を閉じ、検査中・接続前の要求も、上流に繋がず閉じる)。
+func (r *relayRun) stop() {
+	r.relay.stop()
+	r.ctl.Close()
+}
+
+// signalTerm・signalKill は、子に SIGTERM・SIGKILL を送る。
 func signalTerm(p *os.Process) { p.Signal(syscall.SIGTERM) }
+func signalKill(p *os.Process) { p.Signal(syscall.SIGKILL) }
