@@ -84,14 +84,6 @@ func checkDir(dir string) error {
 		if fi, err = os.Lstat(dir); err != nil {
 			return err
 		}
-		if fi.Mode().Perm()&0o077 != 0 { // umask で狭められないが、広がった場合の防御
-			if err := os.Chmod(dir, 0o700); err != nil {
-				return err
-			}
-			if fi, err = os.Lstat(dir); err != nil {
-				return err
-			}
-		}
 	} else if err != nil {
 		return err
 	}

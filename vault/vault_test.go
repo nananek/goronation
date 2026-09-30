@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"path/filepath"
@@ -440,5 +441,37 @@ func TestPathTraversalNameCannotEscape(t *testing.T) {
 	entries, _ := filepath.Glob(filepath.Join(filepath.Dir(dir), "*"))
 	if len(entries) != 1 {
 		t.Fatalf("dir の外にファイルができた: %v", entries)
+	}
+}
+
+// TestBodyKeyIsClearedOnLockCloseAndReplace は、本体鍵の slice が、Lock・Close・Unlock による置き換えで、ゼロになることを確かめる
+// (メモリに、古い鍵を残さない)。
+func TestBodyKeyIsClearedOnLockCloseAndReplace(t *testing.T) {
+	zero := func(b []byte) bool { return bytes.Equal(b, make([]byte, len(b))) }
+	v, _ := initVault(t)
+	k := v.key
+	if len(k) != keySize || zero(k) {
+		t.Fatalf("解錠中の本体鍵が不正: %x", k)
+	}
+	v.Lock()
+	if !zero(k) || v.key != nil {
+		t.Fatal("Lock の後に、本体鍵が残っている")
+	}
+	if err := v.Unlock("cred-a", fakePRF("a")); err != nil {
+		t.Fatal(err)
+	}
+	k = v.key
+	if err := v.Unlock("cred-a", fakePRF("a")); err != nil {
+		t.Fatal(err)
+	}
+	if !zero(k) {
+		t.Fatal("Unlock が、置き換えた古い本体鍵を消していない")
+	}
+	k = v.key
+	if err := v.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !zero(k) || v.key != nil {
+		t.Fatal("Close の後に、本体鍵が残っている")
 	}
 }
