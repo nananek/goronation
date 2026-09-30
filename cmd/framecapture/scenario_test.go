@@ -3,6 +3,7 @@
 package main
 
 import (
+	"github.com/nananek/goronation/cmd/internal/framenorm"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,13 +117,13 @@ func TestCommittedFixturesAreNormalized(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		again, err := normalizeFrames(raw)
+		again, err := framenorm.NormalizeFrames(raw)
 		if err != nil {
 			t.Errorf("%s: %v", f, err)
 			continue
 		}
 		if string(again) != string(raw) {
-			t.Errorf("%s: 正規化済みでない (normalizeFrames をかけると変わる)", f)
+			t.Errorf("%s: 正規化済みでない (framenorm.NormalizeFrames をかけると変わる)", f)
 		}
 	}
 	if n == 0 {

@@ -1,6 +1,5 @@
-//go:build linux
-
-package main
+// Package framenorm は、採取したフレーム (1 行 1 JSON) の、実行ごとに変わる値の正規化を持つ (cmd/framecapture と、serve の採取 (cmd/goronation の test) が共有する)。
+package framenorm
 
 import (
 	"bytes"
@@ -12,7 +11,7 @@ import (
 )
 
 // 採取したフレームには、実行ごとに変わる値 (UUID・エージェントの ID・時刻・所要時間・費用) が混ざる。
-// 同じ場面を再実行して「構造的に同じ」フレーム列になることを確かめるため、normalizeFrames は、それらを
+// 同じ場面を再実行して「構造的に同じ」フレーム列になることを確かめるため、NormalizeFrames は、それらを
 // 固定の記号に置き換える。
 //
 //   - ID (UUID・opencode の ses_/msg_/prt_ 形式) は、最初に現れた順の番号を付けた記号 ("<uuid:1>"・
@@ -107,8 +106,8 @@ func (n *normalizer) value(key string, v any, inTime bool) any {
 	return v
 }
 
-// normalizeFrames は、raw (1 行 1 JSON の列。空行は読み飛ばす) の各行を正規化して、同じ形 (1 行 1 JSON) で返す。
-func normalizeFrames(raw []byte) ([]byte, error) {
+// NormalizeFrames は、raw (1 行 1 JSON の列。空行は読み飛ばす) の各行を正規化して、同じ形 (1 行 1 JSON) で返す。
+func NormalizeFrames(raw []byte) ([]byte, error) {
 	n := newNormalizer()
 	var out bytes.Buffer
 	for i, line := range bytes.Split(raw, []byte("\n")) {

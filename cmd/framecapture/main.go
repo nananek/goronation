@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/nananek/goronation/cmd/internal/framenorm"
 	"io"
 	"net/http"
 	"os"
@@ -148,7 +149,7 @@ func (p plan) workSetup(agentSetup func(work string) error) func(work string) er
 func emit(o captureOptions, raw []byte, stdout io.Writer) error {
 	if o.normalize {
 		var err error
-		if raw, err = normalizeFrames(raw); err != nil {
+		if raw, err = framenorm.NormalizeFrames(raw); err != nil {
 			return fmt.Errorf("フレームを正規化できない: %w", err)
 		}
 	}
