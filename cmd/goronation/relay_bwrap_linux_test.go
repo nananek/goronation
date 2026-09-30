@@ -28,6 +28,7 @@ type relayCage struct {
 	pair   *stdioPair
 	rc     *relayClient
 	stderr *syncBuffer
+	status *syncBuffer // init の標準出力 (起動の結果の 1 行。ADR 0030)
 	port   int
 	done   chan error
 }
@@ -48,6 +49,7 @@ func startRelayCageHardened(t *testing.T, spoof, hardened bool) *relayCage {
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
 	c.cfg.RelayPort = port
+	c.cfg.RelayTokenEnv, c.cfg.RelayVersionPrefix = "OPENCODE_PASSWORD", "opencode v2.0."
 	c.cfg.Args = []string{"relay-upstream", strconv.Itoa(port)}
 	if spoof {
 		c.cfg.Args = append(c.cfg.Args, "spoof")
@@ -59,7 +61,7 @@ func startRelayCageHardened(t *testing.T, spoof, hardened bool) *relayCage {
 	t.Cleanup(pair.Close)
 	spec := cageSpec(c.cfg)
 	spec.Stdin, spec.Stdout = pair.AgentIn, pair.AgentOut // 標準入力 = control。標準出力は、init が使わない (読み捨て)
-	rc := &relayCage{t: t, pair: pair, stderr: &syncBuffer{}, port: port, done: make(chan error, 1)}
+	rc := &relayCage{t: t, pair: pair, stderr: &syncBuffer{}, status: &syncBuffer{}, port: port, done: make(chan error, 1)}
 	spec.Stderr = rc.stderr
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
@@ -69,11 +71,13 @@ func startRelayCageHardened(t *testing.T, spoof, hardened bool) *relayCage {
 	}
 	pair.AgentIn.Close()
 	pair.AgentOut.Close()
-	go io.Copy(io.Discard, pair.Out)
+	go io.Copy(rc.status, pair.Out)
 	rc.cmd = cmd
 	rc.rc = newRelayClient(pair.In)
 	go func() { rc.done <- cmd.Wait() }()
 	waitRelayCond(t, "偽の opencode の起動", func() bool { return strings.Contains(rc.stderr.String(), "UPSTREAM-READY") })
+	// init が、起動の証明を確かめて、{"ready":true} を出すまで待つ (それまで、要求は受け付けられない。ADR 0029・0030)。
+	waitRelayCond(t, "init の {\"ready\":true}", func() bool { return rc.status.String() == "{\"ready\":true}\n" })
 	return rc
 }
 
@@ -150,6 +154,22 @@ func TestRelayInBwrapEndToEnd(t *testing.T) {
 	if tokens[0] != tokens[1] || tokens[1] != tokens[2] {
 		t.Errorf("同じ init の中で、トークンが変わった: %q", tokens)
 	}
+	// トークンは、子の環境変数 OPENCODE_PASSWORD と一致し、argv には無い。子は landlock-exec の下で起動された (no_new_privs・seccomp)。
+	lines := strings.Split(rc.stderr.String(), "\n")
+	rec := func(prefix string) string {
+		for _, l := range lines {
+			if v, ok := strings.CutPrefix(l, prefix+" "); ok {
+				return v
+			}
+		}
+		return ""
+	}
+	if env := rec("TOKEN-ENV"); env != tokens[0] || strings.Contains(rec("ARGV"), tokens[0]) {
+		t.Errorf("子の環境のトークン = %q (Authorization の %q と一致し、argv に無いはず)", env, tokens[0])
+	}
+	if rec("SANDBOX NoNewPrivs:") != "1" || rec("SANDBOX Seccomp:") != "2" {
+		t.Errorf("子が landlock-exec の下で起動されていない: NoNewPrivs=%q Seccomp=%q", rec("SANDBOX NoNewPrivs:"), rec("SANDBOX Seccomp:"))
+	}
 
 	// SSE: 流れてくる。ホストが閉じると、上流の接続も閉じる。
 	resp, err := hc.Get(base + "/api/event")
@@ -225,5 +245,36 @@ func relayControlNotStealable(t *testing.T, hardened bool) {
 	resp.Body.Close()
 	if string(b) != "ok" {
 		t.Errorf("奪取の試みの後の要求 = %q", b)
+	}
+}
+
+// 版の検査 (ADR 0018・0030): 檻の中で、--version の出力が prefix で始まらなければ、子を起動せず、標準出力に {"error":…} を出して、檻が終わる。
+func TestRelayInBwrapVersionMismatch(t *testing.T) {
+	c := newChatCageFixture(t, true)
+	c.cfg.RelayPort = 4567
+	c.cfg.RelayTokenEnv, c.cfg.RelayVersionPrefix = "OPENCODE_PASSWORD", "opencode v9."
+	c.cfg.Args = []string{"relay-upstream", "4567"}
+	pair, err := newStdioPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pair.Close)
+	spec := cageSpec(c.cfg)
+	spec.Stdin, spec.Stdout = pair.AgentIn, pair.AgentOut
+	var stderr, status syncBuffer
+	spec.Stderr = &stderr
+	cmd, err := bwrap.Start(t.Context(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair.AgentIn.Close()
+	pair.AgentOut.Close()
+	go io.Copy(&status, pair.Out)
+	if err := cmd.Wait(); err == nil {
+		t.Error("版が違うのに、檻が正常に終わった")
+	}
+	waitRelayCond(t, "{\"error\":…} の行", func() bool { return strings.HasPrefix(status.String(), `{"error":"`) })
+	if strings.Contains(stderr.String(), "UPSTREAM-READY") {
+		t.Error("版が違うのに、子が起動した")
 	}
 }

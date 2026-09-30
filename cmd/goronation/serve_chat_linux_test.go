@@ -65,9 +65,16 @@ func TestCageSpecRelay(t *testing.T) {
 	c := testCage()
 	c.NonDumpable = true
 	c.RelayPort = 4321
+	c.RelayTokenEnv, c.RelayVersionPrefix = "OPENCODE_PASSWORD", "opencode v2.0."
 	argv, err = cageSpec(c).Argv()
 	if err != nil {
 		t.Fatal(err)
+	}
+	// トークンの環境変数の名前・landlock-exec の許可ポート (egress の proxy)・版の検査が、init の引数に渡る。トークンの値は、argv に出ない。
+	for flag, want := range map[string]string{"--relay-token-env": "OPENCODE_PASSWORD", "--landlock-connect": "3128", "--relay-version-prefix": "opencode v2.0."} {
+		if j := slices.Index(argv, flag); j < 0 || argv[j+1] != want {
+			t.Errorf("%s %s が無い: %q", flag, want, argv)
+		}
 	}
 	i := slices.Index(argv, "--relay-control")
 	if i < 0 || argv[slices.Index(argv, "--relay-port")+1] != "4321" {
@@ -95,7 +102,7 @@ func TestCageSpecRelayForcesNonDumpable(t *testing.T) {
 // --relay-control に --non-dumpable が無ければ、引数の解釈が断る (runInit 経由の検査は、標準入力が socket の環境では別の理由で
 // 落ちうるので、parseInitArgs を直接確かめる)。
 func TestParseInitArgsRelayNeedsNonDumpable(t *testing.T) {
-	base := []string{"--listen", "127.0.0.1:0", "--upstream", "/run/x.sock", "--relay-control", "--relay-port", "4096", "--", "c"}
+	base := []string{"--listen", "127.0.0.1:0", "--upstream", "/run/x.sock", "--relay-control", "--relay-port", "4096", "--relay-token-env", "TOK", "--", "c"}
 	if _, err := parseInitArgs(base, &bytes.Buffer{}); err == nil {
 		t.Fatal("--non-dumpable が無いのに、--relay-control が通った")
 	}

@@ -48,13 +48,13 @@ var relayHeadTimeout = 10 * time.Second
 // relayMethods は、通す HTTP メソッド (opencode の API が使うもの)。CONNECT・TRACE・OPTIONS などは拒否する。
 var relayMethods = map[string]bool{"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
 
-// relayDrop は、要求から黙って捨てるヘッダ (小文字)。Authorization は init が付け直し、Host・Connection は固定にする。
-// 経路の情報 (Forwarded・X-Forwarded-*) は、上流に届けない。
-var relayDrop = map[string]bool{
-	"authorization": true, "proxy-authorization": true, "host": true, "connection": true, "keep-alive": true,
-	"proxy-connection": true, "te": true, "trailer": true, "forwarded": true, "via": true,
-	"x-real-ip": true, "content-length": true,
-}
+// relayReplaced は、init が付け直すので、要求から捨てるヘッダ (小文字): 大文字小文字・重複・空白に関わらず捨て、init が 1 つずつ付ける。
+// relayAllow は、それ以外に通すヘッダ (小文字。ADR 0030)。Content-Length は init が付け直す。許可外のヘッダは、捨てずに拒否する (400):
+// 送り手はホストだけで、値を組み立てるのもホストなので、許可外が来るのは、ホストの誤りか、攻撃である。許可リストのヘッダの重複も拒否する。
+var (
+	relayReplaced = map[string]bool{"authorization": true, "proxy-authorization": true, "host": true, "connection": true}
+	relayAllow    = map[string]bool{"content-type": true, "accept": true, "cache-control": true, "last-event-id": true}
+)
 
 // relayReject は、要求を拒否するヘッダ (小文字)。Transfer-Encoding は本文の長さの解釈が分かれる (smuggling) ので通さない。
 var relayReject = map[string]int{"transfer-encoding": 501, "upgrade": 400, "expect": 417}
@@ -166,6 +166,8 @@ func parseRequest(br *bufio.Reader, host, auth string) (*relayRequest, error) {
 
 	var (
 		headers [][2]string
+		seen    = map[string]bool{}
+		lines   int // 付け直して捨てるものを含む、ヘッダの行の数
 		clen    = int64(-1)
 	)
 	for {
@@ -176,7 +178,7 @@ func parseRequest(br *bufio.Reader, host, auth string) (*relayRequest, error) {
 		if line == "" {
 			break
 		}
-		if len(headers) >= relayMaxHeaders {
+		if lines++; lines > relayMaxHeaders {
 			return nil, reject(431, "ヘッダが多すぎる")
 		}
 		if line[0] == ' ' || line[0] == '\t' {
@@ -210,9 +212,16 @@ func parseRequest(br *bufio.Reader, host, auth string) (*relayRequest, error) {
 			clen = n
 			continue
 		}
-		if relayDrop[lower] || strings.HasPrefix(lower, "x-forwarded-") {
+		if relayReplaced[lower] {
 			continue
 		}
+		if !relayAllow[lower] {
+			return nil, reject(400, "ヘッダ %.32q は許可リストに無い", lower)
+		}
+		if seen[lower] {
+			return nil, reject(400, "ヘッダ %s が重複している", lower)
+		}
+		seen[lower] = true
 		headers = append(headers, [2]string{name, value})
 	}
 	if clen < 0 {
@@ -260,7 +269,9 @@ func basicAuth(token string) string {
 // requestRelay は、ホストから fd で受けた要求を、上流の opencode に流す。1 つの fd は 1 つの要求だけ (Connection: close の強制)。
 type requestRelay struct {
 	port  int           // 上流の 127.0.0.1 のポート (init が決めた値。上流の出力では決めない)
-	token func() string // Authorization に使うパスワードの供給元 (PR③ が、トークンの生成と、opencode への受け渡しを持つ)
+	token func() string // Authorization に使うパスワードの供給元 (init が作った、この起動だけのトークン)
+	// alive は、上流 (子) が生きているか (pidfd。ADR 0029 の L1)。nil なら確かめない。接続したあと、先頭 (トークン) を書く前に確かめる。
+	alive func() bool
 	all   chan struct{} // 先頭の検査中を含む、同時に扱う fd の上限
 	short chan struct{} // 短い要求の上限
 	sse   chan struct{} // SSE の上限 (短い要求が、SSE に枠を取られて通らなくならないように分ける)
@@ -342,6 +353,13 @@ func (r *requestRelay) handle(client net.Conn) {
 		return
 	}
 	defer up.Close()
+
+	// ADR 0029 L1: 接続してから、子が生きていることを確かめて、初めてトークンを書く。死んだ子の代わりに同じポートを bind した別のプロセスへの
+	// 接続は、子の死の後にしか成立しないので、ここで弾ける。生きているときに張れた接続は、子の listen に張られている。
+	if r.alive != nil && !r.alive() {
+		writeStatus(client, 502)
+		return
+	}
 
 	up.SetWriteDeadline(time.Now().Add(relayWriteTimeout))
 	if _, err := up.Write(req.head); err != nil {

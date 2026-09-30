@@ -3,6 +3,7 @@
 package main
 
 import (
+	"net"
 	"regexp"
 	"strconv"
 	"strings"
@@ -73,6 +74,11 @@ type cageConfig struct {
 	// RelayPort は、0 でなければ、goronation init に --relay-control --relay-port を渡す (NonDumpable も立つ: init が PID 1・dumpable=0 でなければ、bwrap が control を dumpable のまま持つ。ADR 0019・0028): init の
 	// 標準入力の socketpair が、ホストが要求ごとに fd を送る control になり、要求は 127.0.0.1:RelayPort の上流に中継される。
 	RelayPort int
+	// RelayTokenEnv は、RelayPort のときの、init が作るトークンを子の環境変数で受け取る名前 (opencode は OPENCODE_PASSWORD)。init は
+	// エージェントを知らないので、名前は檻を組む側 (エージェントの profile) が決める (ADR 0030)。RelayVersionPrefix は、空でなければ、子の
+	// --version の出力の先頭の検査 (opencode は "opencode v2.0.")。RelayPort のとき、子は、いつも goronation landlock-exec で包んで起動する
+	// (TCP の connect を egress の proxy のポートだけにし、seccomp・no_new_privs を掛ける。掛けられなければ動かない。ADR 0020)。
+	RelayTokenEnv, RelayVersionPrefix string
 }
 
 // cageSpec は、c の檻の Spec を作る。標準入出力は、呼び手が足す。
@@ -106,7 +112,12 @@ func cageSpec(c cageConfig) bwrap.Spec {
 		cmd = append(cmd, "--non-dumpable")
 	}
 	if c.RelayPort != 0 {
-		cmd = append(cmd, "--relay-control", "--relay-port", strconv.Itoa(c.RelayPort))
+		_, proxyPort, _ := net.SplitHostPort(jailProxyAddr)
+		cmd = append(cmd, "--relay-control", "--relay-port", strconv.Itoa(c.RelayPort),
+			"--relay-token-env", c.RelayTokenEnv, "--landlock-connect", proxyPort)
+		if c.RelayVersionPrefix != "" {
+			cmd = append(cmd, "--relay-version-prefix", c.RelayVersionPrefix)
+		}
 	}
 	cmd = append(cmd, "--", c.Agent.jailExe())
 	// MCP サーバー (goronation mcp) の登録: エージェントごとの変換 (Agent.mcp) が、起動時の引数・環境変数のどちらに

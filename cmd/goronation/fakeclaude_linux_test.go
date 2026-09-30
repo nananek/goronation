@@ -304,6 +304,9 @@ func fakeClaude(args []string) int {
 				return 0
 			}
 		}
+	case "--version": // init の --relay-version-prefix の検査 (opencode の --version を模す)
+		fmt.Println("opencode v2.0.99 (fake)")
+		return 0
 	case "relay-upstream":
 		return fakeRelayUpstream(args[1:])
 	case "landlock-incage": // landlock_exec_linux_test.go

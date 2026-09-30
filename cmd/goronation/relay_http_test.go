@@ -55,9 +55,7 @@ func TestParseRequestRewritesAuthorization(t *testing.T) {
 		{"値の前後の空白", "Authorization:   \t Bearer forged \t \r\n"},
 		{"Proxy-Authorization", "Proxy-Authorization: Basic eDp5\r\n"},
 		{"Host の偽装", "Host: evil.example\r\nHost: 127.0.0.1:1\r\n"},
-		{"Connection: keep-alive", "Connection: keep-alive\r\nKeep-Alive: timeout=99\r\nProxy-Connection: keep-alive\r\n"},
-		{"X-Forwarded-*", "X-Forwarded-For: 1.2.3.4\r\nX-Forwarded-Host: evil\r\nForwarded: for=1.2.3.4\r\nX-Real-IP: 1.2.3.4\r\nVia: 1.1 evil\r\n"},
-		{"TE・Trailer", "TE: trailers\r\nTrailer: X\r\n"},
+		{"Connection: keep-alive", "Connection: keep-alive\r\nconnection: upgrade\r\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req, err := parse(t, "GET /api/info HTTP/1.1\r\nAccept: */*\r\n"+tc.extra+"\r\n")
@@ -71,7 +69,7 @@ func TestParseRequestRewritesAuthorization(t *testing.T) {
 			if !equal(h["authorization"], auth) || !equal(h["host"], testRelayHost) || !equal(h["connection"], "close") {
 				t.Errorf("authorization=%q host=%q connection=%q", h["authorization"], h["host"], h["connection"])
 			}
-			for _, k := range []string{"proxy-authorization", "x-forwarded-for", "x-forwarded-host", "forwarded", "x-real-ip", "via", "te", "trailer", "keep-alive", "proxy-connection"} {
+			for _, k := range []string{"proxy-authorization", "x-forwarded-for", "forwarded", "x-real-ip", "via", "te", "trailer", "keep-alive", "proxy-connection"} {
 				if len(h[k]) != 0 {
 					t.Errorf("%s が残った: %q", k, h[k])
 				}
@@ -90,9 +88,9 @@ func equal(got []string, want string) bool { return len(got) == 1 && got[0] == w
 
 // 拒否: 形が不正・通さない要求は、上流に何も書かずに、理由の status で拒否する。
 func TestParseRequestRejects(t *testing.T) {
-	longLine := "X: " + strings.Repeat("a", relayMaxLine) + "\r\n"
-	manyHeaders := strings.Repeat("X-A: 1\r\n", relayMaxHeaders+1)
-	bigHead := strings.Repeat("X-A: "+strings.Repeat("b", 4000)+"\r\n", 10)
+	longLine := "Host: " + strings.Repeat("a", relayMaxLine) + "\r\n"
+	manyHeaders := strings.Repeat("Host: a\r\n", relayMaxHeaders+1) // 付け直すヘッダ (許可リストの検査の前に、数を数える)
+	bigHead := strings.Repeat("Host: "+strings.Repeat("b", 4000)+"\r\n", 10)
 	for _, tc := range []struct {
 		name, raw string
 		status    int
@@ -155,6 +153,41 @@ func TestParseRequestRejects(t *testing.T) {
 				t.Fatalf("got req=%v err=%v, want status %d", req != nil, err, tc.status)
 			}
 		})
+	}
+}
+
+// ヘッダの許可リスト (ADR 0030): 通すのは Content-Type・Content-Length (付け直す)・Accept・Cache-Control・Last-Event-ID だけ (大文字小文字を問わない)。
+// 許可外は、捨てずに 400 で拒否する。許可リストのヘッダの重複も拒否する。
+func TestParseRequestHeaderAllowlist(t *testing.T) {
+	req, err := parse(t, "POST /api/x HTTP/1.1\r\ncontent-TYPE: application/json\r\nACCEPT: text/event-stream\r\nCache-Control: no-cache\r\nlast-event-id: 7\r\nContent-Length: 2\r\n\r\n")
+	if err != nil {
+		t.Fatalf("許可リストのヘッダが拒否された: %v", err)
+	}
+	_, h := headLines(t, req.head)
+	for k, v := range map[string]string{"content-type": "application/json", "accept": "text/event-stream", "cache-control": "no-cache", "last-event-id": "7", "content-length": "2"} {
+		if !equal(h[k], v) {
+			t.Errorf("%s = %q, want %q", k, h[k], v)
+		}
+	}
+	for _, name := range []string{
+		"X-Forwarded-For", "X-FORWARDED-SERVER", "x-forwarded-", "Forwarded", "X-Real-IP", "Via", "TE", "Trailer", "Keep-Alive", "Proxy-Connection",
+		"Cookie", "Content_Length", "Content_Type", "X-Original-URL", "X-Http-Method-Override", "User-Agent", "Accept-Encoding", "Origin", "Referer",
+		"X-Opencode-Directory", "Range", "If-None-Match",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := parse(t, "GET /api/info HTTP/1.1\r\nAccept: */*\r\n"+name+": v\r\n\r\n")
+			var re *relayError
+			if !errors.As(err, &re) || re.status != 400 {
+				t.Errorf("許可外の %s が 400 で拒否されない: %v", name, err)
+			}
+		})
+	}
+	for _, name := range []string{"Content-Type", "accept", "CACHE-CONTROL", "Last-Event-ID"} {
+		_, err := parse(t, "GET /api/info HTTP/1.1\r\n"+name+": a\r\n"+name+": b\r\n\r\n")
+		var re *relayError
+		if !errors.As(err, &re) || re.status != 400 {
+			t.Errorf("重複した %s が 400 で拒否されない: %v", name, err)
+		}
 	}
 }
 
@@ -249,9 +282,16 @@ func FuzzParseRequest(f *testing.F) {
 				t.Fatalf("%s が %d 個: %q (入力 %q)", k, counts[k], head, raw)
 			}
 		}
-		for _, k := range []string{"proxy-authorization", "transfer-encoding", "upgrade", "expect", "te", "x-forwarded-for", "forwarded"} {
-			if counts[k] != 0 {
-				t.Fatalf("%s が残った: %q (入力 %q)", k, head, raw)
+		for k := range counts { // 許可リスト (ADR 0030) 以外は、1 つも上流に出ない
+			switch k {
+			case "authorization", "host", "connection", "content-length", "content-type", "accept", "cache-control", "last-event-id":
+			default:
+				t.Fatalf("許可外の %s が残った: %q (入力 %q)", k, head, raw)
+			}
+		}
+		for _, k := range []string{"content-type", "accept", "cache-control", "last-event-id"} {
+			if counts[k] > 1 {
+				t.Fatalf("許可リストの %s が重複: %q (入力 %q)", k, head, raw)
 			}
 		}
 		if !strings.Contains(head, "\r\nAuthorization: "+auth+"\r\n") || !strings.Contains(head, "\r\nHost: "+testRelayHost+"\r\n") {
@@ -612,5 +652,63 @@ func TestRequestRelayStop(t *testing.T) {
 	r.wg.Wait()
 	if n := len(up.requests()); n != 0 {
 		t.Errorf("上流に %d 個の要求が届いた", n)
+	}
+}
+
+// ADR 0029 の L1: 上流に接続してから、子が生きていることを確かめて、初めてトークンを書く。生きていなければ、接続だけして、何も書かずに閉じ、ホストには 502 を返す。
+// alive が呼ばれた時点で、上流への接続が張られていること (= 接続の「後」に確かめていること) も、ここで確かめる。
+func TestRequestRelayLivenessBetweenConnectAndToken(t *testing.T) {
+	for _, alive := range []bool{false, true} {
+		t.Run(fmt.Sprintf("alive=%v", alive), func(t *testing.T) {
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer l.Close()
+			connected := make(chan struct{})
+			upData := make(chan string, 1)
+			go func() {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				defer c.Close()
+				close(connected)
+				c.SetReadDeadline(time.Now().Add(2 * time.Second))
+				b, _ := io.ReadAll(c) // 生きていなければ、何も届かず、relay が閉じる
+				upData <- string(b)
+			}()
+			r := newRequestRelay(l.Addr().(*net.TCPAddr).Port, func() string { return "SECRET-TOKEN" })
+			connectedAtCheck := false
+			r.alive = func() bool {
+				select {
+				case <-connected: // accept は、TCP の接続が済んでから返る: alive が、接続の後に呼ばれたなら、ここに来る
+					connectedAtCheck = true
+				case <-time.After(time.Second):
+				}
+				return alive
+			}
+			cl, sv := relayPair(t)
+			r.accept(sv)
+			fmt.Fprintf(cl, "GET /api/info HTTP/1.1\r\nAccept: */*\r\n\r\n")
+			resp := readAll(t, cl)
+			r.wg.Wait()
+			if !connectedAtCheck {
+				t.Error("子の生存確認が、上流への接続より前に行われた")
+			}
+			got := <-upData
+			if alive {
+				if !strings.Contains(got, "SECRET-TOKEN") && !strings.Contains(got, basicAuth("SECRET-TOKEN")) {
+					t.Errorf("生きているのに、トークンが届かない: %q", got)
+				}
+				return
+			}
+			if got != "" || strings.Contains(resp, "SECRET") {
+				t.Errorf("生きていないのに、上流に %q が届いた・応答に漏れた: %q", got, resp)
+			}
+			if !strings.HasPrefix(resp, "HTTP/1.1 502 ") {
+				t.Errorf("応答 = %q, want 502", resp)
+			}
+		})
 	}
 }
