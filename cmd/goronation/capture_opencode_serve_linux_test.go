@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -460,5 +461,19 @@ func serveScenes() []serveScene {
 				})
 			},
 			drive: func(r *sceneRun) { r.newSession(); r.prompt("Hi."); r.settleRetries() }},
+	}
+}
+
+// 採取する場面 (serveScenes) と、CI が検査する fixtures の場面の一覧 (serveSceneNames) が、一致している。
+func TestServeSceneNamesMatch(t *testing.T) {
+	var names []string
+	for _, sc := range serveScenes() {
+		if sc.name == "" || sc.desc == "" || sc.drive == nil || len(sc.steps) == 0 {
+			t.Errorf("場面 %q の定義が足りない", sc.name)
+		}
+		names = append(names, sc.name)
+	}
+	if !slices.Equal(names, serveSceneNames) {
+		t.Errorf("serveScenes %v と serveSceneNames %v が違う", names, serveSceneNames)
 	}
 }
