@@ -34,6 +34,7 @@ type realCage struct {
 	status   *syncBuffer // init の標準出力 ({"ready":true})
 	viaProxy *syncBuffer // 檻の egress (proxy) を通った要求の記録
 	done     chan error  // 檻 (bwrap) の終了
+	hostDir  string      // この檻の、ホスト側の作業ディレクトリ (記録に入ってはいけない path)
 	mu       sync.Mutex
 	calls    []recordedCall
 }
@@ -156,7 +157,7 @@ func startRealCage(t *testing.T, src string, provider http.Handler) *realCage {
 	if got := status.String(); got != "{\"ready\":true}\n" {
 		t.Fatalf("起動の結果 = %q\n%s", got, stderr.String())
 	}
-	return &realCage{t: t, pair: pair, stderr: &stderr, status: &status, viaProxy: &viaProxy, done: done}
+	return &realCage{t: t, hostDir: dir, pair: pair, stderr: &stderr, status: &status, viaProxy: &viaProxy, done: done}
 }
 
 // recordedCall は、ホスト → サーバーの 1 回の要求と応答 (SSE 以外)。

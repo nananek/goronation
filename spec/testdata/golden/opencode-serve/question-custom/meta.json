@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "question の tool: 選択肢に無い自由記述の返答 (custom)",
+  "events": 38,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "選択肢に無い文字列を、そのまま返せる (field の custom: true)。",
+  "opencodeVersion": "2.0.20",
+  "requests": 6,
+  "scene": "question-custom"
+}

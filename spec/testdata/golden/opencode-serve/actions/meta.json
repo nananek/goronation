@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "各 tool を 1 つずつ呼び、once で承認する (action ごとの resources の形)",
+  "events": 116,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "write・edit の action は \"edit\" (metadata.files に patch)。/etc の read は external_directory → read の 2 連続の承認。execute は承認を要求しない。glob・grep は承認は出るが、檻に ripgrep が無く \"ripgrep execution failed\" で失敗する (成功の形は観察できない)。webfetch は fake provider の 404。",
+  "opencodeVersion": "2.0.20",
+  "requests": 12,
+  "scene": "actions"
+}

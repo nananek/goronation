@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "同じ session に 2 回 prompt する",
+  "events": 37,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "",
+  "opencodeVersion": "2.0.20",
+  "requests": 5,
+  "scene": "multi-turn"
+}

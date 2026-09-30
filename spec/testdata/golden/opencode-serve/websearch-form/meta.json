@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "websearch の tool: provider を選ぶ form (kind websearch.provider) が出る (承認 → form)",
+  "events": 38,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "websearch は承認のあとに、provider を選ぶ form (metadata.kind: websearch.provider。field choice: allow/choose/disable) を出す。答えないと 60 秒で form.cancelled (別の試行で観察)。ここでは DELETE で取り消した。",
+  "opencodeVersion": "2.0.20",
+  "requests": 6,
+  "scene": "websearch-form"
+}

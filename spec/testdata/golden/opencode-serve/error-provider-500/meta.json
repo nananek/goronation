@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "provider が HTTP 500 を返す",
+  "events": 42,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "HTTP 500 は、opencode が 10 回ほど再試行 (session.retry.scheduled の attempt 2〜11。間隔は伸びる。全体で 90 秒ほど) してから session.execution.failed (provider.internal)。",
+  "opencodeVersion": "2.0.20",
+  "requests": 3,
+  "scene": "error-provider-500"
+}

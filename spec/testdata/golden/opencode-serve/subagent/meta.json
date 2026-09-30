@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "subagent の tool 呼び出し: 子の session が shell を呼ぶ (承認は once)",
+  "events": 63,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "subagent の承認 (action subagent, resources [agent 名]) のあと、子の session (session.created に parentID・agent: general) が別に走る。子の承認は、子の session の ID で出る。親には session.tool.progress (metadata.sessionID) と、最後の session.tool.success (本文に \u003csubagent sessionID=… state=completed\u003e) が来る。",
+  "opencodeVersion": "2.0.20",
+  "requests": 5,
+  "scene": "subagent"
+}

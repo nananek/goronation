@@ -1,0 +1,29 @@
+{"data":{},"id":"<evt:1>","type":"server.connected"}
+{"created":0,"data":{"location":{"directory":"/work"},"permissions":[{"action":"*","effect":"ask","resource":"*"}],"projectID":"<hash:1>","sessionID":"<ses:1>","slug":"<slug>","subpath":"","version":"2.0.20"},"durable":{"aggregateID":"<ses:1>","seq":0,"version":1},"id":"<evt:2>","location":{"directory":"/work"},"type":"session.created"}
+{"created":0,"data":{"canonical":"/work","id":"<hash:1>","sandboxes":[],"time":{"active":0,"created":0,"updated":0}},"id":"<evt:3>","location":{"directory":"/work"},"type":"project.updated"}
+{"created":0,"data":{},"id":"<evt:4>","location":{"directory":"/work"},"type":"integration.updated"}
+{"created":0,"data":{},"id":"<evt:5>","location":{"directory":"/work"},"type":"provider.updated"}
+{"created":0,"data":{},"id":"<evt:6>","location":{"directory":"/work"},"type":"model.updated"}
+{"created":0,"data":{},"id":"<evt:7>","location":{"directory":"/work"},"type":"agent.updated"}
+{"created":0,"data":{},"id":"<evt:8>","location":{"directory":"/work"},"type":"command.updated"}
+{"created":0,"data":{},"id":"<evt:9>","location":{"directory":"/work"},"type":"skill.updated"}
+{"created":0,"data":{},"id":"<evt:10>","location":{"directory":"/work"},"type":"websearch.updated"}
+{"created":0,"data":{},"id":"<evt:11>","location":{"directory":"/work"},"type":"reference.updated"}
+{"created":0,"data":{},"id":"<evt:12>","location":{"directory":"/work"},"type":"plugin.updated"}
+{"created":0,"data":{"inboxID":"<msg:1>","item":{"delivery":"steer","payload":{"text":"Do it."},"type":"user"},"sessionID":"<ses:1>"},"durable":{"aggregateID":"<ses:1>","seq":1,"version":1},"id":"<evt:13>","location":{"directory":"/work"},"type":"session.inbox.enqueued"}
+{"created":0,"data":{"sessionID":"<ses:1>"},"durable":{"aggregateID":"<ses:1>","seq":2,"version":1},"id":"<evt:14>","type":"session.execution.started"}
+{"created":0,"data":{"delta":{"core/codemode":"<hash:2>","core/date":"<hash:3>","core/environment":"<hash:4>","core/skill-guidance":"<hash:5>"},"sessionID":"<ses:1>"},"durable":{"aggregateID":"<ses:1>","seq":3,"version":2},"id":"<evt:15>","location":{"directory":"/work"},"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated"}
+{"created":0,"data":{"inboxID":"<msg:1>","sessionID":"<ses:1>"},"durable":{"aggregateID":"<ses:1>","seq":4,"version":1},"id":"<evt:16>","location":{"directory":"/work"},"type":"session.inbox.delivered"}
+{"created":0,"data":{"cost":0,"sessionID":"<ses:1>","tokens":{"cache":{"read":0,"write":0},"input":0,"output":0,"reasoning":0}},"id":"<evt:17>","type":"session.usage.updated"}
+{"created":0,"data":{"sessionID":"<ses:1>","title":"A short title"},"durable":{"aggregateID":"<ses:1>","seq":6,"version":1},"id":"<evt:18>","location":{"directory":"/work"},"type":"session.renamed"}
+{"created":0,"data":{"agent":"build","assistantMessageID":"<msg:2>","model":{"id":"fake-model","providerID":"fake"},"sessionID":"<ses:1>","started":0},"durable":{"aggregateID":"<ses:1>","seq":7,"version":1},"id":"<evt:19>","location":{"directory":"/work"},"type":"session.step.started"}
+{"created":0,"data":{"assistantMessageID":"<msg:2>","id":"call_1","name":"shell","sessionID":"<ses:1>"},"durable":{"aggregateID":"<ses:1>","seq":8,"version":1},"id":"<evt:20>","location":{"directory":"/work"},"type":"session.tool.input.started"}
+{"created":0,"data":{"assistantMessageID":"<msg:2>","id":"call_1","sessionID":"<ses:1>","text":"{\"command\":\"echo goro-hi\",\"description\":\"run a command\"}"},"durable":{"aggregateID":"<ses:1>","seq":9,"version":1},"id":"<evt:21>","location":{"directory":"/work"},"type":"session.tool.input.ended"}
+{"created":0,"data":{"assistantMessageID":"<msg:2>","executed":false,"id":"call_1","input":{"command":"echo goro-hi","description":"run a command"},"sessionID":"<ses:1>"},"durable":{"aggregateID":"<ses:1>","seq":10,"version":1},"id":"<evt:22>","location":{"directory":"/work"},"type":"session.tool.called"}
+{"created":0,"data":{"assistantMessageID":"<msg:2>","sessionID":"<ses:1>"},"durable":{"aggregateID":"<ses:1>","seq":11,"version":1},"id":"<evt:23>","location":{"directory":"/work"},"type":"session.step.streamed"}
+{"created":0,"data":{"action":"shell","id":"<per:1>","resources":["echo goro-hi"],"save":["echo *"],"sessionID":"<ses:1>","source":{"id":"call_1","messageID":"<msg:2>","type":"tool"}},"id":"<evt:24>","location":{"directory":"/work"},"type":"permission.asked"}
+{"created":0,"data":{"reply":"reject","requestID":"<per:1>","sessionID":"<ses:1>"},"id":"<evt:25>","location":{"directory":"/work"},"type":"permission.replied"}
+{"created":0,"data":{"assistantMessageID":"<msg:2>","error":{"message":"The user declined this tool call","type":"aborted"},"executed":false,"id":"call_1","sessionID":"<ses:1>"},"durable":{"aggregateID":"<ses:1>","seq":12,"version":2},"id":"<evt:26>","location":{"directory":"/work"},"type":"session.tool.failed"}
+{"created":0,"data":{"assistantMessageID":"<msg:2>","cost":0,"error":{"message":"Step interrupted","type":"aborted"},"rawFinish":"tool_calls","sessionID":"<ses:1>","tokens":{"cache":{"read":0,"write":0},"input":0,"output":0,"reasoning":0}},"durable":{"aggregateID":"<ses:1>","seq":13,"version":1},"id":"<evt:27>","location":{"directory":"/work"},"type":"session.step.failed"}
+{"created":0,"data":{"cost":0,"sessionID":"<ses:1>","tokens":{"cache":{"read":0,"write":0},"input":0,"output":0,"reasoning":0}},"id":"<evt:28>","type":"session.usage.updated"}
+{"created":0,"data":{"reason":"shutdown","sessionID":"<ses:1>"},"durable":{"aggregateID":"<ses:1>","seq":14,"version":1},"id":"<evt:29>","type":"session.execution.interrupted"}

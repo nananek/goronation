@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "provider が HTTP 400 (invalid_request_error) を返す",
+  "events": 21,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "HTTP 400 は再試行せず、すぐ session.execution.failed (provider.invalid-request)。",
+  "opencodeVersion": "2.0.20",
+  "requests": 3,
+  "scene": "error-provider-400"
+}

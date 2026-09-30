@@ -103,3 +103,34 @@ func TestNormalizeFramesSkipsBlankLines(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestServeRules(t *testing.T) {
+	in := `{"id":"evt_0f3f15f12001LYpY6p6VTDPjRR","created":1790799077149,"type":"session.created","data":{"sessionID":"ses_f0c0ea0e7ffeNCc8TFDbgXqBVs","slug":"curious-cabin","projectID":"bc7447dce6aa45fd13129230dddc6abeb62cb974","started":1790799077150}}
+{"id":"evt_0f3f15f12002ZZZZ6p6VTDPjRR","data":{"info":{"id":"sh_0f3f40383001hye6skj1oz7uY4","file":"/home/u/.local/share/shell/sh_0f3f40383001hye6skj1oz7uY4.out"},"text":"<subagent sessionID=\"ses_f0c0ea0e7ffeNCc8TFDbgXqBVs\">","urls":["http://127.0.0.1:42529"],"at":1790799680936}}
+{"data":{"ses_f0c0ea0e7ffeNCc8TFDbgXqBVs":{"type":"running"}},"cursor":{"next":"eyJpZCI6Im1zZ18wZjNmZGQ5MTAwMDFGSFA1cXpMdzRwa1RKZiIsIm9yZGVyIjoiZGVzYyJ9"}}
+`
+	want := `{"created":0,"data":{"projectID":"<hash:1>","sessionID":"<ses:1>","slug":"<slug>","started":0},"id":"<evt:1>","type":"session.created"}
+{"data":{"at":0,"info":{"file":"/home/u/.local/share/shell/<sh:1>.out","id":"<sh:1>"},"text":"<subagent sessionID=\"<ses:1>\">","urls":["http://127.0.0.1:<port>"]},"id":"<evt:2>"}
+{"cursor":{"next":"<cursor>"},"data":{"<ses:1>":{"type":"running"}}}
+`
+	got, err := New(Serve).Frames([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	again, err := New(Serve).Frames(got)
+	if err != nil || string(again) != want {
+		t.Errorf("冪等でない: %v\n%s", err, again)
+	}
+}
+
+// 既定の規則 (cmd/framecapture) は、Serve の規則を使わない: created・at・evt_ の ID は、そのまま。
+func TestDefaultRulesDoNotApplyServeRules(t *testing.T) {
+	in := `{"at":5,"created":1790799077149,"id":"evt_0f3f15f12001LYpY6p6VTDPjRR"}` + "\n"
+	got, err := NormalizeFrames([]byte(in))
+	if err != nil || string(got) != in {
+		t.Errorf("既定の規則が変わった: %v %s", err, got)
+	}
+}
