@@ -154,6 +154,8 @@
       for (const c of Array.from(notices.children)) if (c.tagName !== 'button') notices.removeChild(c);
       if (state.omitted || state.trimmed) notices.appendChild(el('div', 'notice', '古い分は省略している'));
       // 権限モードが default でない (auto・acceptEdits など): tool が、人間の承認なしで実行されうる。権限ダイアログは出ない (PR⑧ の実物の確認で、claude 2.1.285 の既定が auto と分かった)。
+      // session.started に権限モードが無い・空: 確認できない (claude が名前を変えた・出さない版。承認が働くかは分からない)。
+      if (state.sessionStarted && state.permissionMode === '') notices.appendChild(el('div', 'notice notice-danger', '警告: 権限モードを確認できない。tool が、人間の承認なしで実行されうる (権限ダイアログが出るとは限らない)'));
       if (state.permissionMode !== '' && state.permissionMode !== 'default') notices.appendChild(el('div', 'notice notice-danger', '警告: 権限モードが "' + state.permissionMode + '"。tool が、人間の承認なしで実行されうる (権限ダイアログは出ない)'));
       if (state.ended) notices.appendChild(el('div', 'notice notice-end', '終了' + (state.ended.exit !== null ? ' (exit ' + state.ended.exit + ')' : '')));
     }

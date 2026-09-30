@@ -223,7 +223,7 @@ func TestAgentLookup(t *testing.T) {
 		t.Error("Args が、内部の slice を返している")
 	}
 	joined := strings.Join(l.Args(), " ")
-	for _, want := range []string{"--input-format stream-json", "--output-format stream-json", "--permission-prompt-tool stdio", "--permission-mode default"} {
+	for _, want := range []string{"--input-format stream-json", "--output-format stream-json", "--permission-prompt-tool stdio", "--permission-mode default", "--setting-sources user"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("引数に %q が無い: %s", want, joined)
 		}
