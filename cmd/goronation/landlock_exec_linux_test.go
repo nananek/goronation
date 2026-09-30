@@ -9,6 +9,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -258,6 +260,13 @@ func landlockProbe(args []string) int {
 		}
 		return err
 	}
+	// bind は制限しない (opencode は、自分のポートを待ち受ける)。
+	if l, err := net.Listen("tcp", "127.0.0.1:0"); err != nil {
+		out("bind-listen", err)
+	} else {
+		l.Close()
+		out("bind-listen", nil)
+	}
 	out("connect-allowed", dial(okPort))
 	out("connect-denied", dial(badPort))
 	// MPTCP の socket (IPPROTO_MPTCP = 262)。
@@ -471,4 +480,32 @@ func init() {
 		fmt.Printf("args=%v env=%s\n", args, os.Getenv("LANDLOCK_TEST_TOKEN"))
 		return 0
 	}
+}
+
+// 実際の配線: 本物の手順の関数 (差し込み口の既定) が、それぞれの役目の関数であること。テストの環境が no_new_privs を引き継いでいても、
+// 配線の取り違え・抜け (no_new_privs の手順が空になる等) を見つける。
+func TestRealLockdownWiring(t *testing.T) {
+	l := realLockdown()
+	for name, tc := range map[string]struct {
+		fn   any
+		want string
+	}{
+		"abi":        {l.abi, "landlockABI"},
+		"noNewPrivs": {l.noNewPrivs, "setNoNewPrivs"},
+		"landlock":   {l.landlock, "landlockRestrictConnect"},
+		"seccomp":    {l.seccomp, "installSeccomp"},
+		"exec":       {l.exec, "syscall.Exec"},
+	} {
+		got := runtimeFuncName(tc.fn)
+		if !strings.HasSuffix(got, tc.want) {
+			t.Errorf("%s = %s, want …%s", name, got, tc.want)
+		}
+	}
+	if l.arch() != runtime.GOARCH {
+		t.Errorf("arch = %s", l.arch())
+	}
+}
+
+func runtimeFuncName(f any) string {
+	return runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
 }
