@@ -28,6 +28,7 @@
 | [0020](0020-opencode-token-and-landlock.md) | opencode のトークンは使い捨てにし、読めても繋げない 3 重の守りを置く (M2) | 採用 |
 | [0021](0021-opencode-permission-ask.md) | opencode の承認は、セッション作成時の permissions で固定する (M2) | 採用 |
 | [0022](0022-opencode-stream-shape.md) | opencode の Stream は行のまま、HTTP と SSE は transport 層が写す (M2) | 採用 |
+| [0023](0023-relay-control-stdin.md) | 要求の中継の control は init の標準入力にし、HTTP の解釈と上限を固定する (M2) | 採用 |
 
 ## 書き方
 
