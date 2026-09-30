@@ -24,6 +24,10 @@ func runAuth(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 
 func runPr(args []string, stdout, stderr io.Writer) int { return unsupported("pr", stderr) }
 
+func runVault(args []string, stdin *os.File, stdout, stderr io.Writer) int {
+	return unsupported("vault", stderr)
+}
+
 func runMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return unsupported("mcp", stderr)
 }

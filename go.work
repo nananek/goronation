@@ -11,4 +11,5 @@ use (
 	./tools/archtest
 	./tools/docgen
 	./tools/fakeproviders
+	./vault
 )

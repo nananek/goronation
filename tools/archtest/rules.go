@@ -74,7 +74,7 @@ var DefaultRules = Rules{
 		// 実装の配線 (build tag) は cmd/** だけが行う。
 		{
 			ID:      "impl-only-from-cmd",
-			Imports: mods("sandbox/bwrap/**", "sandbox/seatbelt/**", "agent/claude/**", "agent/opencode/**"),
+			Imports: mods("sandbox/bwrap/**", "sandbox/seatbelt/**", "agent/claude/**", "agent/opencode/**", "vault/**"),
 			OnlyIn:  []string{"cmd/**"},
 		},
 
@@ -109,6 +109,17 @@ var DefaultRules = Rules{
 		// agent と sandbox は、互いに import しない (独立にテスト・保守できることの担保)。
 		{ID: "dep-agent-sandbox", In: []string{"agent/**"}, Imports: mods("sandbox/**")},
 		{ID: "dep-agent-sandbox", In: []string{"sandbox/**"}, Imports: mods("agent/**")},
+	},
+
+	// ADR 0036: vault/** が import してよいのは、標準ライブラリと core/**・vault/** だけ (秘密を持つコードの依存を、固定する)。
+	// 外部 module (cbor・websocket・sqlite など) も、agent・sandbox・egress・hostfs・cmd・spec も、使えない。
+	OnlyImports: []OnlyImport{
+		{ID: "dep-vault", In: []string{"vault/**"}, Allow: mods("core/**", "vault/**")},
+	},
+
+	// ADR 0036: vault/go.mod は、require も tool も持たない。
+	NoRequires: []NoRequire{
+		{ID: "vault-no-require", Dirs: []string{"vault"}},
 	},
 
 	Calls: []CallRule{
