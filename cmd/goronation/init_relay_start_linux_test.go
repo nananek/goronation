@@ -597,3 +597,37 @@ func TestUpstreamValid(t *testing.T) {
 	}
 	l2.Close()
 }
+
+// 子が死んでいて (pidfd が終了を示す。回収はしていない)、待ち受けのソケットは同じ (子の子孫が fd を持って生きている): pidfd の検査だけが、false にする。
+func TestUpstreamValidDeadChildSameSocket(t *testing.T) {
+	var pidfd int
+	cmd := exec.Command("sleep", "30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{PidFD: &pidfd}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cmd.Process.Kill(); cmd.Wait(); syscall.Close(pidfd) }()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	port := l.Addr().(*net.TCPAddr).Port
+	ino, err := listenerInode(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &relayRun{pidfd: pidfd, port: port}
+	r.listenIno.Store(ino)
+	if !r.upstreamValid() {
+		t.Fatal("生きている子・同じソケットなのに、false")
+	}
+	cmd.Process.Kill()
+	deadline := time.Now().Add(10 * time.Second)
+	for pidfdAlive(pidfd) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if r.upstreamValid() {
+		t.Error("子が死んでいる (pidfd が終了を示す) のに、true")
+	}
+}

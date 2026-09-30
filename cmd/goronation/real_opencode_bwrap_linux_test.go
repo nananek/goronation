@@ -25,7 +25,8 @@ import (
 // 実物の opencode 2.x を、goronation init (--relay-control・landlock-exec 包み・seccomp の socket 許可リスト) の下の、実 bwrap の檻 (非 root) で動かす
 // 確認 (ADR 0020・0029・0030)。opencode の実体が要るので、GORO_REAL_OPENCODE=<opencode の実行ファイルの path> のときだけ動く (通常は skip)。
 // 確かめること: 版の検査 (opencode v2.0.)・起動の証明・{"ready":true}・許可リストのヘッダだけで API・SSE が通ること・承認つきの 1 ターン
-// (偽の provider・http の proxy 経由)・子が landlock-exec の下 (no_new_privs・seccomp) にあること。
+// (偽の provider・http の proxy 経由)。子が landlock-exec の下 (no_new_privs・seccomp) にあることは、この test では確かめない (opencode は自分の status を出さない)。
+// その機構は、偽の子での bwrap の test (relay_bwrap_linux_test.go の SANDBOX の検査) が確かめる。
 //
 // 偽の provider は、host の loopback の http サーバー。檻からは、egress の UDS (run dir の proxy.sock) に立てた、host 側の偽の egress (http の proxy) が、
 // http://fake-provider.test/ を、その偽の provider に中継する。
