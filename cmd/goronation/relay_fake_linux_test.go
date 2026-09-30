@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,6 +43,7 @@ func fakeRelayUpstream(args []string) int {
 	if len(args) > 1 && args[1] == "spoof" {
 		go func() {
 			unixSockets()
+			pid1IsInit()
 			fakeSpoof(nil)
 		}()
 	}
@@ -72,6 +74,14 @@ func unixSockets() {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "child:unix-sockets-in-agent => %d\n", n)
+}
+
+// pid1IsInit は、PID 1 が goronation init (--relay-control つき) か (bwrap が PID 1 のまま control を持っていないか) を出す。
+// /proc/1/cmdline は同じ uid に読める。
+func pid1IsInit() {
+	b, _ := os.ReadFile("/proc/1/cmdline")
+	args := strings.Split(string(b), "\x00")
+	fmt.Fprintf(os.Stderr, "child:pid1-init => %t\n", slices.Contains(args, "init") && slices.Contains(args, "--relay-control"))
 }
 
 func fakeRelayServe(c net.Conn) {

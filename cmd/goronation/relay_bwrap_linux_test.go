@@ -34,8 +34,13 @@ type relayCage struct {
 
 // startRelayCage は、偽の opencode (relay-upstream) を子にした、--relay-control の檻を起こす。spoof なら、偽の opencode が奪取の試みもする。
 func startRelayCage(t *testing.T, spoof bool) *relayCage {
+	return startRelayCageHardened(t, spoof, true)
+}
+
+// startRelayCageHardened は、hardened=false なら NonDumpable を立てずに (RelayPort だけで) 檻を起こす: cageSpec が強制することの確認。
+func startRelayCageHardened(t *testing.T, spoof, hardened bool) *relayCage {
 	t.Helper()
-	c := newChatCageFixture(t, true)
+	c := newChatCageFixture(t, hardened)
 	l, err := net.Listen("tcp", "127.0.0.1:0") // 空きポートを、ホストで探す (檻の netns は別だが、衝突しない値にする)
 	if err != nil {
 		t.Fatal(err)
@@ -178,10 +183,24 @@ func TestRelayInBwrapEndToEnd(t *testing.T) {
 // /proc/<pid>/mem を試す。init (pid1) に対するものは、すべて断られる。偽の opencode (子の親) は、unix domain socket の fd を持たない (control を継承していない)。
 // ptrace_scope=1 の環境 (CI の runner) では、yama だけでも断られるので、dumpable=0 が効いていることは、ここでは区別できない: 変異で確かめる (ADR 0012 の運用の約束)。
 func TestRelayInBwrapControlNotStealable(t *testing.T) {
-	rc := startRelayCage(t, true)
+	for _, hardened := range []bool{true, false} {
+		name := "NonDumpable つき"
+		if !hardened {
+			name = "RelayPort だけ (cageSpec が強制する)"
+		}
+		t.Run(name, func(t *testing.T) { relayControlNotStealable(t, hardened) })
+	}
+}
+
+func relayControlNotStealable(t *testing.T, hardened bool) {
+	rc := startRelayCageHardened(t, true, hardened)
 	waitRelayCond(t, "奪取の試みの完了", func() bool { return strings.Contains(rc.stderr.String(), "agent-done") })
 	out := rc.stderr.String()
 	r := childResults(out)
+	// PID 1 は goronation init (bwrap が PID 1 のまま、control を dumpable で持っていない)。scope=1 (CI) でも区別できる。
+	if r["pid1-init"] != "true" {
+		t.Errorf("PID 1 が goronation init (--relay-control) ではない: %q\n%s", r["pid1-init"], out)
+	}
 	if r["unix-sockets-in-agent"] != "0" {
 		t.Errorf("偽の opencode が unix domain socket の fd を持つ (control を継承した): %q", r["unix-sockets-in-agent"])
 	}
