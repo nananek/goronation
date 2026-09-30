@@ -79,7 +79,7 @@ func TestCageSpecRelay(t *testing.T) {
 	}
 }
 
-// 中継の control は、dumpable=0 でなければ奪われる (ADR 0012・0023): RelayPort だけを立てても、檻の init には --non-dumpable が付く。
+// 中継の control は、dumpable=0 でなければ奪われる (ADR 0012・0028): RelayPort だけを立てても、檻の init には --non-dumpable が付く。
 func TestCageSpecRelayForcesNonDumpable(t *testing.T) {
 	c := testCage()
 	c.RelayPort = 4321 // NonDumpable は立てない

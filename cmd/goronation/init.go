@@ -45,7 +45,7 @@ init は、檻を作らず、自分が檻の中にいることも確かめない
                     (goronation run が、専用の pty を中継するときに渡す)
   --relay-control   init の標準入力 (ホストとの socketpair) を control にして、ホストが要求ごとに送ってくる fd (SCM_RIGHTS) の HTTP の要求を、
                     127.0.0.1:--relay-port の上流に、Authorization を付け直して中継する。子の標準入出力は、init が別に作る pipe にする
-                    (--non-dumpable が要る。ADR 0019・0023)
+                    (--non-dumpable が要る。ADR 0019・0028)
   --relay-port PORT --relay-control の上流のポート
 `
 
@@ -222,7 +222,7 @@ func runInit(args []string, stderr io.Writer) int {
 
 	code := waitChild(cmd.Process.Pid, stderr, func() {
 		if relay != nil {
-			relay.stop() // 死んだ子の待ち受けを、誰かが奪う窓を狭める (ADR 0023): 子の死を回収した直後に、要求の受け付けを止める
+			relay.stop() // 死んだ子の待ち受けを、誰かが奪う窓を狭める (ADR 0028): 子の死を回収した直後に、要求の受け付けを止める
 		}
 	})
 	l.Close()

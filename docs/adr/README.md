@@ -28,7 +28,12 @@
 | [0020](0020-opencode-token-and-landlock.md) | opencode のトークンは使い捨てにし、読めても繋げない 3 重の守りを置く (M2) | 採用 |
 | [0021](0021-opencode-permission-ask.md) | opencode の承認は、セッション作成時の permissions で固定する (M2) | 採用 |
 | [0022](0022-opencode-stream-shape.md) | opencode の Stream は行のまま、HTTP と SSE は transport 層が写す (M2) | 採用 |
-| [0023](0023-relay-control-stdin.md) | 要求の中継の control は init の標準入力にし、HTTP の解釈と上限を固定する (M2) | 採用 |
+| [0023](0023-chat-durable-event-log.md) | chat の耐久イベントログ: セッションごとの SQLite に、進行中の起動の durable だけを残す (M2) | 採用 |
+| [0024](0024-chat-sse-resume.md) | chat の SSE 再接続: `after=seq`・`generation`・Hub の境目 (M2) | 採用 |
+| [0025](0025-chat-event-log-degrade.md) | chat の耐久イベントログの失敗は、縮退して知らせる (M2) | 採用 |
+| [0026](0026-sqlite-dependency-exception.md) | 耐久イベントログに限り、`modernc.org/sqlite` を使う (依存ゼロの方針の例外) | 採用 |
+| [0027](0027-chat-event-log-async-writer.md) | chat の耐久イベントログの書き込みは、Hub の Mutex の外の専用 goroutine で行い、量を有界にする (M2) | 採用 |
+| [0028](0028-relay-control-stdin.md) | 要求の中継の control は init の標準入力にし、HTTP の解釈と上限を固定する (M2) | 採用 |
 
 ## 書き方
 

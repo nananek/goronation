@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// ADR 0023 の 3: 「経路のヘッダ (Forwarded・X-Forwarded-* など) は、大文字小文字・重複・空白に関わらず捨てる」。
+// ADR 0028 の 3: 「経路のヘッダ (Forwarded・X-Forwarded-* など) は、大文字小文字・重複・空白に関わらず捨てる」。
 // X-Forwarded- で始まるヘッダは、名前を問わず上流に届けない。
 func TestParseRequestDropsAllXForwarded(t *testing.T) {
 	for _, name := range []string{"X-Forwarded-Server", "X-Forwarded-Scheme", "X-Forwarded-Uri", "X-Forwarded-Path", "X-Forwarded-Ssl", "x-forwarded-by", "X-FORWARDED-FOR", "X-Forwarded-"} {

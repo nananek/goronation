@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// control の規約 (ADR 0019・0023): ホストが、要求ごとに socketpair を作り、片端を、control (init の標準入力の socket) に、
+// control の規約 (ADR 0019・0028): ホストが、要求ごとに socketpair を作り、片端を、control (init の標準入力の socket) に、
 // 1 バイトのデータと SCM_RIGHTS の 1 個の fd で送る。init は、1 バイトずつ受けて (fd を、境界の正しい 1 バイトに結びつける)、
 // fd を要求の処理に渡す。規約に外れるもの (fd が 0 個・2 個以上・socket でないもの・stream でないもの・unix でないもの) は、
 // 受けた fd を全部閉じる。

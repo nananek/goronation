@@ -18,7 +18,7 @@ import (
 	"github.com/nananek/goronation/sandbox/bwrap"
 )
 
-// 逆方向中継 (ADR 0019・0023) の、bwrap の檻での確認。檻の中: goronation init (PID 1・dumpable=0・--relay-control) が、子 (偽の opencode) の
+// 逆方向中継 (ADR 0019・0028) の、bwrap の檻での確認。檻の中: goronation init (PID 1・dumpable=0・--relay-control) が、子 (偽の opencode) の
 // 127.0.0.1:PORT へ、ホストが socketpair + SCM_RIGHTS で送る HTTP の要求を、Authorization を付け直して中継する。
 
 // relayCage は、起動した檻と、その control・記録 (標準エラー出力)。

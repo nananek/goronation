@@ -70,7 +70,7 @@ type cageConfig struct {
 	// (chat セッション: エージェントの標準入出力の socket を持つ、init の fd を、檻の中の同じ uid のプロセスに、pidfd_getfd・
 	// ptrace・/proc/<pid>/mem で奪わせない)。エージェント自身も dumpable=0 にする方法は、chat_exe_linux.go。
 	NonDumpable bool
-	// RelayPort は、0 でなければ、goronation init に --relay-control --relay-port を渡す (要 NonDumpable。ADR 0019・0023): init の
+	// RelayPort は、0 でなければ、goronation init に --relay-control --relay-port を渡す (要 NonDumpable。ADR 0019・0028): init の
 	// 標準入力の socketpair が、ホストが要求ごとに fd を送る control になり、要求は 127.0.0.1:RelayPort の上流に中継される。
 	RelayPort int
 }
@@ -100,7 +100,7 @@ func cageSpec(c cageConfig) bwrap.Spec {
 	if c.PTY {
 		cmd = append(cmd, "--set-ctty")
 	}
-	if c.NonDumpable || c.RelayPort != 0 { // 中継の control (init の標準入力) は、dumpable=0 でなければ、子に奪われる (ADR 0012・0023)
+	if c.NonDumpable || c.RelayPort != 0 { // 中継の control (init の標準入力) は、dumpable=0 でなければ、子に奪われる (ADR 0012・0028)
 		cmd = append(cmd, "--non-dumpable")
 	}
 	if c.RelayPort != 0 {
