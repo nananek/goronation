@@ -23,6 +23,7 @@
 | [0015](0015-chat-ui-display.md) | チャット画面の表示 (読む側): textContent だけ・危険な文字の印・再接続・項目の上限 (M1.5) | 採用 |
 | [0016](0016-chat-ui-write.md) | チャット画面の書く側: 送信・終了・権限の承認 (M1.5) | 採用 |
 | [0017](0017-chat-start-and-permission-mode.md) | チャットの開始の入口・E2E・権限モード (M1.5) | 採用 |
+| [0018](0018-opencode-serve-adapter.md) | opencode アダプタ (serve 方式) の設計: 認証・中継・Landlock・Stream の形 (M2) | 採用 |
 
 ## 書き方
 
