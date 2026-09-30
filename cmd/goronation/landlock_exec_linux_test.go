@@ -43,6 +43,8 @@ func bpfRun(t *testing.T, arch, nr uint32, args [6]uint64) uint32 {
 				}
 				a = uint32(args[i])
 			}
+		case bpfAnd:
+			a &= in.K
 		case bpfJeq:
 			if a == in.K {
 				pc += int(in.Jt)
@@ -81,10 +83,29 @@ func TestSeccompProgramRules(t *testing.T) {
 		args    [6]uint64
 		want    uint32
 	}{
-		{"socket MPTCP", auditArchX86_64, sysSocket, x(2, 1, ipprotoMPTCP), deny},
+		{"socket MPTCP", auditArchX86_64, sysSocket, x(2, 1, 262), deny},
+		{"socket MPTCP (AF_INET6)", auditArchX86_64, sysSocket, x(10, 1, 262), deny},
+		{"socket SCTP (SOCK_STREAM・protocol 132)", auditArchX86_64, sysSocket, x(2, 1, 132), deny},
+		{"socket SCTP (SOCK_SEQPACKET・protocol 0)", auditArchX86_64, sysSocket, x(2, 5, 0), deny},
+		{"socket SCTP (SOCK_SEQPACKET|SOCK_CLOEXEC・AF_INET6)", auditArchX86_64, sysSocket, x(10, 5|0x80000, 132), deny},
+		{"socket DCCP (SOCK_DCCP・protocol 0)", auditArchX86_64, sysSocket, x(2, 6, 0), deny},
+		{"socket UDP", auditArchX86_64, sysSocket, x(2, 2, 0), deny},
+		{"socket UDP (protocol 17・AF_INET6・SOCK_NONBLOCK)", auditArchX86_64, sysSocket, x(10, 2|0x800, 17), deny},
+		{"socket UDP-Lite", auditArchX86_64, sysSocket, x(2, 2, 136), deny},
+		{"socket raw", auditArchX86_64, sysSocket, x(2, 3, 255), deny},
+		{"socket ICMP (ping socket)", auditArchX86_64, sysSocket, x(2, 2, 1), deny},
+		{"socket AF_PACKET", auditArchX86_64, sysSocket, x(17, 3, 0), deny},
+		{"socket AF_VSOCK", auditArchX86_64, sysSocket, x(40, 1, 0), deny},
+		{"socket AF_SMC", auditArchX86_64, sysSocket, x(43, 1, 0), deny},
+		{"socket AF_UNIX (stream)", auditArchX86_64, sysSocket, x(1, 1, 0), allow},
+		{"socket AF_UNIX (dgram)", auditArchX86_64, sysSocket, x(1, 2, 0), allow},
+		{"socket AF_NETLINK (raw)", auditArchX86_64, sysSocket, x(16, 3, 0), allow},
+		{"socket TCP (SOCK_NONBLOCK|SOCK_CLOEXEC・AF_INET6)", auditArchX86_64, sysSocket, x(10, 1|0x800|0x80000, 0), allow},
+		{"socket TCP (type の上位 32 bit はごみ)", auditArchX86_64, sysSocket, x(2, 0xdead<<32|1, 6), allow},
+		{"socket MPTCP (type・protocol の上位 32 bit はごみ)", auditArchX86_64, sysSocket, x(2, 0xdead<<32|1, 0xbeef<<32|262), deny},
 		{"socket TCP", auditArchX86_64, sysSocket, x(2, 1, 6), allow},
 		{"socket protocol 0", auditArchX86_64, sysSocket, x(2, 1, 0), allow},
-		{"socket MPTCP (上位 32 bit はごみ)", auditArchX86_64, sysSocket, x(2, 1, 0xdead<<32|ipprotoMPTCP), deny},
+		{"socket MPTCP (上位 32 bit はごみ)", auditArchX86_64, sysSocket, x(2, 1, 0xdead<<32|262), deny},
 		{"sendto MSG_FASTOPEN", auditArchX86_64, sysSendto, x(3, 0, 0, msgFastopen), deny},
 		{"sendto MSG_FASTOPEN と他", auditArchX86_64, sysSendto, x(3, 0, 0, msgFastopen|0x4000), deny},
 		{"sendto 通常", auditArchX86_64, sysSendto, x(3, 0, 0, 0x4000), allow},
@@ -290,6 +311,32 @@ func init() {
 	helpers["landlock-probe"] = landlockProbe
 }
 
+// probeSockets は、landlockProbe が試す socket。probeSocketWant は、landlock-exec の下での期待値 (許可リスト。ADR 0020)。
+var probeSockets = []struct {
+	name               string
+	domain, typ, proto int
+}{
+	{"socket-sctp", syscall.AF_INET, syscall.SOCK_STREAM, 132},
+	{"socket-sctp-seqpacket", syscall.AF_INET, syscall.SOCK_SEQPACKET, 0},
+	{"socket-dccp", syscall.AF_INET, 6, 0},
+	{"socket-udp", syscall.AF_INET, syscall.SOCK_DGRAM, 0},
+	{"socket-udp6", syscall.AF_INET6, syscall.SOCK_DGRAM | syscall.SOCK_NONBLOCK, 0},
+	{"socket-udplite", syscall.AF_INET, syscall.SOCK_DGRAM, 136},
+	{"socket-raw", syscall.AF_INET, syscall.SOCK_RAW, 255},
+	{"socket-vsock", 40, syscall.SOCK_STREAM, 0},
+	{"socket-unix", syscall.AF_UNIX, syscall.SOCK_STREAM, 0},
+	{"socket-unix-dgram", syscall.AF_UNIX, syscall.SOCK_DGRAM, 0},
+	{"socket-netlink", syscall.AF_NETLINK, syscall.SOCK_RAW, syscall.NETLINK_ROUTE},
+	{"socket-tcp6", syscall.AF_INET6, syscall.SOCK_STREAM | syscall.SOCK_CLOEXEC, 0},
+}
+
+var probeSocketWant = map[string]string{
+	"socket-sctp": "operation not permitted/1", "socket-sctp-seqpacket": "operation not permitted/1", "socket-dccp": "operation not permitted/1",
+	"socket-udp": "operation not permitted/1", "socket-udp6": "operation not permitted/1", "socket-udplite": "operation not permitted/1",
+	"socket-raw": "operation not permitted/1", "socket-vsock": "operation not permitted/1",
+	"socket-unix": "OK", "socket-unix-dgram": "OK", "socket-netlink": "OK", "socket-tcp6": "OK",
+}
+
 // landlockProbe は、landlock-exec の下で動く子: 引数 (許可ポート・許可外ポート) に対して、試した結果を "名前 => 結果" の行で出す。
 func landlockProbe(args []string) int {
 	okPort, badPort := args[0], args[1]
@@ -351,6 +398,14 @@ func landlockProbe(args []string) int {
 		syscall.Close(fd)
 	}
 	out("socket-mptcp", err)
+	// TCP 以外の inet の socket (Landlock の TCP の connect の制限が見ない経路)。許可リストで、全部 EPERM。unix・netlink は通る。
+	for _, c := range probeSockets {
+		fd, err := syscall.Socket(c.domain, c.typ, c.proto)
+		if err == nil {
+			syscall.Close(fd)
+		}
+		out(c.name, err)
+	}
 	// MSG_FASTOPEN の sendto (許可外のポートへ)。
 	if fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0); err == nil {
 		bp, _ := strconv.Atoi(badPort)
@@ -505,6 +560,9 @@ func TestLandlockExecRestrictsRealProcess(t *testing.T) {
 		"seccomp":                   "2",
 		"grandchild-connect-denied": "permission denied",
 	}
+	for k, w := range probeSocketWant {
+		want[k] = w
+	}
 	for k, w := range want {
 		if got[k] != w {
 			t.Errorf("%s = %q, want %q (全体: %v)", k, got[k], w, got)
@@ -536,7 +594,7 @@ func TestLandlockProbeWithoutLandlockExecIsUnrestricted(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(out)
-	for _, w := range []string{"connect-denied => OK", "seccomp => 0", "io_uring_setup => "} {
+	for _, w := range []string{"connect-denied => OK", "seccomp => 0", "io_uring_setup => ", "socket-udp => OK", "socket-unix => OK"} {
 		if !strings.Contains(s, w) {
 			t.Errorf("制限なしの出力に %q が無い:\n%s", w, s)
 		}
@@ -626,13 +684,17 @@ func TestLandlockExecInBwrapCage(t *testing.T) {
 			got[k] = v
 		}
 	}
-	for k, w := range map[string]string{
+	want := map[string]string{
 		"bind-listen": "OK", "connect-allowed": "OK", "connect-denied": "permission denied/13",
 		"socket-mptcp": "operation not permitted/1", "sendto-fastopen": "operation not permitted/1",
 		"sendmsg-fastopen": "operation not permitted/1", "sendmmsg-fastopen": "operation not permitted/1",
 		"io_uring_setup": "operation not permitted/1", "nonewprivs": "1", "seccomp": "2",
 		"grandchild-connect-denied": "permission denied",
-	} {
+	}
+	for k, w := range probeSocketWant {
+		want[k] = w
+	}
+	for k, w := range want {
 		if got[k] != w {
 			t.Errorf("%s = %q, want %q\n%s", k, got[k], w, out)
 		}

@@ -9,7 +9,8 @@ import (
 
 // seccomp の BPF (ADR 0020 決定 3)。既定は ALLOW。次を EPERM にする (Landlock の TCP の connect の制限が止めない経路の予防):
 //   - arch が x86_64 以外・x32 の syscall (syscall 番号の解釈が変わるので、フィルターを迂回される)
-//   - socket の protocol が IPPROTO_MPTCP (262)
+//   - socket は、許可リスト: AF_UNIX・AF_NETLINK は通し、AF_INET・AF_INET6 は「TCP (SOCK_STREAM・protocol 0 か 6)」だけ通す。
+//     ほかは全部 EPERM (MPTCP・SCTP・DCCP・UDP・UDP-Lite・raw・AF_VSOCK・AF_SMC など、Landlock の TCP の connect の制限が見ない経路。ADR 0020)
 //   - sendto・sendmsg・sendmmsg の flags に MSG_FASTOPEN
 //   - io_uring_setup・io_uring_enter・io_uring_register (seccomp を通らずに socket の作成・送信ができる)
 const (
@@ -22,7 +23,14 @@ const (
 	sysSendmmsg    = 307
 	sysIoUringBase = 425 // io_uring_setup=425・enter=426・register=427
 
-	ipprotoMPTCP = 262
+	afUnix    = 1
+	afInet    = 2
+	afInet6   = 10
+	afNetlink = 16
+
+	sockTypeMask = 0xf // socket の type に ORされる SOCK_NONBLOCK・SOCK_CLOEXEC を落とす
+	sockStream   = 1
+	ipprotoTCP   = 6
 	msgFastopen  = 0x20000000
 
 	seccompRetAllow = 0x7fff0000
@@ -34,6 +42,7 @@ const (
 	offArch = 4
 
 	bpfLdAbs = 0x20 // BPF_LD | BPF_W | BPF_ABS
+	bpfAnd   = 0x54 // BPF_ALU | BPF_AND | BPF_K
 	bpfJeq   = 0x15 // BPF_JMP | BPF_JEQ | BPF_K
 	bpfJge   = 0x35 // BPF_JMP | BPF_JGE | BPF_K
 	bpfJset  = 0x45 // BPF_JMP | BPF_JSET | BPF_K
@@ -67,8 +76,17 @@ func seccompSteps() []bpfStep {
 		{code: bpfJeq, k: sysIoUringBase + 2, jt: "deny"},
 		{code: bpfRet, k: seccompRetAllow},
 
-		{label: "socket", code: bpfLdAbs, k: offArg(2)}, // protocol
-		{code: bpfJeq, k: ipprotoMPTCP, jt: "deny", jf: "allow"},
+		{label: "socket", code: bpfLdAbs, k: offArg(0)}, // domain
+		{code: bpfJeq, k: afUnix, jt: "allow"},
+		{code: bpfJeq, k: afNetlink, jt: "allow"},
+		{code: bpfJeq, k: afInet, jt: "inet"},
+		{code: bpfJeq, k: afInet6, jt: "inet", jf: "deny"},
+		{label: "inet", code: bpfLdAbs, k: offArg(1)}, // type
+		{code: bpfAnd, k: sockTypeMask},
+		{code: bpfJeq, k: sockStream, jf: "deny"},
+		{code: bpfLdAbs, k: offArg(2)}, // protocol
+		{code: bpfJeq, k: 0, jt: "allow"},
+		{code: bpfJeq, k: ipprotoTCP, jt: "allow", jf: "deny"},
 		{label: "sendto", code: bpfLdAbs, k: offArg(3)}, // flags
 		{code: bpfJset, k: msgFastopen, jt: "deny", jf: "allow"},
 		{label: "sendmsg", code: bpfLdAbs, k: offArg(2)},
