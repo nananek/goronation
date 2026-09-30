@@ -306,6 +306,12 @@ func fakeClaude(args []string) int {
 		}
 	case "relay-upstream":
 		return fakeRelayUpstream(args[1:])
+	case "landlock-incage": // landlock_exec_linux_test.go
+		return fakeLandlockInCage()
+	case "landlock-incage-probe":
+		return landlockProbe(args[1:])
+	case "landlock-grandchild":
+		return landlockGrandchild(args[1:])
 	case "spoof":
 		return fakeSpoof(args[1:])
 	case "spoof-child":

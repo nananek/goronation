@@ -18,6 +18,7 @@ const usage = `使い方: goronation <サブコマンド> [引数...]
   serve     UDS 越しにだけ繋がる、端末ビューの WebSocket サーバーを起こす (goronation serve -h。goronation web が使う)
   web       WebAuthn でログインしたブラウザからセッションを選ぶ/始める、常駐の HTTP サーバーを起こす (goronation web -h)
   init      檻の中でリレーを起こし、子プロセスを起動する (goronation init -h。goronation run が使う)
+  landlock-exec  Landlock (TCP の connect の制限)・seccomp・no_new_privs を掛けてから、コマンドを exec する (檻の中。init が使う。ADR 0020)
 `
 
 func main() {
@@ -49,6 +50,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return runWeb(args[1:], stdout, stderr)
 	case "init":
 		return runInit(args[1:], stderr)
+	case "landlock-exec":
+		return runLandlockExec(args[1:], stderr)
 	case "-h", "--help":
 		fmt.Fprint(stderr, usage)
 		return 0
