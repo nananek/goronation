@@ -1727,3 +1727,163 @@ test('省略の検出 (S7): 1 つだけ飛ぶ (first_seq = lastSeq + 2) も印�
   assert.strictEqual(mk(12, 11).omitted, false, '連続 (lastSeq = 11): 印なし');
   assert.strictEqual(mk(13, 11).omitted, true, 'seq 12 が無い: 印');
 });
+
+// ---- ⑤b-3a: サブエージェントの帰属 (origin。ADR 0045) ----
+
+// opencode の子 session の v0 の列 (origin つき)。v0 の行 (type・durable・origin・data) に seq を付けて、Event の JSON にする。
+// (chatFixtures は claude の golden だけから作るので、ここでは、v0 の列を直接読む)
+const SUBAGENT_V0 = path.join(__dirname, '..', '..', '..', '..', 'agent', 'opencode', 'testdata', 'subagent.v0.ndjson');
+function subagentEvents() {
+  return fs.readFileSync(SUBAGENT_V0, 'utf8').split('\n').filter(Boolean).map((l, i) => {
+    const o = JSON.parse(l);
+    const e = ev(i, o.type, o.data);
+    if (o.origin !== undefined) e.origin = o.origin;
+    return e;
+  });
+}
+const itemTexts = (h) => h.doc.byId.log.children.map((c) => c);
+const hasClass = (e, c) => e.className.split(' ').includes(c);
+
+test('origin: v0 の列 (子 session)。子の項目は、ラベル・インデントの class・「エージェントの申告」つき。メインの項目には付かない', () => {
+  const events = subagentEvents();
+  assert.strictEqual(events.filter((e) => e.origin !== undefined).length, 8, 'origin 行の数 (fixture の前提)');
+  const h = harness();
+  h.hello();
+  for (const e of events) h.fire(e);
+  h.runTimers();
+  const kids = itemTexts(h).filter((e) => hasClass(e, 'item-sub'));
+  assert.strictEqual(kids.length, 5, '子の項目が、サブエージェントとして出ている (' + kids.length + ')');
+  for (const k of kids) assert.ok(k.textContent.includes('サブエージェント ses_2') && k.textContent.includes('エージェントの申告。検証されていない'), k.textContent);
+  const mains = itemTexts(h).filter((e) => !hasClass(e, 'item-sub'));
+  assert.ok(mains.length > 0);
+  for (const m of mains) assert.ok(!m.textContent.includes('サブエージェント ses_2'), 'メインの項目に、帰属が付いた: ' + m.textContent);
+  // 子の発言は、子の項目 (メインの発言に見えない)
+  const kidText = itemTexts(h).find((e) => hasClass(e, 'item-assistant') && e.textContent.includes('The directory is empty.'));
+  assert.ok(hasClass(kidText, 'item-sub'));
+  const mainText = itemTexts(h).find((e) => hasClass(e, 'item-assistant') && e.textContent.includes('The subagent finished.'));
+  assert.ok(!hasClass(mainText, 'item-sub'));
+});
+
+test('origin: 権限ダイアログに「要求元」を、tool: の行の上に出す。子は id と起動した tool 呼び出し、メインは「メインのエージェント」', () => {
+  const events = subagentEvents();
+  const h = harness();
+  h.hello();
+  const seen = {};
+  for (const e of events) {
+    h.fire(e);
+    h.runTimers();
+    if (e.type === 'permission.requested') seen[e.data.request_id] = dialogEls(h).map((d) => d.textContent).join('\n');
+    if (e.type === 'permission.requested') {
+      const dlg = dialogEls(h)[dialogEls(h).length - 1];
+      const rows = dlg.children.map((c) => c.className);
+      assert.ok(rows.findIndex((c) => c.startsWith('dialog-origin')) >= 0 && rows.findIndex((c) => c.startsWith('dialog-origin')) < rows.indexOf('dialog-tool'), '要求元の行が、tool: の行の上にない: ' + rows);
+    }
+  }
+  assert.ok(seen.per_1.includes('要求元: メインのエージェント'), seen.per_1);
+  assert.ok(!seen.per_1.includes('要求元: サブエージェント'));
+  assert.ok(seen.per_2.includes('要求元: サブエージェント ses_2 (起動した tool 呼び出し: call_sub)'), seen.per_2);
+  assert.ok(seen.per_2.includes('エージェントの申告。検証されていない'));
+  assert.ok(!seen.per_2.includes('要求元: メインのエージェント'));
+});
+
+test('origin: form のダイアログにも「要求元」を出す (メインにも)', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'form.requested', FORM('f-main')));
+  const kid = ev(1, 'form.requested', FORM('f-kid'));
+  kid.origin = {id: 'ses_9', parent: 'call_x'};
+  h.fire(kid);
+  h.runTimers();
+  const [a, b] = dialogEls(h);
+  assert.ok(a.textContent.includes('要求元: メインのエージェント') && !a.textContent.includes('サブエージェント'));
+  assert.ok(b.textContent.includes('要求元: サブエージェント ses_9 (起動した tool 呼び出し: call_x)'));
+});
+
+test('origin: 壊れた origin (型違い・巨大・制御文字・<script>・欠けた id) は、サブエージェント扱い。値は出さず、textContent だけ。メインに見せない', () => {
+  const evil = '<script>alert(1)</script>';
+  const bads = [
+    'main', 5, true, [], ['ses'], {}, {id: 1}, {id: ''}, {id: 'x', parent: 7}, {id: {a: 1}}, {id: 'x', parent: {a: 1}},
+    {id: 'a'.repeat(100000), parent: 'p'}, {id: 'x', parent: 'p'.repeat(100000)}, {id: evil + 'a'.repeat(400)}, 0, '', false,
+  ];
+  for (const o of bads) {
+    const st = core.createState();
+    core.applyHello(st, {generation: G1, first_seq: 0});
+    const e = ev(0, 'permission.requested', pendingReq('r1'));
+    e.origin = o;
+    assert.strictEqual(core.applyEvent(st, e), true);
+    assert.strictEqual(st.items[0].origin.bad, true, JSON.stringify(o).slice(0, 60));
+    const h = harness();
+    h.hello();
+    h.fire(e);
+    h.runTimers();
+    const dlg = dialogEls(h)[0].textContent;
+    assert.ok(dlg.includes('要求元: サブエージェント (帰属が壊れていて') && !dlg.includes('要求元: メインのエージェント'), dlg.slice(0, 200));
+    assert.ok(!dlg.includes('aaaaaaaa') && !dlg.includes('script'), '壊れた値を出した');
+    assert.ok(hasClass(h.doc.byId.log.children[0], 'item-sub') && hasClass(h.doc.byId.log.children[0], 'item-sub-bad'));
+    for (const t of ['script', 'img', 'iframe', 'a', 'style']) assert.ok(!h.doc.created.includes(t), t);
+  }
+  // 無い (undefined)・null だけがメイン
+  for (const o of [undefined, null]) assert.strictEqual(core.normalizeOrigin(o), null);
+});
+
+test('origin: 正しい形でも、id・parent の制御文字・双方向制御は印になり、<script> は文字のまま (textContent だけ)', () => {
+  const st = core.createState();
+  core.applyHello(st, {generation: G1, first_seq: 0});
+  const e = ev(0, 'message.text', {text: 'hi'});
+  e.origin = {id: 'ses‮<script>\u0007', parent: 'c​x'};
+  core.applyEvent(st, e);
+  const o = st.items[0].origin;
+  assert.strictEqual(o.bad, false);
+  assert.ok(o.id.includes('<U+202E>') && o.id.includes('<U+0007>') && o.id.includes('<script>'), o.id);
+  assert.ok(o.parent.includes('<U+200B>'), o.parent);
+  const h = harness();
+  h.hello();
+  h.fire(e);
+  h.runTimers();
+  assert.ok(!h.doc.created.includes('script'));
+  assert.ok(!h.doc.byId.log.textContent.includes('‮'));
+  assert.ok(hasClass(h.doc.byId.log.children[0], 'item-sub') && !hasClass(h.doc.byId.log.children[0], 'item-sub-bad'));
+});
+
+test('origin: サブエージェントの出力は、状態機械 (ターン・権限モード) を動かさない。同じ call_id でも、メインの tool の枠を書き換えない', () => {
+  const st = core.createState();
+  core.applyHello(st, {generation: G1, first_seq: 0});
+  core.applyEvent(st, ev(0, 'session.started', {agent: 'claude', permission_mode: 'default'}));
+  core.applyEvent(st, ev(1, 'turn.started', {text: 'go'}));
+  const sub = {id: 'ses_2', parent: 'call_main'};
+  const k1 = ev(2, 'session.started', {agent: 'evil', permission_mode: 'default'}); k1.origin = sub;
+  const k2 = ev(3, 'turn.completed', {stop_reason: 'end_turn'}); k2.origin = sub;
+  core.applyEvent(st, k1);
+  core.applyEvent(st, k2);
+  assert.strictEqual(st.turnActive, true, '子の turn.completed で、メインのターンが終わった');
+  core.applyEvent(st, ev(4, 'tool.call', {call_id: 'c1', name: 'main-tool', status: 'in_progress', input: {}}));
+  const k3 = ev(5, 'tool.update', {call_id: 'c1', status: 'completed', output: 'FORGED'}); k3.origin = sub;
+  core.applyEvent(st, k3);
+  const mainTool = st.items.find((i) => i.kind === 'tool' && i.name === 'main-tool');
+  assert.strictEqual(mainTool.status, 'in_progress');
+  assert.strictEqual(mainTool.output, null, '子が、メインの tool の出力を書き換えた');
+  assert.ok(st.items.some((i) => i.kind === 'tool' && i.origin !== null && i.output.text === 'FORGED'), '子の更新は、子の項目として出る');
+  // 子の session.started で、権限モードの警告が消えない (メインが 'auto' のとき)
+  const st2 = core.createState();
+  core.applyHello(st2, {generation: G1, first_seq: 0});
+  core.applyEvent(st2, ev(0, 'session.started', {agent: 'claude', permission_mode: 'auto'}));
+  const k4 = ev(1, 'session.started', {agent: 'x', permission_mode: 'default'}); k4.origin = sub;
+  core.applyEvent(st2, k4);
+  assert.strictEqual(st2.permissionMode, 'auto');
+});
+
+test('origin: 承認の関門は、帰属で変わらない (子の要求も、見るまで許可できない。メインと同じ)', () => {
+  const h = harness();
+  h.hello();
+  const e = ev(0, 'permission.requested', pendingReq('r-kid', {input: {k: 'x'.repeat(3000)}}));
+  e.origin = {id: 'ses_2', parent: 'c'};
+  h.fire(e);
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  assert.ok(dlg.textContent.includes('要求元: サブエージェント ses_2'));
+  const pre = scrollable(h, dlg, 3000, 100);
+  h.app.render();
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '枠を見ていないのに、許可できる');
+  readAll(h, pre);
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, false, '全部見たのに、許可できない (関門が、帰属で変わった)');
+});

@@ -1,6 +1,6 @@
 # 0045. サブエージェントの出力には、帰属 (origin) を付ける (M2)
 
-- 状態: 採用
+- 状態: 採用 (UI は⑤b-3a で実装)
 - 日付: 2026-10-01
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1) (M1.5 の「新しい課題」)、ADR 0011・0016・0041、`spec/v0/envelope.go`
 
