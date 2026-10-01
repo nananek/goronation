@@ -107,7 +107,8 @@ func TestApplyValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := []Op{
-		{Append: rows(7, 9, 4)}, // 増えていない
+		{Append: rows(7, 9, 4)},                         // 増えていない
+		{Append: []Row{{Seq: 3, Payload: []byte("x")}}}, // 古い seq (重複ではないが、減る)
 		{Append: []Row{{Seq: 9, Payload: []byte("x")}, {Seq: 9, Payload: []byte("y")}}},
 		{Append: []Row{{Seq: 9}}}, // 空
 		{Append: []Row{{Seq: 9, Payload: make([]byte, DefaultMaxPayload+1)}}},
@@ -703,3 +704,28 @@ func TestGenerationValidation(t *testing.T) {
 }
 
 var _ = fmt.Sprint
+
+func TestCheckFileRejectsWidePerms(t *testing.T) {
+	dir := t.TempDir()
+	for _, c := range []struct {
+		mode os.FileMode
+		ok   bool
+	}{{0o600, true}, {0o400, true}, {0o640, false}, {0o604, false}, {0o644, false}} {
+		p := filepath.Join(dir, fmt.Sprintf("f%o", c.mode))
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		os.Chmod(p, c.mode)
+		fi, _ := os.Lstat(p)
+		if err := checkFile(fi); (err == nil) != c.ok {
+			t.Errorf("mode %o: %v", c.mode, err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(dir, "f600"), filepath.Join(dir, "lnk")); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Lstat(filepath.Join(dir, "lnk"))
+	if checkFile(fi) == nil {
+		t.Error("symlink を通常のファイルとして通した")
+	}
+}
