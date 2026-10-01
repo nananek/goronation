@@ -1208,6 +1208,8 @@ test('詳細: 全項目を切らずに見せていれば、許可できる。見
   assert.strictEqual(it.details.items[1].kind, 'text');
   const lines = it.details.text.split('\n');
   assert.deepStrictEqual(lines.filter((l) => l.startsWith('■')), ['■ command [command]', '■ x']); // 本文の「■ path」は、字下げされ、見出しにならない
+  const first = stateWith([ev(0, 'permission.requested', permWithDetails('r2', {details: [{label: 'x', text: '■ path [path]', kind: 'text'}]}))]).items[0];
+  assert.deepStrictEqual(first.details.text.split('\n').filter((l) => l.startsWith('■')), ['■ x'], '本文の 1 行目が、見出しになった');
   assert.strictEqual(it.summary, 'Bash: ls');
   assert.strictEqual(it.contentHash, 'sha256:' + 'ab'.repeat(32));
 });
