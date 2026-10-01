@@ -1551,3 +1551,30 @@ test('golden: ask-user-question は form の項目になり、全部の form を
   assert.ok(p.summary !== '' && p.details.has && core.shownFully(p), 'claude の承認に、要約・詳細が無い');
   assert.ok(/^sha256:[0-9a-f]{64}$/.test(p.contentHash));
 });
+
+// 詳細の枠が小さく (収まって) ても、下の領域 (#dialogs。高さ 40vh でスクロールする) の外に出ていて見えないうちは、許可できない。
+// 許可のボタンは枠より上にあり、エージェントが決める行 (summary・tool 名・kind・title) が長いと、ボタンが見えて、詳細の枠は見えない
+// (実ブラウザ (Firefox 1280x800) で、許可が有効・枠が画面の外、を測った)。hiddenPart は、枠が溢れるときだけ、見た範囲・時間を数える。
+test('許可の関門: 収まる詳細の枠も、画面に出ていないうちは許可できず、出して待てば許可できる', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'permission.requested', {request_id: 'r', tool_name: 'Bash', kind: 'execute', input: {command: 'ls'}, details: [{label: 'command', text: 'ls', kind: 'command'}], content_hash: 'sha256:aa'}));
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  const pre = dlg.children.find((c) => c.tagName === 'pre');
+  pre.scrollHeight = 20; // 収まる (溢れない)
+  pre.clientHeight = 20;
+  h.doc.byId.dialogs.getBoundingClientRect = () => ({top: 0, bottom: 280});
+  pre.getBoundingClientRect = () => ({top: 500, bottom: 520}); // #dialogs の外 (下)
+  const refresh = () => { for (const f of pre.listeners.scroll || []) f(); };
+  refresh();
+  h.advance(1000);
+  refresh();
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '枠が画面に出ていないのに、許可できる');
+  assert.strictEqual(findBtn(dlg, 'deny').disabled, false);
+  pre.getBoundingClientRect = () => ({top: 100, bottom: 120}); // 画面に出す
+  refresh();
+  h.advance(1000);
+  refresh();
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, false, '枠を出して待っても、許可できない');
+});

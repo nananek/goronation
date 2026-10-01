@@ -309,7 +309,7 @@
     // observe は、直前の表示範囲に、経過時間 (上限つき) を足し、いまの表示範囲を、次の起点にする。スクロールのたびと、TICK_MS ごとに呼ぶ。
     function observe(d) {
       const t = nowMs();
-      const n = Math.ceil(d.pre.scrollHeight / CELL_PX);
+      const n = Math.max(1, Math.ceil(d.pre.scrollHeight / CELL_PX));
       while (d.cells.length < n) d.cells.push(0);
       d.cells.length = n;
       if (d.view) {
@@ -335,7 +335,9 @@
     // hiddenPart は、input の枠が、スクロールしないと見えない部分を持ち、その全体を、まだ十分な時間、画面に出していないか。枠の高さは限ってあるので、字数が
     // 上限以内でも起きる (エージェントが、key の順を決められる: 危険な内容を、途中や末尾に置ける)。
     function hiddenPart(d) {
-      if (d.pre === null || d.pre.scrollHeight <= d.pre.clientHeight + 1) return false;
+      if (d.pre === null) return false;
+      // 溢れない枠も、画面に完全に出ている時間を数える (許可ボタンが見えていても、枠が領域の外に押し出されることがある)。位置の API が無い環境 (試験) だけ、免除。
+      if (d.pre.scrollHeight <= d.pre.clientHeight + 1 && (typeof d.pre.getBoundingClientRect !== 'function' || typeof dialogsEl.getBoundingClientRect !== 'function')) return false;
       observe(d);
       if (dwellProgress(d) >= 1) return false;
       scheduleTick(d);
@@ -366,7 +368,7 @@
       const can = dialogCanAnswer(d, item);
       d.approve.disabled = !can || !approvable(item, d);
       d.deny.disabled = !can;
-      if (d.hint) d.hint.textContent = core.shownFully(item) && hiddenPart(d) ? '内容が枠に収まらない。上から下まで、途切れなくスクロールし、どの部分も 0.5 秒以上、画面に出すと、許可できる (いま ' + Math.floor(dwellProgress(d) * 100) + '%。一気に飛ばす・速く送ると、足りない)' : '';
+      if (d.hint) d.hint.textContent = core.shownFully(item) && hiddenPart(d) ? '内容の枠が、画面に完全に出ていない・収まらない。枠の全体を、上から下まで、途切れなく、どの部分も 0.5 秒以上、画面に出すと、許可できる (いま ' + Math.floor(dwellProgress(d) * 100) + '%。一気に飛ばす・速く送ると、足りない)' : '';
     }
 
     async function answer(item, d, outcome) {

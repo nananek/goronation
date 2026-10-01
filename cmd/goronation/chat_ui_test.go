@@ -296,7 +296,7 @@ func TestChatUINode(t *testing.T) {
 	dir := t.TempDir()
 	chatFixtures(t, dir)
 	ctx := t.Context()
-	cmd := exec.CommandContext(ctx, node, "--test", filepath.Join("assets", "chat", "chat.test.js"))
+	cmd := exec.CommandContext(ctx, node, "--test", filepath.Join("assets", "chat", "chat.test.js"), filepath.Join("assets", "chat", "chat.invisible.test.js"))
 	cmd.Env = append(os.Environ(), "GORO_CHAT_FIXTURES="+dir)
 	done := make(chan struct{})
 	var out []byte

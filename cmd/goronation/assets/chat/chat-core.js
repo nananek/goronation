@@ -34,7 +34,16 @@
   const FIELD_TYPES = new Set(['text', 'select', 'multiselect']); // form のフィールドの type (知らない type があれば、答えられない)
 
   // 表示に危険な文字の判定 (コードポイントで持つ: 原稿に、見えない文字を書かない)。
+  // Unicode の文字クラス: 書式制御 (Cf)・既定で無視される文字は、手で挙げた範囲 (下) に漏れがあるので、全て印にする。異体字選択子 (U+FE00-FE0F) は、
+  // 絵文字に要るので、厳しい判定 (isDangerousStrict) だけ。
+  const INVISIBLE_RE = /^[\p{Cf}\p{Default_Ignorable_Code_Point}]$/u;
+  const STRICT_EXTRA_RE = /^[\p{Z}\p{Co}]$/u;
+
   function isDangerous(cp) {
+    if (cp >= 0x20 && cp < 0x7f) return false; // ASCII の表示できる文字 (速い道)
+    if (cp < 0xd800 || cp > 0xdfff) { // 対になっていないサロゲートは、下で印にする
+      if ((cp < 0xfe00 || cp > 0xfe0f) && INVISIBLE_RE.test(String.fromCodePoint(cp))) return true;
+    }
     if (cp < 0x20) return cp !== 0x0a && cp !== 0x09;          // C0 (改行・タブは残す)
     if (cp >= 0x7f && cp <= 0x9f) return true;                 // DEL・C1
     if (cp === 0x00ad || cp === 0x034f) return true;           // 軟ハイフン・結合用の不可視
@@ -59,6 +68,7 @@
   // 異体字選択子などを、正当に含むので、この判定を使わない。
   function isDangerousStrict(cp) {
     if (isDangerous(cp)) return true;
+    if (cp > 0x7f && STRICT_EXTRA_RE.test(String.fromCodePoint(cp))) return true; // 空白に見える文字・私用領域
     if (cp === 0x0a || cp === 0x09 || cp === 0x00a0 || cp === 0x1680) return true;
     if (cp >= 0x2000 && cp <= 0x200a) return true;
     if (cp === 0x202f || cp === 0x205f || cp === 0x3000) return true;
