@@ -118,6 +118,11 @@ func (f *pendingForm) answersInput(input json.RawMessage, answer map[string]v0.F
 	if err := json.Unmarshal(input, &in); err != nil || in == nil {
 		return nil, errors.New("claude: 保持した input がオブジェクトでない")
 	}
+	for k := range in { // 異形のキー (Answers・ANSWERS・ſ など。Go の読みは simple fold で同一視) は残さない: 利用者の回答でない answers を、claude に渡さない
+		if k != "answers" && strings.EqualFold(k, "answers") {
+			delete(in, k)
+		}
+	}
 	a, err := marshal(answers)
 	if err != nil {
 		return nil, err

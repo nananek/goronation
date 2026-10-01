@@ -444,7 +444,7 @@ func TestFormsShareThePendingLimit(t *testing.T) {
 func TestFormAnswersOverrideInputAnswers(t *testing.T) {
 	s := Adapter{}.NewStream().(*Stream)
 	line := `{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"t","input":{"questions":[` +
-		`{"question":"one","header":"h","options":[{"label":"a","description":""},{"label":"b","description":""}]}],"answers":{"one":"b","forged":"x"}}}}`
+		`{"question":"one","header":"h","options":[{"label":"a","description":""},{"label":"b","description":""}]}],"answers":{"one":"b","forged":"x"},"Answers":{"one":"c"},"ANSWERS":{},"anſwers":{}}}}`
 	if es, err := s.DecodeFrame([]byte(line)); err != nil || es[0].Type != v0.TypeFormRequested {
 		t.Fatalf("%v %v", err, types(es))
 	}
@@ -452,7 +452,13 @@ func TestFormAnswersOverrideInputAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := mustJSON(responseOf(t, out)["updatedInput"].(obj)["answers"]); got != `{"one":"a"}` {
+	ui := responseOf(t, out)["updatedInput"].(obj)
+	if got := mustJSON(ui["answers"]); got != `{"one":"a"}` {
 		t.Fatalf("answers = %s", got)
+	}
+	for _, k := range []string{"Answers", "ANSWERS", "anſwers"} { // 異形のキーも残さない
+		if _, ok := ui[k]; ok {
+			t.Errorf("異形のキー %q が残った", k)
+		}
 	}
 }
