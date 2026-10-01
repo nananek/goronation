@@ -698,10 +698,11 @@ func TestBackfillStoreErrorDegrades(t *testing.T) {
 	fill(t, h, 0, 30)
 	s, _ := h.SubscribeAfter(0)
 	st.mu.Lock()
-	st.rangeErr = errors.New("db closed")
+	st.rangeErr = errors.New("open /home/u/.local/state/goronation/events.db: db closed")
 	st.mu.Unlock()
-	if _, err := s.Backfill.Next(); err == nil {
-		t.Fatal("error を返す")
+	_, err := s.Backfill.Next()
+	if !errors.Is(err, ErrBackfillRead) || strings.Contains(err.Error(), "/home/") {
+		t.Fatalf("固定の error を返す (Store の error の path を呼び手に返さない): %v", err)
 	}
 	waitFor(t, "縮退", func() bool { return p.n.Load() == 1 })
 	if s2, _ := h.SubscribeAfter(0); s2.Resumed() {

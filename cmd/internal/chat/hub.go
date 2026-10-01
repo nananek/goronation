@@ -34,7 +34,7 @@ type HubConfig struct {
 
 	// Store は、耐久イベントログ (nil なら、メモリ上のリングだけ)。Hub は書き手の goroutine を 1 つ起こす (Close のあと WaitStore で終わりを待つ)。
 	Store EventStore
-	// OnDegrade は、耐久化を止めたとき (縮退。最初の 1 回だけ) に、理由つきで呼ぶ (別の goroutine から)。nil でもよい。
+	// OnDegrade は、耐久化を止めたとき (縮退。最初の 1 回だけ) に、理由つきで呼ぶ (別の goroutine から)。reason は Store の error 文字列 (path を含みうる) を含むので、利用者・画面・SSE には出さず、呼び手 (serve) が無害化して使う。nil でもよい。
 	OnDegrade func(reason string)
 	// StoreQueueBytes は、書き込みのキューの上限 (0 なら DefaultStoreQueueBytes。溢れたら縮退)。StoreMaxBytes は、payload の合計の上限
 	// (0 なら DefaultStoreMaxBytes。超えたら古い行を削る)。

@@ -62,6 +62,9 @@ var ErrBadAfter = errors.New("chat: after が、発行していない seq を指
 // ErrBackfillStale は、Backfill を読んでいる最中に GC (Trim) が走った。縮退ではない: 呼び手は接続を閉じ、画面は進んだ after で繋ぎ直す。
 var ErrBackfillStale = errors.New("chat: Backfill の最中に、古い行を削った (繋ぎ直す)")
 
+// ErrBackfillRead は、Backfill が Store から読めなかった。Store の error (path を含みうる) は、呼び手に返さない (OnDegrade の reason にだけ入る)。
+var ErrBackfillRead = errors.New("chat: Store から読めなかった (耐久化を止めた)")
+
 // ErrBadStoredEvent は、Store から読んだ行が、検査を通らない (改ざん・破損)。Hub は耐久化を止める (縮退)。
 var ErrBadStoredEvent = errors.New("chat: Store の行が不正")
 
@@ -452,7 +455,7 @@ func (b *Backfill) Next() ([]Event, error) {
 	rows, err := b.store.Range(b.cursor, b.before, b.batch)
 	if err != nil {
 		b.fail("読み取りの失敗: " + err.Error())
-		return nil, err
+		return nil, ErrBackfillRead
 	}
 	if len(rows) == 0 {
 		b.done = true
