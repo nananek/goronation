@@ -15,7 +15,7 @@
 //
 //   - line-limit: 1 行は DefaultMaxLine (1 MiB) まで。超える行は貯めずに捨てる (LineReader)。opencode の SSE・HTTP の指示も同じ検査を通す (SSEReader・ParseHTTPRequest。ADR 0051)。
 //   - no-raw: Event は Raw を持たず、JSON は 1 行で DefaultMaxEvent (2 MiB) まで。ID・TS・Session・Seq は上書きする (Feed)。
-//   - ring: バイト上限を超えたら古い方から捨てる。Snapshot とライブの境目に、取りこぼしも重複も無い (Hub)。
+//   - ring: バイト上限を超えたら古い方から捨てる。Snapshot とライブの境目に、取りこぼしも重複も無い (Hub)。Store があれば、書き込みは Mutex の外の goroutine で、遅れ・溢れ・押し出しは縮退 (ADR 0027・0053)。SubscribeAfter は DB・リング・ライブの順 (ADR 0024)。
 //   - bind: 承認は要求 ID に束縛し、1 回だけ有効。許可する input は、要求時に保持した値だけ (Conversation。ADR 0011)。
 //   - pin: 未決の permission.requested は、リングから溢れても Snapshot に残る。上限は MaxPendingRequests (Conversation・Hub)。
 //   - expire: 終了・Stop・書き込みの失敗で、未決は全部失効する。タイマーによる失効・自動停止は無い (Conversation)。
@@ -23,7 +23,7 @@
 //
 // # 限界
 //
-//   - Hub は耐久ストアではない (M2 で置き換える)。出力が本物のフレームかは確かめられない (起動の transport が担う。ADR 0010)。
+//   - Store が無い・縮退したときの Hub は、メモリ上のリングだけ (耐久ストアではない。ADR 0053)。出力が本物のフレームかは確かめられない (起動の transport が担う。ADR 0010)。
 //
 // # 関連
 //
