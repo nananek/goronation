@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-10-01",
+  "description": "question の tool: session の permissions で question を allow にした (承認の段が無い)",
+  "events": 36,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "session の permissions に、\"*\" の ask のあとに、question の allow を足すと (あとの規則が勝つ)、question の tool の permission.asked が出ず、form.created が直接出る。順序を逆 (question の allow のあとに \"*\" の ask) にすると、あとの \"*\" が勝ち、permission.asked が出る (採取で確認。2.0.20)。",
+  "opencodeVersion": "2.0.20",
+  "requests": 5,
+  "scene": "question-rule-allow"
+}
