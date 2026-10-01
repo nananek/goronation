@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/nananek/goronation/cmd/internal/chat"
-	v0 "github.com/nananek/goronation/spec/v0"
 )
 
 // 偽の opencode (golden の場面を再生する。fakeopencode_linux_test.go) を、実際の serve --chat の経路 (startServeChatSession → init --relay-control →
@@ -211,14 +210,12 @@ func TestOpencodeChatQuestionForm(t *testing.T) {
 			t.Fatalf("question に承認の段が出た: %s", e.JSON)
 		}
 	}
-	var fv struct {
-		Data v0.FormRequested `json:"data"`
-	}
-	if err := json.Unmarshal(form.JSON, &fv); err != nil {
+	formID := requestIDOf(t, form)
+	var r chat.FormResolve
+	if err := json.Unmarshal([]byte(`{"request_id":"`+formID+`","outcome":"answered","answer":{"q0":"Red"}}`), &r); err != nil {
 		t.Fatal(err)
 	}
-	r := v0.FormResolve{RequestID: fv.Data.RequestID, Outcome: v0.FormAnswered, Answer: map[string]v0.FormValue{"q0": v0.Text("Red")}}
-	if err := conv.ResolveFormIn(conv.Generation(), fv.Data.RequestID, r); err != nil {
+	if err := conv.ResolveFormIn(conv.Generation(), formID, r); err != nil {
 		t.Fatal(err)
 	}
 	ev.waitFor("完了", at, typeIs("turn.completed"))

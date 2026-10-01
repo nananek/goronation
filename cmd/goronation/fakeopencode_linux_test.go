@@ -181,10 +181,16 @@ func serveFakeEvents(w http.ResponseWriter, r *http.Request, lines []string, roo
 	if len(lines) == 0 || !send(lines[0]) {
 		return
 	}
+	late := false // SSE を、session の作成のあとに開いた (実物の opencode は、作成の事象を、その時に繋がっていた SSE にだけ流す)
 	select {
 	case <-created:
-	case <-r.Context().Done():
-		return
+		late = true
+	default:
+		select {
+		case <-created:
+		case <-r.Context().Done():
+			return
+		}
 	}
 	if mode == "noroot" { // root の session.created が、来ない (ほかのイベントだけが流れる)
 		for i := 0; ; i++ {
@@ -201,7 +207,20 @@ func serveFakeEvents(w http.ResponseWriter, r *http.Request, lines []string, roo
 	if mode == "preroot" { // root の前に、偽の承認の要求 (まだ root が分からない)
 		send(fmt.Sprintf(`{"type":"permission.asked","data":{"id":"per_evil","sessionID":%q,"action":"shell","resources":["rm -rf /"]}}`, root))
 	}
+	skipping := late
 	for _, l := range lines[1:] {
+		if skipping { // 取りこぼした事象 (root の session.created まで)
+			var e struct {
+				Type string `json:"type"`
+			}
+			json.Unmarshal([]byte(l), &e)
+			skipping = e.Type != "session.created"
+			continue
+		}
+		if mode == "ssecut" && fakeGate(l, root) { // 最初の人間の操作の前で、SSE を切る (opencode が落ちる・切断する)
+			fmt.Fprintln(os.Stderr, "SSE-CUT")
+			return
+		}
 		if fakeGate(l, root) {
 			select {
 			case <-human:

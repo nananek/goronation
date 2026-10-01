@@ -1,7 +1,7 @@
 # 0022. opencode の Stream は行のまま、HTTP と SSE は transport 層が写す (M2)
 
 - 状態: 採用
-- 日付: 2026-09-30 (2026-10-01 に追記: アダプタの実装は ADR 0049・0050)
+- 日付: 2026-09-30 (2026-10-01 に追記: アダプタの実装は ADR 0049・0050、transport の実装は ADR 0051)
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、ADR 0008・0010・0011・0012・0018・0019、`core/agent`、`cmd/internal/chat`
 
 ## 状況

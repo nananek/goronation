@@ -144,3 +144,20 @@ func TestReadSSENeverRootedPassesNothing(t *testing.T) {
 		t.Fatalf("渡った: %v", got)
 	}
 }
+
+func FuzzSSEReader(f *testing.F) {
+	f.Add([]byte("data: {\"type\":\"server.connected\"}\n\n"))
+	f.Add([]byte(": c\nevent: x\ndata:\n\x00data: y\n"))
+	f.Fuzz(func(t *testing.T, in []byte) {
+		sr := NewSSEReader(strings.NewReader(string(in)))
+		for i := 0; i < 1<<16; i++ {
+			d, err := sr.Next()
+			if err == io.EOF {
+				return
+			}
+			if err == nil && (strings.ContainsRune(string(d), 0) || len(d) > DefaultMaxLine) {
+				t.Fatalf("不正な本文: %q", d)
+			}
+		}
+	})
+}

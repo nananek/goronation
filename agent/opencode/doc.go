@@ -24,6 +24,6 @@
 // # 限界
 //
 //   - 採取は 2.0.20 (TestedVersion)。SSE の出どころが opencode 自身であることに頼る (ADR 0010・0022 と同じ)。未採取の type は agent.frame。
-//   - delta・再試行の通知・推論は出さない (UI が描けるまで。ADR 0049)。root の決定は、SSE の最初の session.created に依る (transport が
-//     session の作成を行う PR⑥ で、その session ID と一致することを確かめる)。
+//   - delta・再試行の通知・推論は出さない (UI が描けるまで。ADR 0049)。root の決定は、SSE の最初の session.created に依る (transport が、作成した session の ID と
+//     一致することを確かめる。ADR 0051)。
 package opencode

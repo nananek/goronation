@@ -55,6 +55,8 @@
 | [0047](0047-content-hash-in-feed.md) | 内容ハッシュは Feed が付け、Conversation が照合する (M2) | 採用 |
 | [0049](0049-opencode-event-mapping.md) | opencode の SSE は、表のとおりに v0 に写し、承認できない形・未知の type は落とさず agent.frame か TypeError にする (M2) | 採用 |
 | [0050](0050-opencode-command-encoding.md) | opencode の EncodeCommand は HTTP 要求の記述を返し、承認は once・reject だけ、ID は検査済みの形だけを path に入れる (M2) | 採用 |
+| [0051](0051-opencode-transport.md) | opencode の transport は、状態の 1 行を読み、SSE を先に開き、root の一致を確かめてから会話を渡す (M2) | 採用 |
+| [0052](0052-opencode-session-permissions.md) | opencode の session は permissions で作り、設定は 1 つの環境変数にまとめ、-- の引数と resume は限る (M2) | 採用 |
 
 ## 書き方
 

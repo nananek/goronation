@@ -129,3 +129,18 @@ func TestOpencodeChatChildCannotForgeReadyLine(t *testing.T) {
 		t.Errorf("init の失敗の行のはず: %v", err)
 	}
 }
+
+// SSE の切断は、会話の終わり (再接続しない): 檻が止まり、後片付けが済む (ADR 0022 決定 5・0051 決定 6)。
+func TestOpencodeChatSSEDisconnectEndsConversation(t *testing.T) {
+	s, stderr, err := tryOpencodeChat(t, "tool-call-shell-allow", "ssecut")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	done := make(chan struct{})
+	go func() { s.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatalf("SSE が切れても、檻が止まらない\n%s", stderr)
+	}
+}
