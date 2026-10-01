@@ -265,12 +265,7 @@ func resumeAfter(q url.Values, generation string) (uint64, bool) {
 	if len(a) != 1 || len(g) != 1 || g[0] != generation || len(a[0]) == 0 || len(a[0]) > 16 {
 		return 0, false
 	}
-	for i := 0; i < len(a[0]); i++ {
-		if a[0][i] < '0' || a[0][i] > '9' {
-			return 0, false
-		}
-	}
-	n, err := strconv.ParseUint(a[0], 10, 64)
+	n, err := strconv.ParseUint(a[0], 10, 64) // 10 進数の数字だけ (符号・空白・指数・_ は error)
 	if err != nil || n > chatMaxAfter {
 		return 0, false
 	}
