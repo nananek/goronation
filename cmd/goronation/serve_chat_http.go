@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/nananek/goronation/cmd/internal/chat"
 )
@@ -95,10 +96,23 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, v any, allowEmpty bool
 }
 
 // hasDuplicateKeys は、JSON の中に、同じキーを 2 つ持つオブジェクトがあるか。最上位のキーは、Go の読み方 (構造体のフィールド名との照合は、大文字小文字を区別しない) に合わせて、
-// 大文字小文字を同一視する (読めない JSON は false。そのあとの Decode が落とす)。
+// encoding/json と同じ simple fold (U+017F ſ は s、U+212A K は k) で同一視する (読めない JSON は false。そのあとの Decode が落とす)。
 func hasDuplicateKeys(body []byte) bool {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	return scanDuplicateKeys(dec, true)
+}
+
+// foldKey は、キーを、unicode.SimpleFold の同値類の最小の文字に寄せる (encoding/json が、構造体のフィールド名との照合に使う同一視と同じ)。
+func foldKey(k string) string {
+	return strings.Map(func(r rune) rune {
+		m := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < m {
+				m = f
+			}
+		}
+		return m
+	}, k)
 }
 
 func scanDuplicateKeys(dec *json.Decoder, top bool) bool {
@@ -120,7 +134,7 @@ func scanDuplicateKeys(dec *json.Decoder, top bool) bool {
 			}
 			k, _ := kt.(string)
 			if top {
-				k = strings.ToLower(k)
+				k = foldKey(k)
 			}
 			if seen[k] {
 				return true

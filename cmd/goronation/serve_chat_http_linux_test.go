@@ -404,16 +404,18 @@ func TestChatMaxBodyFitsFormAnswers(t *testing.T) {
 
 func TestHasDuplicateKeys(t *testing.T) {
 	for body, want := range map[string]bool{
-		`{"a":1,"b":2}`:                       false,
-		`{"a":1,"a":2}`:                       true,
-		`{"generation":"x","Generation":"y"}`: true, // 構造体への読みは、大文字小文字を区別しない (最上位だけ)
-		`{"answer":{"q0":"a","q0":"b"}}`:      true,
-		`{"answer":{"q0":"a","Q0":"b"}}`:      false, // 回答のキーは、区別する
-		`{"a":[{"k":1,"k":2}]}`:               true,
-		`{"a":[{"k":1},{"k":2}]}`:             false,
-		`{"a":{"b":1},"c":{"b":2}}`:           false,
-		`not json`:                            false,
-		``:                                    false,
+		`{"a":1,"b":2}`:                                  false,
+		`{"a":1,"a":2}`:                                  true,
+		`{"generation":"x","Generation":"y"}`:            true, // 構造体への読みは、大文字小文字を区別しない (最上位だけ)
+		`{"answer":{"q0":"a","q0":"b"}}`:                 true,
+		`{"answer":{"q0":"a","Q0":"b"}}`:                 false, // 回答のキーは、区別する
+		`{"a":[{"k":1,"k":2}]}`:                          true,
+		`{"a":[{"k":1},{"k":2}]}`:                        false,
+		`{"a":{"b":1},"c":{"b":2}}`:                      false,
+		"{\"answer\":{},\"anſwer\":{}}":                  true, // U+017F (ſ) は、Go の構造体への読みで s と同一視される
+		"{\"content_hash\":\"x\",\"content_haſh\":\"\"}": true,
+		`not json`: false,
+		``:         false,
 	} {
 		if got := hasDuplicateKeys([]byte(body)); got != want {
 			t.Errorf("%q = %v, want %v", body, got, want)
