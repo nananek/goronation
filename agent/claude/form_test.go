@@ -439,3 +439,20 @@ func TestFormsShareThePendingLimit(t *testing.T) {
 		t.Fatalf("同じ ID の再要求: %v", types(es))
 	}
 }
+
+// claude が input に先回りして answers を入れていても、応答の answers は、利用者の回答だけ (上書きする)。
+func TestFormAnswersOverrideInputAnswers(t *testing.T) {
+	s := Adapter{}.NewStream().(*Stream)
+	line := `{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"t","input":{"questions":[` +
+		`{"question":"one","header":"h","options":[{"label":"a","description":""},{"label":"b","description":""}]}],"answers":{"one":"b","forged":"x"}}}}`
+	if es, err := s.DecodeFrame([]byte(line)); err != nil || es[0].Type != v0.TypeFormRequested {
+		t.Fatalf("%v %v", err, types(es))
+	}
+	out, _, err := s.EncodeCommand(formResolveCmd(v0.FormResolve{RequestID: "r1", Outcome: v0.FormAnswered, Answer: map[string]v0.FormValue{"q0": v0.Text("a")}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustJSON(responseOf(t, out)["updatedInput"].(obj)["answers"]); got != `{"one":"a"}` {
+		t.Fatalf("answers = %s", got)
+	}
+}

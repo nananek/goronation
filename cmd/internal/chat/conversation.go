@@ -86,13 +86,14 @@ type ConversationConfig struct {
 //
 // 出力の側 (OnLine) と、書く側 (Send・Resolve・Stop) を、Mutex で直列にする。並行に呼んでよい。
 //
-// 権限の承認の束縛 (M1.5 の簡易版。内容ハッシュは M2。ADR 0009):
-//   - 要求 ID に束縛し、1 回だけ有効。クライアントが送れるのは request_id と outcome (allow_once・reject_once) だけ。
+// 権限の承認・form の回答の束縛 (ADR 0009・0040・0042・0047):
+//   - 要求 ID に束縛し、1 回だけ有効。クライアントが送れるのは request_id と outcome (allow_once・reject_once) だけ。form は outcome (answered・cancelled) と回答 (保持した form の
+//     フィールドに対して検査する) で、種類の違う要求の ID には通らない。応答の content_hash は、保持した値と照合する (RequireContentHash でなければ、無いのは許す)。
 //   - claude に返す許可の input は、要求時に Stream が保持した値だけから作る (ここでは input を持たず、触らない)。
 //   - この会話 (1 回の起動) の未決の要求だけが有効。起動をまたぐ ID・失効した ID は、404。
 //   - 終了・Stop で、未決の要求は全部失効する (by=policy・outcome=cancelled)。タイマーによる失効・自動停止は持たない。
-//   - 同時に待つ要求は MaxPendingRequests まで。超えた要求と、ターンの外に来た要求は、claude に拒否を返して by=policy で決着させる。
-//   - 未決の permission.requested は Hub に固定し、リングから溢れても、新しい購読者の Snapshot に含める。
+//   - 同時に待つ要求 (権限・form) は MaxPendingRequests まで。超えた要求と、ターンの外に来た要求は、claude に拒否 (form は取り消し) を返して by=policy で決着させる。
+//   - 未決の permission.requested・form.requested は Hub に固定し、リングから溢れても、新しい購読者の Snapshot に含める。
 //
 // 順序外れのフレーム: 未決でない ID の cancel は Stream が agent.frame にする。ターンの外の result (turn.completed) は、
 // そのまま配るが、状態は変えない。未決を残した turn.completed・EOF (Close) は、未決を全部失効させる。
