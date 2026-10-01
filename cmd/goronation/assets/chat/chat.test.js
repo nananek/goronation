@@ -1789,8 +1789,9 @@ test('origin: 権限ダイアログに「要求元」を、tool: の行の上に
 test('origin: form のダイアログにも「要求元」を出す (メインにも)', () => {
   const h = harness();
   h.hello();
-  h.fire(ev(0, 'form.requested', FORM('f-main')));
-  const kid = ev(1, 'form.requested', FORM('f-kid'));
+  h.fire(ev(0, 'session.started', {agent: 'opencode', permission_mode: 'default'}));
+  h.fire(ev(1, 'form.requested', FORM('f-main')));
+  const kid = ev(2, 'form.requested', FORM('f-kid'));
   kid.origin = {id: 'ses_9', parent: 'call_x'};
   h.fire(kid);
   h.runTimers();
@@ -1903,4 +1904,18 @@ test('origin: key は、区切りの文字を含む id・parent でも、別の�
   const a = core.normalizeOrigin({id: 'a', parent: '\u0000b'});
   const b = core.normalizeOrigin({id: 'a\u0000', parent: 'b'});
   assert.notStrictEqual(a.key, b.key);
+});
+
+// claude のアダプタは、サブエージェント (Agent tool) の出力に origin を付けない (agent_id・parent_tool_use_id を読まない。ADR 0045 決定 5: PR⑤b)。
+// その間、origin が無い要求を「要求元: メインのエージェント」と断言すると、サブエージェントの要求を、メインのものと誤って示す。
+// origin を付けられない agent (claude) の画面は、「メイン」と断言せず、区別できないことを出す。
+test('要求元: origin を付けない agent (claude) の権限ダイアログは、「メインのエージェント」と断言しない', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'session.started', {agent: 'claude', permission_mode: 'default'}));
+  h.fire(ev(1, 'permission.requested', {request_id: 'r', tool_name: 'Write', input: {file_path: '/work/x'}, details: [{label: 'path', text: '/work/x', kind: 'path'}], content_hash: 'sha256:aa'})); // origin なし (サブエージェントの要求でも、claude では、こうなる)
+  h.runTimers();
+  const text = h.doc.byId.dialogs.textContent;
+  assert.ok(text.includes('要求元'), '要求元の行が無い');
+  assert.ok(!text.includes('メインのエージェント'), 'origin を付けない agent の要求を、メインのエージェントのものと断言している: ' + text.slice(0, 200));
 });

@@ -310,6 +310,7 @@
       dirty: new Map(),   // id → 項目 (描画が要る)
       removed: [],        // 描画から外す項目の id
       reset: false,       // 表示を全部作り直す (世代が変わった)
+      agent: '',          // 最後のメインの session.started の agent (origin を付ける agent かの判断に使う)
       sessionStarted: false, // session.started を受けたか (権限モードを確認できたかの判断に使う)
       permissionMode: '', // claude の権限モード (session.started の permission_mode。default 以外は、tool が承認なしで実行されうる。無ければ '')
       turnActive: false,  // ターンの途中か (turn.started から turn.completed まで。送信欄を無効にする)
@@ -378,6 +379,7 @@
       state.turnCount = 0;
       state.permissionMode = '';
       state.sessionStarted = false;
+      state.agent = '';
       state.reset = true;
     }
     state.generation = gen;
@@ -428,6 +430,7 @@
         const mode = short(d.permission_mode);
         if (main) {
           state.sessionStarted = true;
+          state.agent = short(d.agent);
           state.permissionMode = mode;
         }
         put({kind: 'session', agent: short(d.agent), model: short(d.model), cwd: short(d.cwd), permissionMode: mode});

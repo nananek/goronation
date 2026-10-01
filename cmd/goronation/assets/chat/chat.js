@@ -92,14 +92,17 @@
     }
 
     // originSource は、権限・form のダイアログの「要求元」の行 (メインにも出す: 出さないことが、メインの印にならないように)。
+    // origin を付ける agent (opencode) の origin 無しだけが、メイン確定。それ以外 (claude は agent_id を読まない。ADR 0045 決定 5・PR⑤b) は、区別できない。
+    const hasOrigin = () => state.agent === 'opencode';
     function originSource(o) {
+      if (o === null && !hasOrigin()) return '要求元: このエージェントでは、サブエージェントかどうかを区別できない (サブエージェントの要求かもしれない) ' + ORIGIN_NOTE;
       if (o === null) return '要求元: メインのエージェント ' + ORIGIN_NOTE;
       if (o.bad) return '要求元: サブエージェント (帰属が壊れていて、どこから来たか分からない。メインのエージェントとは見なさない) ' + ORIGIN_NOTE;
       return '要求元: サブエージェント ' + o.id + ' (起動した tool 呼び出し: ' + (o.hasParent ? o.parent : '不明') + ') ' + ORIGIN_NOTE;
     }
 
     function sourceRow(o) {
-      return el('div', o === null ? 'dialog-origin' : 'dialog-origin dialog-origin-sub', originSource(o));
+      return el('div', o === null && hasOrigin() ? 'dialog-origin' : 'dialog-origin dialog-origin-sub', originSource(o));
     }
 
     // fill は、項目 it の要素 e の中身を、作り直す (textContent だけ)。
