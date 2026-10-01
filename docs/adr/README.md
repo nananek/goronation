@@ -51,6 +51,8 @@
 | [0043](0043-question-permission.md) | opencode の question の tool は、session の permissions で承認の段を省く (M2) | 採用 |
 | [0044](0044-claude-ask-user-question.md) | claude の AskUserQuestion は form にし、回答は updatedInput.answers で返す (M2) | 採用 |
 | [0045](0045-subagent-origin.md) | サブエージェントの出力には、帰属 (origin) を付ける (M2) | 採用 |
+| [0046](0046-form-resolve-api.md) | form の応答の API (POST /form) と、承認の応答の content_hash (M2) | 採用 |
+| [0047](0047-content-hash-in-feed.md) | 内容ハッシュは Feed が付け、Conversation が照合する (M2) | 採用 |
 
 ## 書き方
 

@@ -17,6 +17,7 @@ import (
 )
 
 // chatMaxBody は、書き込み API の本文の上限 (バイト)。text の上限 (chat.MaxMessageBytes) の、JSON のエスケープ (最大 6 倍) 込みの分。
+// form の回答 (フィールドの数 × 回答 1 つの上限 (4,000 字) × エスケープ 6 倍 + 余白) も、この上限に収まる (chat_http_test.go が固定する)。
 const chatMaxBody = 6*chat.MaxMessageBytes + 1024
 
 // chatMaxSSE は、同時に繋がる SSE の数の上限 (超過は 503)。web が持つ上限とは別の、この serve の最後の砦。
@@ -29,10 +30,11 @@ const chatSSEWriteTimeout = 30 * time.Second
 //
 //	GET  /events      SSE。event: hello (first_seq・generation) → バッファ → ライブ (data: は Event の JSON 1 行) → event: end (exit)
 //	POST /message     {"text"}
-//	POST /permission  {"generation","request_id","outcome"}  (generation は必須。欠落 400・別の起動 409)
+//	POST /permission  {"generation","request_id","outcome","content_hash"?}  (generation は必須。欠落 400・別の起動 409。content_hash は、見た要求の値の写し)
+//	POST /form        {"generation","request_id","outcome":"answered"|"cancelled","answer"?:{"<key>":"<文字列>"|["<文字列>",…]},"content_hash"?}  (ADR 0046)
 //	POST /stop        {} (本文なし可)
 //
-// 書き込みの本文は、上限つき・厳格な JSON (未知のフィールド・後ろの余分な値は 400)。エラーは {"error":"<コード>"}。
+// 書き込みの本文は、上限つき・厳格な JSON (未知のフィールド・後ろの余分な値・重複したキーは 400)。エラーは {"error":"<コード>"}。
 // 世代なしの承認の経路は無い (chat.Conversation の resolve は非公開)。
 type chatHandler struct {
 	s   *chatSession
@@ -45,6 +47,7 @@ func newChatHandler(s *chatSession) http.Handler {
 	mux.HandleFunc("GET /events", h.events)
 	mux.HandleFunc("POST /message", h.message)
 	mux.HandleFunc("POST /permission", h.permission)
+	mux.HandleFunc("POST /form", h.form)
 	mux.HandleFunc("POST /stop", h.stop)
 	mux.HandleFunc("GET /version", handleVersion)
 	return mux
@@ -74,6 +77,10 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, v any, allowEmpty bool
 	if len(bytes.TrimSpace(body)) == 0 && allowEmpty {
 		return true
 	}
+	if hasDuplicateKeys(body) { // 後の値が勝つ (検証と実行の食い違いを、作らない)
+		writeError(w, http.StatusBadRequest, "bad_json")
+		return false
+	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -85,6 +92,54 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, v any, allowEmpty bool
 		return false
 	}
 	return true
+}
+
+// hasDuplicateKeys は、JSON の中に、同じキーを 2 つ持つオブジェクトがあるか。最上位のキーは、Go の読み方 (構造体のフィールド名との照合は、大文字小文字を区別しない) に合わせて、
+// 大文字小文字を同一視する (読めない JSON は false。そのあとの Decode が落とす)。
+func hasDuplicateKeys(body []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	return scanDuplicateKeys(dec, true)
+}
+
+func scanDuplicateKeys(dec *json.Decoder, top bool) bool {
+	tok, err := dec.Token()
+	if err != nil {
+		return false
+	}
+	d, ok := tok.(json.Delim)
+	if !ok {
+		return false
+	}
+	switch d {
+	case '{':
+		seen := map[string]bool{}
+		for dec.More() {
+			kt, err := dec.Token()
+			if err != nil {
+				return false
+			}
+			k, _ := kt.(string)
+			if top {
+				k = strings.ToLower(k)
+			}
+			if seen[k] {
+				return true
+			}
+			seen[k] = true
+			if scanDuplicateKeys(dec, false) {
+				return true
+			}
+		}
+		dec.Token() // '}'
+	case '[':
+		for dec.More() {
+			if scanDuplicateKeys(dec, false) {
+				return true
+			}
+		}
+		dec.Token() // ']'
+	}
+	return false
 }
 
 func (h *chatHandler) message(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +161,8 @@ func (h *chatHandler) permission(w http.ResponseWriter, r *http.Request) {
 		Generation string `json:"generation"`
 		RequestID  string `json:"request_id"`
 		Outcome    string `json:"outcome"`
+		// ContentHash は、利用者が見た要求の content_hash の写し (ADR 0042)。保持した値と違えば 409 content_changed。
+		ContentHash string `json:"content_hash"`
 	}
 	if !decodeStrict(w, r, &req, false) {
 		return
@@ -114,7 +171,23 @@ func (h *chatHandler) permission(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "generation_request_id_outcome_required")
 		return
 	}
-	chatResult(w, h.s.Chat.Conv.ResolveIn(req.Generation, req.RequestID, req.Outcome))
+	chatResult(w, h.s.Chat.Conv.ResolvePermissionIn(req.Generation, chat.PermissionResolve{RequestID: req.RequestID, Outcome: req.Outcome, ContentHash: req.ContentHash}))
+}
+
+// form は、form (AskUserQuestion など) への回答。回答は、保持した要求のフィールドに対してだけ検査され (不正は 400 bad_answer)、content_hash は保持した値と照合される。
+func (h *chatHandler) form(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Generation string `json:"generation"`
+		chat.FormResolve
+	}
+	if !decodeStrict(w, r, &req, false) {
+		return
+	}
+	if req.Generation == "" || req.RequestID == "" || req.Outcome == "" {
+		writeError(w, http.StatusBadRequest, "generation_request_id_outcome_required")
+		return
+	}
+	chatResult(w, h.s.Chat.Conv.ResolveFormIn(req.Generation, req.RequestID, req.FormResolve))
 }
 
 func (h *chatHandler) stop(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +206,12 @@ func chatResult(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case errors.Is(err, chat.ErrEmptyText), errors.Is(err, chat.ErrBadText), errors.Is(err, chat.ErrBadOutcome), errors.Is(err, chat.ErrNoGeneration):
 		writeError(w, http.StatusBadRequest, "bad_request")
+	case errors.Is(err, chat.ErrBadAnswer):
+		writeError(w, http.StatusBadRequest, "bad_answer")
+	case errors.Is(err, chat.ErrContentHashRequired):
+		writeError(w, http.StatusBadRequest, "content_hash_required")
+	case errors.Is(err, chat.ErrContentChanged):
+		writeError(w, http.StatusConflict, "content_changed")
 	case errors.Is(err, chat.ErrTextTooLong):
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large")
 	case errors.Is(err, chat.ErrUnknownRequest):

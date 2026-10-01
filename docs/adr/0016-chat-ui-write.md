@@ -1,6 +1,6 @@
 # 0016. チャット画面の書く側: 送信・終了・権限の承認 (M1.5)
 
-- 状態: 採用
+- 状態: 採用 (2026-10-01 に追記: form の回答の送信 (`POST /form`) と、承認・回答に `content_hash` を写すことは、ADR 0046。UI は PR⑤b-2)
 - 日付: 2026-09-30
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、ADR 0011・0013・0014・0015、`cmd/goronation/assets/chat/`
 

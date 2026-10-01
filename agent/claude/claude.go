@@ -71,10 +71,12 @@ type Stream struct {
 	nextSeq uint64 // pendingRequest.seq に振る、届いた順の番号
 }
 
-// pendingRequest は、未決の can_use_tool の要求。seq は届いた順 (result で、順に閉じるため)。
+// pendingRequest は、未決の can_use_tool の要求。seq は届いた順 (result で、順に閉じるため)。form が nil でなければ、AskUserQuestion の form
+// (回答は form.resolve だけで返す。permission.resolve では答えられない)。権限と form は、同じ request_id の名前空間・同じ上限で持つ。
 type pendingRequest struct {
 	input json.RawMessage
 	seq   uint64
+	form  *pendingForm
 }
 
 // 未決の数の上限と、覚える request_id の数の上限 (メモリを、agent の出す要求の数・ID の長さに比例させない)。
@@ -281,21 +283,38 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 			s.pending, s.seen = map[string]pendingRequest{}, map[[sha256.Size]byte]struct{}{}
 		}
 		s.seen[key] = struct{}{}
+		if r.ToolName.V == askUserQuestion {
+			form, pf, err := buildForm(id, r.ToolUseID.V, r.Input)
+			if err != nil { // form にできない形は、承認も回答もできない (claude は応答を待ち続けるので、知らせる)
+				a, aerr := ev(v0.TypeAgentFrame, false, struct{}{})
+				if aerr != nil {
+					return nil, aerr
+				}
+				x, xerr := ev(v0.TypeError, true, map[string]any{"status": nil, "retryable": false, "message": formInvalidMessage})
+				return []v0.Envelope{a, x}, xerr
+			}
+			s.nextSeq++
+			s.pending[id] = pendingRequest{input: bytes.Clone(r.Input), seq: s.nextSeq, form: pf}
+			e, err := ev(v0.TypeFormRequested, true, form)
+			return []v0.Envelope{e}, err
+		}
+		perm := buildPermission(id, r.ToolUseID.V, r.ToolName.V, r.Input, r.Description.V)
+		if perm.Validate() != nil { // 形が不正 (tool 名が長いなど): 承認できない形にして落とす (lenient)
+			return unknown()
+		}
 		s.nextSeq++
 		s.pending[id] = pendingRequest{input: bytes.Clone(r.Input), seq: s.nextSeq}
-		e, err := ev(v0.TypePermissionRequested, true, map[string]any{
-			"request_id": id, "call_id": r.ToolUseID.V, "tool_name": r.ToolName.V, "kind": toolKind(r.ToolName.V),
-			"input": r.Input, "title": r.Description.V,
-		})
+		e, err := ev(v0.TypePermissionRequested, true, perm)
 		return []v0.Envelope{e}, err
 
 	case f.Type.V == "control_cancel_request":
 		// claude が、未決の要求を撤回した (もう答えなくてよい)。未決でない ID の撤回は、対応するものが無い。
 		id := f.RequestID.V
-		if f.RequestID.Bad || !s.settle(id) {
+		req, ok := s.settle(id)
+		if f.RequestID.Bad || !ok {
 			return unknown()
 		}
-		e, err := ev(v0.TypePermissionResolved, true, map[string]any{"by": "agent", "outcome": outcomeCancelled, "request_id": id})
+		e, err := s.cancelled(ev, id, req)
 		return []v0.Envelope{e}, err
 
 	case f.Type.V == "system" && f.Subtype.V == "permission_denied":
@@ -343,8 +362,8 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 		}
 		slices.SortFunc(ids, func(a, b string) int { return cmp.Compare(s.pending[a].seq, s.pending[b].seq) })
 		for _, id := range ids {
-			s.settle(id)
-			e, err := ev(v0.TypePermissionResolved, true, map[string]any{"by": "agent", "outcome": outcomeCancelled, "request_id": id})
+			req, _ := s.settle(id)
+			e, err := s.cancelled(ev, id, req)
 			if err != nil {
 				return nil, err
 			}
@@ -397,13 +416,17 @@ func (s *Stream) DecodeFrame(raw []byte) ([]v0.Envelope, error) {
 //   - prompt は、フレームの無い TypeTurnStarted を、合成して返す。最初の prompt の raw は、その前に initialize の
 //     control_request の 1 行を含む (--permission-prompt-tool stdio の対話は、最初のターンより前にこれを送る。ADR 0010)。
 //   - permission.resolve は、control_response の 1 行と、合成の TypePermissionResolved (by=human) を返す。
-//     許可する input は、要求時に保持した値だけから作る。未決でない request_id (未知・応答済み・撤回済み) は error。
+//     許可する input は、要求時に保持した値だけから作る。未決でない request_id (未知・応答済み・撤回済み) と、form の request_id は error。
+//   - form.resolve は、AskUserQuestion の form への回答: answered は、保持した input に answers を足した allow、cancelled は deny。control_response の 1 行と、
+//     合成の form.resolved (by=human) を返す。未決の form でない request_id・保持した質問に無いキーは error で、何も書かない (ADR 0044)。
 func (s *Stream) EncodeCommand(cmd v0.Command) ([]byte, []v0.Envelope, error) {
 	switch cmd.Type {
 	case v0.CommandPrompt:
 		return s.encodePrompt(cmd)
 	case v0.CommandPermissionResolve:
 		return s.encodePermissionResolve(cmd)
+	case v0.CommandFormResolve:
+		return s.encodeFormResolve(cmd)
 	}
 	return nil, nil, fmt.Errorf("claude: 未対応のコマンド %q", cmd.Type)
 }
@@ -455,6 +478,9 @@ func (s *Stream) encodePermissionResolve(cmd v0.Command) ([]byte, []v0.Envelope,
 	if err := json.Unmarshal(cmd.Data, &d); err != nil {
 		return nil, nil, fmt.Errorf("claude: permission.resolve の data が読めない: %w", err)
 	}
+	if p, ok := s.pending[d.RequestID]; ok && p.form != nil { // form は、form.resolve でだけ答える (permission.resolve の allow は、回答なしの許可になる)
+		return nil, nil, fmt.Errorf("claude: request_id %q は form (permission.resolve では答えられない)", d.RequestID)
+	}
 	var behavior map[string]any
 	switch d.Outcome {
 	case v0.AllowOnce:
@@ -468,7 +494,7 @@ func (s *Stream) encodePermissionResolve(cmd v0.Command) ([]byte, []v0.Envelope,
 	default: // allow_always・reject_always・未知の値 (M1.5 の範囲外)
 		return nil, nil, fmt.Errorf("claude: 未対応の outcome %q", d.Outcome)
 	}
-	if !s.settle(d.RequestID) { // 未決でなければ、何も書かない (1 回限り)
+	if _, ok := s.settle(d.RequestID); !ok { // 未決でなければ、何も書かない (1 回限り)
 		return nil, nil, fmt.Errorf("claude: 未決でない request_id %q", d.RequestID)
 	}
 	line, err := marshal(map[string]any{
@@ -486,13 +512,63 @@ func (s *Stream) encodePermissionResolve(cmd v0.Command) ([]byte, []v0.Envelope,
 	return append(line, '\n'), []v0.Envelope{resolved}, nil
 }
 
-// settle は、id を未決の表から外す。未決でなければ false。
-func (s *Stream) settle(id string) bool {
-	if _, ok := s.pending[id]; !ok {
-		return false
+// settle は、id を未決の表から外し、その要求を返す。未決でなければ false。
+func (s *Stream) settle(id string) (pendingRequest, bool) {
+	req, ok := s.pending[id]
+	if !ok {
+		return pendingRequest{}, false
 	}
 	delete(s.pending, id)
-	return true
+	return req, true
+}
+
+// cancelled は、エージェントが取り下げた (またはターンの終わりで閉じた) 未決の要求の、by=agent の決着を作る (権限なら permission.resolved、form なら form.resolved)。
+func (s *Stream) cancelled(ev func(string, bool, any) (v0.Envelope, error), id string, req pendingRequest) (v0.Envelope, error) {
+	if req.form != nil {
+		return ev(v0.TypeFormResolved, true, formResolved("agent", v0.FormCancelled, id, nil))
+	}
+	return ev(v0.TypePermissionResolved, true, map[string]any{"by": "agent", "outcome": outcomeCancelled, "request_id": id})
+}
+
+func (s *Stream) encodeFormResolve(cmd v0.Command) ([]byte, []v0.Envelope, error) {
+	var d v0.FormResolve
+	if err := json.Unmarshal(cmd.Data, &d); err != nil {
+		return nil, nil, fmt.Errorf("claude: form.resolve の data が読めない: %w", err)
+	}
+	p, ok := s.pending[d.RequestID]
+	if !ok || p.form == nil {
+		return nil, nil, fmt.Errorf("claude: 未決の form でない request_id %q", d.RequestID)
+	}
+	var behavior map[string]any
+	switch d.Outcome {
+	case v0.FormAnswered:
+		updated, err := p.form.answersInput(p.input, d.Answer)
+		if err != nil {
+			return nil, nil, err // 未決のまま残す (何も書かない)
+		}
+		behavior = map[string]any{"behavior": "allow", "updatedInput": updated}
+	case v0.FormCancelled:
+		if len(d.Answer) != 0 {
+			return nil, nil, errors.New("claude: cancelled に answer がある")
+		}
+		behavior = map[string]any{"behavior": "deny", "message": formDenyMessage}
+	default:
+		return nil, nil, fmt.Errorf("claude: 未対応の outcome %q", d.Outcome)
+	}
+	line, err := marshal(map[string]any{
+		"type":     "control_response",
+		"response": map[string]any{"subtype": "success", "request_id": d.RequestID, "response": behavior},
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := marshal(formResolved("human", d.Outcome, d.RequestID, d.Answer))
+	if err != nil {
+		return nil, nil, err
+	}
+	s.settle(d.RequestID)
+	resolved := v0.Envelope{V: v0.Version, Type: v0.TypeFormResolved, Durable: true, Data: data}
+	return append(line, '\n'), []v0.Envelope{resolved}, nil
 }
 
 // isObject は、m が JSON のオブジェクトか (tool の input は、オブジェクトでなければ、許可の応答に使えない)。

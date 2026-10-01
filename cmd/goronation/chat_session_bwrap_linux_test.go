@@ -19,7 +19,8 @@ import (
 
 // 偽の claude (chat セッションの stream-json): 標準入力を 1 行ずつ読み、initialize には control_response で答え、ユーザーの指示 (user) ごとに
 // 「メッセージ → Write の tool_use → can_use_tool の control_request」を出して、応答 (control_response) を待ち、受けた応答の内容
-// (behavior と、許可した input) を、メッセージに書いてから、result で終える。最後の引数が場面: "flow" (この動き)・"hold" (何も返さず読み続ける)。
+// (behavior と、許可した input) を、メッセージに書いてから、result で終える。最後の引数が場面: "flow" (この動き)・"hold" (何も返さず読み続ける)・
+// "ask" (Write の代わりに AskUserQuestion の can_use_tool を出す。応答の updatedInput.answers が、メッセージに出る)。
 func fakeChat(args []string) int {
 	mode := args[len(args)-1]
 	if mode == "spoof" {
@@ -67,12 +68,18 @@ func runFakeChat(mode string, stdin io.Reader, stdout io.Writer) int {
 			}
 			turn++
 			toolID, reqID := fmt.Sprintf("toolu_%d", turn), fmt.Sprintf("perm-%d", turn)
+			toolName, desc := "Write", "new.txt"
 			input := map[string]any{"file_path": "/work/new.txt", "content": fmt.Sprintf("turn %d\n", turn)}
-			emit(map[string]any{"type": "system", "subtype": "init", "session_id": "sess-1", "cwd": "/work", "model": "fake", "tools": []string{"Write"}, "permissionMode": "default"})
+			if mode == "ask" {
+				toolName, desc = "AskUserQuestion", ""
+				input = map[string]any{"questions": []any{map[string]any{"question": "好きな色は?", "header": "色", "multiSelect": false,
+					"options": []any{map[string]any{"label": "赤", "description": "暖色"}, map[string]any{"label": "青", "description": "寒色"}}}}}
+			}
+			emit(map[string]any{"type": "system", "subtype": "init", "session_id": "sess-1", "cwd": "/work", "model": "fake", "tools": []string{toolName}, "permissionMode": "default"})
 			emit(assistant(fmt.Sprintf("m%da", turn), map[string]any{"type": "text", "text": "書きます。"}))
-			emit(assistant(fmt.Sprintf("m%db", turn), map[string]any{"type": "tool_use", "id": toolID, "name": "Write", "input": input}))
+			emit(assistant(fmt.Sprintf("m%db", turn), map[string]any{"type": "tool_use", "id": toolID, "name": toolName, "input": input}))
 			emit(map[string]any{"type": "control_request", "request_id": reqID, "request": map[string]any{
-				"subtype": "can_use_tool", "tool_name": "Write", "input": input, "tool_use_id": toolID, "display_name": "Write", "description": "new.txt"}})
+				"subtype": "can_use_tool", "tool_name": toolName, "input": input, "tool_use_id": toolID, "display_name": toolName, "description": desc, "requires_user_interaction": mode == "ask"}})
 			var got map[string]any
 			for {
 				r, ok := next()

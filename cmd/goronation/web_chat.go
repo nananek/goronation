@@ -260,7 +260,7 @@ func (s *webServer) checkChatWrite(w http.ResponseWriter, r *http.Request) bool 
 // chatWriteRelayStatus は、serve の応答のうち、そのまま返す status (ほかは 502)。
 var chatWriteRelayStatus = map[int]bool{200: true, 400: true, 404: true, 409: true, 413: true, 415: true, 500: true}
 
-// handleChatWrite は、POST /s/{id}/<op> (message・permission・stop) を、serve の POST /<op> へ中継する。本文は、解析せず、そのまま渡す (サイズの上限と
+// handleChatWrite は、POST /s/{id}/<op> (message・permission・form・stop) を、serve の POST /<op> へ中継する。本文は、解析せず、そのまま渡す (サイズの上限と
 // Content-Type の検査だけ)。検証は serve が 1 か所で行う: web が別の解析器で検証すると、重複キー・大文字小文字の違うキーで、検証と実行が食い違いうる
 // (ADR 0013 の L-G)。世代・request_id・outcome も、変えず・補わず渡す。serve を起こさない (chat.sock が無ければ 404)。
 func (s *webServer) handleChatWrite(op string) http.HandlerFunc {

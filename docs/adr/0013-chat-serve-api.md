@@ -1,6 +1,6 @@
 # 0013. serve --chat の UDS API と、承認の世代 (M1.5)
 
-- 状態: 採用 (2026-09-30 に追記: 決定 2 の `GET /events` は、ADR 0024 で `after`・`generation` のクエリ・`id:` 行・hello の欄が加わる。実装が入るまでは、ここの決定 2 が現状)
+- 状態: 採用 (2026-09-30 に追記: 決定 2 の `GET /events` は、ADR 0024 で `after`・`generation` のクエリ・`id:` 行・hello の欄が加わる。実装が入るまでは、ここの決定 2 が現状。2026-10-01 に追記: `POST /form` を足し、`POST /permission` に `content_hash` を足す。本文の重複キーは 400。ADR 0046)
 - 日付: 2026-09-30
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、ADR 0009・0011・0012、`cmd/goronation/serve_chat_http.go`
 
