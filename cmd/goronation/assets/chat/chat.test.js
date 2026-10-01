@@ -1712,3 +1712,18 @@ test('繋ぎ直し: 決着済みの要求は、Backfill で古い permission.req
   h.runTimers();
   assert.strictEqual(dialogEls(h).length, 1);
 });
+
+// 省略の検出の境界: first_seq = lastSeq + 2 (seq が 1 つだけ飛ぶ) も、省略の印。first_seq = lastSeq + 1 (連続) は印なし。
+test('省略の検出 (S7): 1 つだけ飛ぶ (first_seq = lastSeq + 2) も印。連続 (lastSeq + 1) は印なし', () => {
+  const mk = (first, lastSeq) => {
+    const s = core.createState();
+    core.applyHello(s, {generation: G1, first_seq: 0});
+    core.applyEvent(s, ev(lastSeq, 'message.text', {text: 'x'}));
+    core.applyHello(s, {generation: G1, first_seq: first, resumed: true});
+    return s;
+  };
+  assert.strictEqual(mk(12, 10).omitted, true, 'seq 11 が無い (first_seq = lastSeq + 2): 印');
+  assert.strictEqual(mk(11, 10).omitted, false, '連続 (first_seq = lastSeq + 1): 印なし');
+  assert.strictEqual(mk(12, 11).omitted, false, '連続 (lastSeq = 11): 印なし');
+  assert.strictEqual(mk(13, 11).omitted, true, 'seq 12 が無い: 印');
+});
