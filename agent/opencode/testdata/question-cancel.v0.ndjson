@@ -1,0 +1,9 @@
+{"type":"session.started","durable":true,"data":{"agent":"opencode","agent_session":"ses_1","cwd":"/work","version":"2.0.20"}}
+{"type":"turn.started","durable":true,"data":{"text":"Ask me."}}
+{"type":"tool.call","durable":true,"data":{"call_id":"call_q","input":{"questions":[{"header":"Color","options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue"}],"question":"Which color?"}]},"kind":"other","name":"question","status":"pending"}}
+{"type":"permission.requested","durable":true,"data":{"request_id":"per_1","call_id":"call_q","tool_name":"question","kind":"other","input":{"action":"question","resources":["*"]},"summary":"question: *","details":[{"label":"target","text":"*","kind":"text"}]}}
+{"type":"permission.resolved","durable":true,"data":{"by":"human","outcome":"allow_once","request_id":"per_1"}}
+{"type":"form.requested","durable":true,"data":{"request_id":"frm_1","call_id":"call_q","kind":"question","title":"Questions","fields":[{"key":"q0","title":"Color","description":"Which color?","type":"select","options":[{"label":"Red","value":"Red","description":"warm"},{"label":"Blue","value":"Blue","description":"cool"}],"custom":true}]}}
+{"type":"form.resolved","durable":true,"data":{"by":"human","outcome":"cancelled","request_id":"frm_1"}}
+{"type":"tool.update","durable":true,"data":{"call_id":"call_q","error":"The user dismissed this question","status":"failed"}}
+{"type":"turn.completed","durable":true,"data":{"is_error":false,"reason":"shutdown","stop_reason":"cancelled"}}

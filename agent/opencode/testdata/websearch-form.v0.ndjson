@@ -1,0 +1,12 @@
+{"type":"session.started","durable":true,"data":{"agent":"opencode","agent_session":"ses_1","cwd":"/work","version":"2.0.20"}}
+{"type":"turn.started","durable":true,"data":{"text":"Search."}}
+{"type":"tool.call","durable":true,"data":{"call_id":"call_ws","input":{"query":"goronation"},"kind":"search","name":"websearch","status":"pending"}}
+{"type":"permission.requested","durable":true,"data":{"request_id":"per_1","call_id":"call_ws","tool_name":"websearch","kind":"search","input":{"action":"websearch","resources":["goronation"],"metadata":{"query":"goronation"}},"summary":"websearch: goronation","details":[{"label":"query","text":"goronation","kind":"text"}]}}
+{"type":"permission.resolved","durable":true,"data":{"by":"human","outcome":"allow_once","request_id":"per_1"}}
+{"type":"form.requested","durable":true,"data":{"request_id":"frm_1","kind":"websearch.provider","title":"Web Search","fields":[{"key":"choice","description":"Allow OpenCode to search the web for up-to-date information?","type":"select","options":[{"label":"Allow search via Exa, Firecrawl, Parallel, Tavily, TinyFish","value":"allow"},{"label":"Choose another provider","value":"choose"},{"label":"Disable web search","value":"disable"}],"required":true}]}}
+{"type":"form.resolved","durable":true,"data":{"by":"human","outcome":"cancelled","request_id":"frm_1"}}
+{"type":"tool.update","durable":true,"data":{"call_id":"call_ws","error":"Web search cancelled","status":"failed"}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"message.text","durable":true,"data":{"message_id":"msg_3","text":"Searched."}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"turn.completed","durable":true,"data":{"is_error":false,"stop_reason":"end_turn"}}

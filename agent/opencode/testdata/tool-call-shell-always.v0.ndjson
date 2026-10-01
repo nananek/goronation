@@ -1,0 +1,15 @@
+{"type":"session.started","durable":true,"data":{"agent":"opencode","agent_session":"ses_1","cwd":"/work","version":"2.0.20"}}
+{"type":"turn.started","durable":true,"data":{"text":"Do it twice."}}
+{"type":"tool.call","durable":true,"data":{"call_id":"call_1","input":{"command":"echo one","description":"run a command"},"kind":"execute","name":"shell","status":"pending"}}
+{"type":"permission.requested","durable":true,"data":{"request_id":"per_1","call_id":"call_1","tool_name":"shell","kind":"execute","input":{"action":"shell","resources":["echo one"]},"summary":"shell: echo one","details":[{"label":"command","text":"echo one","kind":"command"}]}}
+{"type":"permission.resolved","durable":true,"data":{"by":"agent","outcome":"allow_always","request_id":"per_1"}}
+{"type":"tool.update","durable":true,"data":{"call_id":"call_1","status":"in_progress"}}
+{"type":"tool.update","durable":true,"data":{"call_id":"call_1","exit":0,"output":"one\n","status":"completed"}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"tool.call","durable":true,"data":{"call_id":"call_2","input":{"command":"echo two","description":"run again"},"kind":"execute","name":"shell","status":"pending"}}
+{"type":"tool.update","durable":true,"data":{"call_id":"call_2","status":"in_progress"}}
+{"type":"tool.update","durable":true,"data":{"call_id":"call_2","exit":0,"output":"two\n","status":"completed"}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"message.text","durable":true,"data":{"message_id":"msg_4","text":"Both done."}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"turn.completed","durable":true,"data":{"is_error":false,"stop_reason":"end_turn"}}

@@ -1,0 +1,9 @@
+{"type":"session.started","durable":true,"data":{"agent":"opencode","agent_session":"ses_1","cwd":"/work","version":"2.0.20"}}
+{"type":"turn.started","durable":true,"data":{"text":"First question."}}
+{"type":"message.text","durable":true,"data":{"message_id":"msg_6","text":"First answer."}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"turn.completed","durable":true,"data":{"is_error":false,"stop_reason":"end_turn"}}
+{"type":"turn.started","durable":true,"data":{"text":"Second question."}}
+{"type":"message.text","durable":true,"data":{"message_id":"msg_4","text":"Second answer."}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"turn.completed","durable":true,"data":{"is_error":false,"stop_reason":"end_turn"}}

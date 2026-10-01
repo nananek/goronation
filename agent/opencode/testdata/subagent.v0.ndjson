@@ -1,0 +1,19 @@
+{"type":"session.started","durable":true,"data":{"agent":"opencode","agent_session":"ses_1","cwd":"/work","version":"2.0.20"}}
+{"type":"turn.started","durable":true,"data":{"text":"Do it."}}
+{"type":"tool.call","durable":true,"data":{"call_id":"call_sub","input":{"agent":"general","description":"list files","prompt":"List the files in /work."},"kind":"other","name":"subagent","status":"pending"}}
+{"type":"permission.requested","durable":true,"data":{"request_id":"per_1","call_id":"call_sub","tool_name":"subagent","kind":"other","input":{"action":"subagent","resources":["general"]},"summary":"subagent: general","details":[{"label":"target","text":"general","kind":"text"}]}}
+{"type":"permission.resolved","durable":true,"data":{"by":"human","outcome":"allow_once","request_id":"per_1"}}
+{"type":"tool.update","durable":true,"data":{"call_id":"call_sub","status":"in_progress"}}
+{"type":"tool.call","durable":true,"origin":{"id":"ses_2","parent":"call_sub"},"data":{"call_id":"call_child_shell","input":{"command":"ls /work","description":"list"},"kind":"execute","name":"shell","status":"pending"}}
+{"type":"permission.requested","durable":true,"origin":{"id":"ses_2","parent":"call_sub"},"data":{"request_id":"per_2","call_id":"call_child_shell","tool_name":"shell","kind":"execute","input":{"action":"shell","resources":["ls /work"]},"summary":"shell: ls /work","details":[{"label":"command","text":"ls /work","kind":"command"}]}}
+{"type":"permission.resolved","durable":true,"origin":{"id":"ses_2","parent":"call_sub"},"data":{"by":"human","outcome":"allow_once","request_id":"per_2"}}
+{"type":"tool.update","durable":true,"origin":{"id":"ses_2","parent":"call_sub"},"data":{"call_id":"call_child_shell","status":"in_progress"}}
+{"type":"tool.update","durable":true,"origin":{"id":"ses_2","parent":"call_sub"},"data":{"call_id":"call_child_shell","exit":0,"output":"opencode.json\n","status":"completed"}}
+{"type":"usage","durable":true,"origin":{"id":"ses_2","parent":"call_sub"},"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"message.text","durable":true,"origin":{"id":"ses_2","parent":"call_sub"},"data":{"message_id":"msg_5","text":"The directory is empty."}}
+{"type":"usage","durable":true,"origin":{"id":"ses_2","parent":"call_sub"},"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"tool.update","durable":true,"data":{"call_id":"call_sub","output":"<subagent sessionID=\"ses_2\" state=\"completed\">\nThe directory is empty.\n</subagent>","status":"completed"}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"message.text","durable":true,"data":{"message_id":"msg_6","text":"The subagent finished."}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"turn.completed","durable":true,"data":{"is_error":false,"stop_reason":"end_turn"}}
