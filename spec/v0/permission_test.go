@@ -146,6 +146,13 @@ func TestVerifyHash(t *testing.T) {
 	if err := VerifyHash(h, "sha256:00", false); !errors.Is(err, ErrHashMismatch) {
 		t.Fatalf("不一致: %v", err)
 	}
+	// 保持した値が無い (want が空) 要求は、必須なら、応答に hash が無くても (必須)・あっても (不一致) 通らない (fail-closed)。
+	if err := VerifyHash("", "", true); !errors.Is(err, ErrHashRequired) {
+		t.Errorf("want も got も空 (必須) = %v", err)
+	}
+	if err := VerifyHash("", "sha256:00", true); !errors.Is(err, ErrHashMismatch) {
+		t.Errorf("want が空で got がある (必須) = %v", err)
+	}
 	if err := VerifyHash("", "sha256:00", false); !errors.Is(err, ErrHashMismatch) {
 		t.Fatalf("保持した値が無いのに、応答にある: %v", err)
 	}

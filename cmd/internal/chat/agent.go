@@ -79,6 +79,8 @@ type SessionConfig struct {
 	// Store・OnDegrade は、耐久イベントログ (HubConfig の同名の項目に渡す。nil なら、リングだけ。ADR 0053)。
 	Store     EventStore
 	OnDegrade func(reason string)
+	// OptionalContentHash が true なら、応答の content_hash が無くても通す。ゼロ値 (false) は必須 (ADR 0042 決定 3)。本番の呼び手は立てない (試験だけ)。
+	OptionalContentHash bool
 }
 
 // Session は、1 回のエージェントの起動の、読む側 (Hub) と書く側 (Conversation) をつなぐ。プロセス・ネットワークには触れない。
@@ -100,10 +102,11 @@ func NewSession(cfg SessionConfig) *Session {
 	}
 	s := &Session{Hub: NewHub(cfg.Hub)}
 	s.Conv = NewConversation(ConversationConfig{
-		Feed:   NewFeed(cfg.Launch.newStream(), cfg.ID, nil),
-		Hub:    s.Hub,
-		Write:  func(line []byte) error { return s.q.WriteLine(line) },
-		OnStop: func() { s.q.Discard(); s.stop(cfg) },
+		Feed:               NewFeed(cfg.Launch.newStream(), cfg.ID, nil),
+		Hub:                s.Hub,
+		Write:              func(line []byte) error { return s.q.WriteLine(line) },
+		OnStop:             func() { s.q.Discard(); s.stop(cfg) },
+		RequireContentHash: !cfg.OptionalContentHash,
 	})
 	s.q = NewQueuedWriter(cfg.Input, 0, 0, func(error) { s.Conv.Stop() }) // 入力に書けない (エージェントが終わった・壊れた): 会話を終える
 	return s

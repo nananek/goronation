@@ -139,14 +139,15 @@ func TestE2EWebStartSendApproveDenyStop(t *testing.T) {
 	}
 
 	// 5. 世代の検査: 別の起動の世代・世代なしは、通らない。未決は動かない。
-	perm := func(gen, rid, outcome string) (int, string) {
-		b, _ := json.Marshal(map[string]string{"generation": gen, "request_id": rid, "outcome": outcome})
+	hash1 := permHashFrom(t, req1.data)
+	perm := func(gen, rid, hash, outcome string) (int, string) {
+		b, _ := json.Marshal(map[string]string{"generation": gen, "request_id": rid, "outcome": outcome, "content_hash": hash})
 		return send("permission", string(b))
 	}
-	if code, _ := perm("00000000000000000000000000000000", rid1, "allow_once"); code != 409 {
+	if code, _ := perm("00000000000000000000000000000000", rid1, hash1, "allow_once"); code != 409 {
 		t.Errorf("別の起動の世代 = %d (409 のはず)", code)
 	}
-	if code, _ := send("permission", `{"request_id":"`+rid1+`","outcome":"allow_once"}`); code != 400 {
+	if code, _ := send("permission", `{"request_id":"`+rid1+`","outcome":"allow_once","content_hash":"`+hash1+`"}`); code != 400 {
 		t.Errorf("世代なし = %d (400 のはず)", code)
 	}
 	if code, _ := send("message", `{"text":"割り込み"}`); code != 409 { // ターン中は、次の指示を受けない
@@ -157,7 +158,7 @@ func TestE2EWebStartSendApproveDenyStop(t *testing.T) {
 	}
 
 	// 6. 許可 → tool が実際に実行される (clone に new.txt ができる) → 完了。
-	if code, b := perm(h2.Generation, rid1, "allow_once"); code != 200 {
+	if code, b := perm(h2.Generation, rid1, hash1, "allow_once"); code != 200 {
 		t.Fatalf("許可 = %d %s", code, b)
 	}
 	resolved := sse.until(evType("permission.resolved"))
@@ -180,7 +181,7 @@ func TestE2EWebStartSendApproveDenyStop(t *testing.T) {
 	if b, _ := os.ReadFile(newTxt); string(b) != "turn 1\n" {
 		t.Errorf("new.txt = %q", b)
 	}
-	if code, _ := perm(h.Generation, rid1, "allow_once"); code != 409 { // 二重の応答
+	if code, _ := perm(h.Generation, rid1, hash1, "allow_once"); code != 409 { // 二重の応答
 		t.Errorf("二重の許可 = %d (409 のはず)", code)
 	}
 
@@ -188,11 +189,12 @@ func TestE2EWebStartSendApproveDenyStop(t *testing.T) {
 	if code, b := send("message", `{"text":"もう一度"}`); code != 200 {
 		t.Fatalf("2 回目の指示 = %d %s", code, b)
 	}
-	rid2 := requestIDFrom(t, sse.until(evType("permission.requested")).data)
+	req2 := sse.until(evType("permission.requested"))
+	rid2, hash2 := requestIDFrom(t, req2.data), permHashFrom(t, req2.data)
 	if rid2 != "perm-2" {
 		t.Fatalf("request_id = %q", rid2)
 	}
-	if code, b := perm(h.Generation, rid2, "reject_once"); code != 200 {
+	if code, b := perm(h.Generation, rid2, hash2, "reject_once"); code != 200 {
 		t.Fatalf("拒否 = %d %s", code, b)
 	}
 	deny := sse.until(func(f sseFrame) bool { return evType("message.text")(f) && strings.Contains(f.data, "request=perm-2") })
@@ -229,4 +231,18 @@ func requestIDFrom(t *testing.T, data string) string {
 		t.Fatal(err)
 	}
 	return v.Data.RequestID
+}
+
+// permHashFrom は、permission.requested の data.content_hash (応答に写す。ADR 0042 決定 3: 必須)。
+func permHashFrom(t *testing.T, data string) string {
+	t.Helper()
+	var v struct {
+		Data struct {
+			ContentHash string `json:"content_hash"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(data), &v); err != nil || !strings.HasPrefix(v.Data.ContentHash, "sha256:") {
+		t.Fatalf("content_hash が無い: %s (%v)", data, err)
+	}
+	return v.Data.ContentHash
 }

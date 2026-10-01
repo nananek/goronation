@@ -137,10 +137,10 @@ func TestOpencodeChatPermissionAllow(t *testing.T) {
 	if id != "per_1" {
 		t.Fatalf("request_id = %q", id)
 	}
-	if err := conv.ResolveIn(conv.Generation(), id, "allow_once"); err != nil {
+	if err := resolvePerm(t, conv, req, "allow_once"); err != nil {
 		t.Fatal(err)
 	}
-	if err := conv.ResolveIn(conv.Generation(), id, "allow_once"); err == nil {
+	if err := resolvePerm(t, conv, req, "allow_once"); err == nil {
 		t.Error("同じ要求への 2 回目の承認が通った")
 	}
 	res, at := ev.waitFor("決着", at, typeIs("permission.resolved"))
@@ -168,7 +168,7 @@ func TestOpencodeChatPermissionReject(t *testing.T) {
 		t.Fatal(err)
 	}
 	req, at := ev.waitFor("承認の要求", 0, typeIs("permission.requested"))
-	if err := conv.ResolveIn(conv.Generation(), requestIDOf(t, req), "reject_once"); err != nil {
+	if err := resolvePerm(t, conv, req, "reject_once"); err != nil {
 		t.Fatal(err)
 	}
 	ev.waitFor("完了", at, typeIs("turn.completed"))
@@ -186,7 +186,7 @@ func TestOpencodeChatAllowAlwaysIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	req, _ := ev.waitFor("承認の要求", 0, typeIs("permission.requested"))
-	if err := conv.ResolveIn(conv.Generation(), requestIDOf(t, req), "allow_always"); err == nil {
+	if err := resolvePerm(t, conv, req, "allow_always"); err == nil {
 		t.Fatal("allow_always が通った")
 	}
 	for _, r := range fakeRequests(stderr) {
@@ -212,7 +212,7 @@ func TestOpencodeChatQuestionForm(t *testing.T) {
 	}
 	formID := requestIDOf(t, form)
 	var r chat.FormResolve
-	if err := json.Unmarshal([]byte(`{"request_id":"`+formID+`","outcome":"answered","answer":{"q0":"Red"}}`), &r); err != nil {
+	if err := json.Unmarshal([]byte(`{"request_id":"`+formID+`","outcome":"answered","answer":{"q0":"Red"},"content_hash":"`+contentHashOf(t, form)+`"}`), &r); err != nil {
 		t.Fatal(err)
 	}
 	if err := conv.ResolveFormIn(conv.Generation(), formID, r); err != nil {
@@ -236,14 +236,14 @@ func TestOpencodeChatSubagentOriginAndReplyPath(t *testing.T) {
 	if originOf(t, req1) != "" {
 		t.Errorf("root の要求に Origin: %s", req1.JSON)
 	}
-	if err := conv.ResolveIn(conv.Generation(), requestIDOf(t, req1), "allow_once"); err != nil {
+	if err := resolvePerm(t, conv, req1, "allow_once"); err != nil {
 		t.Fatal(err)
 	}
 	req2, at := ev.waitFor("子の要求", at, typeIs("permission.requested"))
 	if originOf(t, req2) != "ses_2" {
 		t.Errorf("子の要求の Origin = %q: %s", originOf(t, req2), req2.JSON)
 	}
-	if err := conv.ResolveIn(conv.Generation(), requestIDOf(t, req2), "allow_once"); err != nil {
+	if err := resolvePerm(t, conv, req2, "allow_once"); err != nil {
 		t.Fatal(err)
 	}
 	ev.waitFor("完了", at, typeIs("turn.completed"))

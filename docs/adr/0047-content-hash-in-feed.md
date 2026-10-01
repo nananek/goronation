@@ -1,6 +1,6 @@
 # 0047. 内容ハッシュは Feed が付け、Conversation が照合する (M2)
 
-- 状態: 採用
+- 状態: 採用 (2026-10-01: 必須化は実施済み。ADR 0042)
 - 日付: 2026-10-01
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、ADR 0040・0041・0042・0046、`cmd/internal/chat/{feed,conversation}.go`
 

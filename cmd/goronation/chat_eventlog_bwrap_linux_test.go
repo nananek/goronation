@@ -88,7 +88,7 @@ func TestServeChatEventLogLifecycle(t *testing.T) {
 	}
 	do("/message", `{"text":"hi"}`)
 	var lastSeq string
-	var reqID string
+	var reqID, reqHash string
 	for {
 		f, ok := next(sc)
 		if !ok {
@@ -100,17 +100,18 @@ func TestServeChatEventLogLifecycle(t *testing.T) {
 		if strings.Contains(f.data, `"type":"permission.requested"`) {
 			var rv struct {
 				Data struct {
-					RequestID string `json:"request_id"`
+					RequestID   string `json:"request_id"`
+					ContentHash string `json:"content_hash"`
 				} `json:"data"`
 			}
 			json.Unmarshal([]byte(f.data), &rv)
-			reqID = rv.Data.RequestID
+			reqID, reqHash = rv.Data.RequestID, rv.Data.ContentHash
 			break
 		}
 	}
 	// 切断 → after で繋ぎ直す (まだ未決の権限要求は、画面がすでに持っている)。
 	closeSSE()
-	do("/permission", fmt.Sprintf(`{"generation":%q,"request_id":%q,"outcome":"allow_once"}`, h.Generation, reqID))
+	do("/permission", fmt.Sprintf(`{"generation":%q,"request_id":%q,"outcome":"allow_once","content_hash":%q}`, h.Generation, reqID, reqHash))
 	do("/stop", ``)
 	// エージェントが終わるのを待つ (end が届く場に、別の接続で待つ): 終わった後も、serve は動いていて、after で再接続できる。
 	var sawEnd bool
