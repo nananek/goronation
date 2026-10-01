@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -17,7 +16,7 @@ import (
 // 偽の opencode が敵対的に動いたとき (SSE・session の作成・root の食い違い)、起動は失敗側に倒れ、会話に何も渡らず、檻・egress の後片付けが済む。
 
 // tryOpencodeChat は、場面と偽の opencode の動き (fake.mode) を指定して、serve --chat を起動する (失敗しうる)。
-func tryOpencodeChat(t *testing.T, scene, mode string) (*chatSession, *bytes.Buffer, error) {
+func tryOpencodeChat(t *testing.T, scene, mode string) (*chatSession, *syncBuffer, error) {
 	t.Helper()
 	f := newRunFixture(t)
 	if os.Geteuid() == 0 {
@@ -36,7 +35,7 @@ func tryOpencodeChat(t *testing.T, scene, mode string) (*chatSession, *bytes.Buf
 	f.git(t, f.repo, "commit", "-q", "-m", "scene")
 	t.Setenv("HOME", f.home)
 	t.Setenv("GORONATION_OPENCODE", f.exe)
-	var stderr bytes.Buffer
+	var stderr syncBuffer
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	s, err := startServeChatSession(ctx, f.stateDir(), "", "opencode", "t", "t@e.invalid", f.repo, nil, &stderr)

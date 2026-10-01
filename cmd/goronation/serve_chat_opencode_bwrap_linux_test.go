@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -27,7 +26,7 @@ func goldenOpencodeDir() string {
 	return "../../spec/testdata/golden/opencode-serve"
 }
 
-func startOpencodeFixture(t *testing.T, scene string) (*chatSession, *chatEvents, *bytes.Buffer) {
+func startOpencodeFixture(t *testing.T, scene string) (*chatSession, *chatEvents, *syncBuffer) {
 	t.Helper()
 	f := newRunFixture(t)
 	if os.Geteuid() == 0 {
@@ -44,7 +43,7 @@ func startOpencodeFixture(t *testing.T, scene string) (*chatSession, *chatEvents
 	f.git(t, f.repo, "commit", "-q", "-m", "scene")
 	t.Setenv("HOME", f.home)
 	t.Setenv("GORONATION_OPENCODE", f.exe)
-	var stderr bytes.Buffer
+	var stderr syncBuffer
 	ctx, cancel := context.WithCancel(t.Context())
 	s, err := startServeChatSession(ctx, f.stateDir(), "", "opencode", "t", "t@e.invalid", f.repo, nil, &stderr)
 	if err != nil {
@@ -61,7 +60,7 @@ func startOpencodeFixture(t *testing.T, scene string) (*chatSession, *chatEvents
 }
 
 // fakeRequests は、偽の opencode が受けた要求 (REQ 行。標準エラー出力の転送の [agent] 付き) を、"METHOD path body" で返す。
-func fakeRequests(stderr *bytes.Buffer) []string {
+func fakeRequests(stderr *syncBuffer) []string {
 	var out []string
 	for _, l := range strings.Split(stderr.String(), "\n") {
 		if _, q, ok := strings.Cut(l, "REQ "); ok {
@@ -73,7 +72,7 @@ func fakeRequests(stderr *bytes.Buffer) []string {
 	return out
 }
 
-func waitRequests(t *testing.T, stderr *bytes.Buffer, n int) []string {
+func waitRequests(t *testing.T, stderr *syncBuffer, n int) []string {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
@@ -300,7 +299,7 @@ func TestOpencodeChatRefusesExtraArgs(t *testing.T) {
 	}
 	t.Setenv("HOME", f.home)
 	t.Setenv("GORONATION_OPENCODE", f.exe)
-	var stderr bytes.Buffer
+	var stderr syncBuffer
 	_, err := startServeChatSession(t.Context(), f.stateDir(), "", "opencode", "t", "t@e.invalid", f.repo, []string{"--port", "1"}, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "引数を受けない") {
 		t.Fatalf("err = %v", err)
