@@ -53,6 +53,7 @@ func startOpencodeFixture(t *testing.T, scene string) (*chatSession, *chatEvents
 	}
 	t.Cleanup(func() {
 		s.Chat.Conv.Stop()
+		s.cancel() // 会話が先に終わっていても、檻を止める
 		s.Wait()
 		cancel()
 	})

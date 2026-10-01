@@ -13,13 +13,11 @@
 //
 // # 規則
 //
-//   - line-limit: 1 行は DefaultMaxLine (1 MiB) まで。超える行は貯めずに捨てる (LineReader)。詳細は各型の doc。
+//   - line-limit: 1 行は DefaultMaxLine (1 MiB) まで。超える行は貯めずに捨てる (LineReader)。opencode の SSE・HTTP の指示も同じ検査を通す (SSEReader・ParseHTTPRequest。ADR 0051)。
 //   - no-raw: Event は Raw を持たず、JSON は 1 行で DefaultMaxEvent (2 MiB) まで。ID・TS・Session・Seq は上書きする (Feed)。
 //   - ring: バイト上限を超えたら古い方から捨てる。Snapshot とライブの境目に、取りこぼしも重複も無い (Hub)。
 //   - bind: 承認は要求 ID に束縛し、1 回だけ有効。許可する input は、要求時に保持した値だけ (Conversation。ADR 0011)。
 //   - pin: 未決の permission.requested は、リングから溢れても Snapshot に残る。上限は MaxPendingRequests (Conversation・Hub)。
-//   - http: opencode (TransportHTTP) は、SSE の data: を読み (SSEReader)、root の session が一致するまで何も渡さない (ReadSSE)。指示は、
-//     アダプタの出す HTTP 要求を、固定の形だけに独立に検査する (ParseHTTPRequest。ADR 0051)。実行 (ネットワーク) は cmd/goronation。
 //   - expire: 終了・Stop・書き込みの失敗で、未決は全部失効する。タイマーによる失効・自動停止は無い (Conversation)。
 //     入力への書き込みは有界のキュー (256 行・4 MiB) で、満杯は書き込みの失敗 (QueuedWriter。ADR 0012)。
 //
