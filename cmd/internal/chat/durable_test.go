@@ -905,4 +905,13 @@ func TestTrimmedBoundaryNeverRegresses(t *testing.T) {
 	if got := h.w.trimmed.Load(); got != 20 {
 		t.Fatalf("後退した: %d", got)
 	}
+	trimWith(0) // 固定でない行が残らなかった: W+1 まで削った
+	b := h.w.trimmed.Load()
+	if b < 21 || b > uint64(h.w.written.Load()+1) {
+		t.Fatalf("0 は W+1 になる: %d (W=%d)", b, h.w.written.Load())
+	}
+	trimWith(5) // 固定を解いた古い行 (低い値): 0 のあとでも後退しない
+	if got := h.w.trimmed.Load(); got < b {
+		t.Fatalf("0 のあとに後退した: %d < %d", got, b)
+	}
 }

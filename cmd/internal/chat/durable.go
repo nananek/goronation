@@ -80,7 +80,7 @@ type storeWriter struct {
 
 	written  atomic.Int64 // W: 書き込み済みの最大の seq (無ければ -1)
 	degraded atomic.Bool
-	trimmed  atomic.Uint64 // 最後の Trim が返した、残った固定でない行の最小の seq (0 は、Trim が無い・残らなかった)。first_seq の元 (固定を解いた古い行に引きずられない)
+	trimmed  atomic.Uint64 // 最後の Trim が返した、残った固定でない行の最小の seq (0 は、Trim がまだ無い。残らなかったときは W+1。後退しない)。first_seq の元 (固定を解いた古い行に引きずられない)
 	trims    atomic.Int64  // Trim の前後で 1 ずつ増える (奇数は Trim の最中)。Backfill が、読んでいる最中の GC を検出する
 
 	mu      sync.Mutex // 小さな Mutex (Hub.mu の中から取る。順序: Hub.mu → mu)。キューの出し入れだけ
@@ -301,8 +301,13 @@ func (w *storeWriter) run() {
 			start = time.Now()
 			w.trims.Add(1)
 			first, err := w.store.Trim(target)
-			if cur := w.trimmed.Load(); err == nil && (first == 0 || cur == 0 || first > cur) {
-				w.trimmed.Store(first) // 戻さない (何も削らなかった Trim が、低い値を返しても、省略を隠さない)。trims を偶数に戻す前に (SubscribeAfter が、偶数の trims と組みで読む)
+			if err == nil {
+				if first == 0 { // 固定でない行が残らなかった: 書き込み済み (W) までの固定でない行は、全部削った
+					first = uint64(w.written.Load() + 1)
+				}
+				if first > w.trimmed.Load() { // 戻さない (何も削らなかった Trim が、低い値を返しても、省略を隠さない)。trims を偶数に戻す前に (SubscribeAfter が、偶数の trims と組みで読む)
+					w.trimmed.Store(first)
+				}
 			}
 			w.trims.Add(1)
 			d = time.Since(start)
