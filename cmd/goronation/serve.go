@@ -27,7 +27,8 @@ cookie も WebAuthn も持たない。認証は goronation web が済ませて�
   --repo PATH     PATH (ローカルの repo) の private clone を作り、その中でエージェントを起動する
   --session ID    前に goronation serve 自身が作ったセッションを再開する (--repo とは同時に使えない)
   --chat          端末ビューの代わりに、構造化チャット (stream-json を檻で回す。SSE の GET /events と、POST /message・
-                  /permission・/stop) を、UDS chat.sock で出す。エージェントは claude だけ。root では動かせない (非 root の利用者で動かす)。
+                  /permission・/stop) を、UDS chat.sock で出す。エージェントは claude か opencode (opencode は、--
+                  の後ろの引数を受けない)。root では動かせない (非 root の利用者で動かす)。
                   最初の指示は、チャット (POST /message) から送る (起動しただけでは、エージェントに何も送らない)
   --agent NAME    動かすエージェント (goronation run と同じ表。--session のときは、記録したものと違うと断る)
   --name N        clone の user.name (--repo のとき)

@@ -102,6 +102,9 @@ func validID(s string) bool {
 	return true
 }
 
+// ValidID は、validID を、transport (cmd/internal/chat) が使うための公開。session・要求・form の ID を、path に入れてよいか。
+func ValidID(s string) bool { return validID(s) }
+
 // isObject は、m が JSON のオブジェクトか。
 func isObject(m json.RawMessage) bool {
 	m = bytes.TrimSpace(m)

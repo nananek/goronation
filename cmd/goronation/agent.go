@@ -54,6 +54,12 @@ type agentProfile struct {
 	// mcp は、goronation run --push のとき、goronation mcp (mcp.go) を、このエージェントに MCP サーバーとして登録する方法 (起動時の
 	// 引数・環境変数への変換)。nil なら登録しない。呼び手 (cage.go) は、エージェントの種類で分岐せず、これを呼ぶだけ。
 	mcp mcpInjector
+	// relayTokenEnv・relayVersionPrefix は、HTTP の transport (chat の opencode) のとき、init に渡す値 (cageConfig.RelayTokenEnv・RelayVersionPrefix。
+	// 本番と試験が同じ値を使う)。relayTokenEnv が空のエージェントは、HTTP の transport では動かせない。
+	relayTokenEnv, relayVersionPrefix string
+	// serveEnv は、HTTP の transport (RelayPort のとき) の環境変数: MCP の設定と、session の permissions の予備 (ADR 0021 決定 2) を、1 つの
+	// 環境変数にまとめる (同じ名前を 2 度渡すと、後勝ちで片方が消える)。nil なら、mcp の変換を使う。
+	serveEnv func(servers []mcpServerDef) []bwrap.EnvVar
 }
 
 // homeFile は、repo ごとの HOME を作るときに置くファイル 1 つ。
@@ -152,7 +158,10 @@ var opencodeProfile = agentProfile{
 		{Key: "OPENCODE_DISABLE_SHARE", Value: "1"},
 		{Key: "OPENCODE_DISABLE_LSP_DOWNLOAD", Value: "1"},
 	},
-	hosts: egress.OpenCodeHosts,
+	hosts:              egress.OpenCodeHosts,
+	relayTokenEnv:      "OPENCODE_PASSWORD",
+	relayVersionPrefix: "opencode v2.0.",
+	serveEnv:           opencodeServeEnv,
 	// opencode に onboarding は無い (認証を保存すれば、次の起動は、そのまま使える)。--login は、auth login (provider を選び、
 	// Zen なら API キーを貼る) を起動する: 終わると、自分で終了する。
 	// auth.json (provider の API キー・OAuth) と mcp-auth.json (MCP の認証) は、その場で書く (実測: 同じ inode。symlink を辿って書き、symlink は保たれる)

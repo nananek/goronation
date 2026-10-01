@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/nananek/goronation/agent/claude"
+	"github.com/nananek/goronation/agent/opencode"
 	"github.com/nananek/goronation/core/agent"
 )
 
@@ -27,7 +28,7 @@ const (
 	TransportHTTP
 )
 
-// Agent は、エージェント名 (--agent の値) の Launch を返す。M1.5 は claude だけ (opencode は M2)。未知の名前は error。
+// Agent は、エージェント名 (--agent の値) の Launch を返す。claude (標準入出力) と opencode (HTTP + SSE)。未知の名前は error。
 func Agent(name string) (Launch, error) {
 	switch name {
 	case claude.Name:
@@ -42,8 +43,17 @@ func Agent(name string) (Launch, error) {
 			newStream: claude.Adapter{}.NewStream,
 			transport: TransportStdio,
 		}, nil
+	case opencode.Name:
+		return Launch{
+			name: name,
+			// serve --stdio: 標準入力が control・標準出力が init の状態の 1 行 (ADR 0028・0030)。--port は、実行時に決まるので、呼び手が足す。
+			// --hostname は 127.0.0.1 に固定する (呼び手の引数では上書きさせない。ADR 0052)。
+			args:      []string{"serve", "--stdio", "--hostname", "127.0.0.1"},
+			newStream: opencode.Adapter{}.NewStream,
+			transport: TransportHTTP,
+		}, nil
 	}
-	return Launch{}, fmt.Errorf("chat: --chat で動かせないエージェント %q (対応は claude だけ)", name)
+	return Launch{}, fmt.Errorf("chat: --chat で動かせないエージェント %q (対応は claude か opencode)", name)
 }
 
 // Name は、エージェント名。

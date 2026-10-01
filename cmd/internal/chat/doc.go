@@ -13,7 +13,7 @@
 //
 // # 規則
 //
-//   - line-limit: 1 行は DefaultMaxLine (1 MiB) まで。超える行は貯めずに捨てる (LineReader)。詳細は各型の doc。
+//   - line-limit: 1 行は DefaultMaxLine (1 MiB) まで。超える行は貯めずに捨てる (LineReader)。opencode の SSE・HTTP の指示も同じ検査を通す (SSEReader・ParseHTTPRequest。ADR 0051)。
 //   - no-raw: Event は Raw を持たず、JSON は 1 行で DefaultMaxEvent (2 MiB) まで。ID・TS・Session・Seq は上書きする (Feed)。
 //   - ring: バイト上限を超えたら古い方から捨てる。Snapshot とライブの境目に、取りこぼしも重複も無い (Hub)。
 //   - bind: 承認は要求 ID に束縛し、1 回だけ有効。許可する input は、要求時に保持した値だけ (Conversation。ADR 0011)。

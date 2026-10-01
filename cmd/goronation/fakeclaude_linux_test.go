@@ -309,6 +309,8 @@ func fakeClaude(args []string) int {
 		return 0
 	case "relay-upstream":
 		return fakeRelayUpstream(args[1:])
+	case "serve": // chat の opencode (serve --stdio --port N): golden の場面を再生する (fakeopencode_linux_test.go)
+		return fakeOpencodeServe(args[1:])
 	case "landlock-incage": // landlock_exec_linux_test.go
 		return fakeLandlockInCage()
 	case "landlock-incage-probe":

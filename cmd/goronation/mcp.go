@@ -85,30 +85,54 @@ func claudeMCPInject(servers []mcpServerDef) (args []string, env []bwrap.EnvVar)
 	return []string{"--mcp-config", string(b)}, nil
 }
 
-// opencodeMCPInject は、opencode の環境変数 OPENCODE_CONFIG_CONTENT (起動時の inline JSON。project の設定に
-// deep-merge され、ファイルは書かない) に変換する。opencode の実機での検証はできていない (このホストに実物の
+// opencodeConfig は、OPENCODE_CONFIG_CONTENT (起動時の inline JSON。project の設定に deep-merge され、ファイルは書かない) の中身。
+type opencodeConfig struct {
+	Schema     string                      `json:"$schema"`
+	Permission map[string]string           `json:"permission,omitempty"`
+	MCP        map[string]opencodeMCPEntry `json:"mcp,omitempty"`
+}
+
+type opencodeMCPEntry struct {
+	Type    string   `json:"type"`
+	Command []string `json:"command"`
+}
+
+func opencodeMCPEntries(servers []mcpServerDef) map[string]opencodeMCPEntry {
+	m := make(map[string]opencodeMCPEntry, len(servers))
+	for _, s := range servers {
+		m[s.Name] = opencodeMCPEntry{Type: "local", Command: append([]string{s.Command}, s.Args...)}
+	}
+	return m
+}
+
+func opencodeConfigEnv(cfg opencodeConfig) []bwrap.EnvVar {
+	cfg.Schema = "https://opencode.ai/config.json"
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return nil // 固定の構造 (文字列だけ) なので、実際には起こらない
+	}
+	return []bwrap.EnvVar{{Key: "OPENCODE_CONFIG_CONTENT", Value: string(b)}}
+}
+
+// opencodeMCPInject は、opencode の環境変数 OPENCODE_CONFIG_CONTENT に変換する。opencode の実機での検証はできていない (このホストに実物の
 // バイナリが無い): 形は、公式ドキュメント (https://opencode.ai/docs/mcp-servers/、
 // https://opencode.ai/docs/config/#custom) の記述から確かめた。
 func opencodeMCPInject(servers []mcpServerDef) (args []string, env []bwrap.EnvVar) {
 	if len(servers) == 0 {
 		return nil, nil
 	}
-	type entry struct {
-		Type    string   `json:"type"`
-		Command []string `json:"command"`
+	return nil, opencodeConfigEnv(opencodeConfig{MCP: opencodeMCPEntries(servers)})
+}
+
+// opencodeServeEnv は、serve --chat (HTTP の transport) の OPENCODE_CONFIG_CONTENT: permission の既定を ask にし (ADR 0021 決定 2。session の
+// permissions の予備で、子の session・permissions を持たない経路も、承認を要求する)、MCP があれば同じ JSON に入れる (MCP の有無によらず、
+// permission は必ず渡す)。
+func opencodeServeEnv(servers []mcpServerDef) []bwrap.EnvVar {
+	cfg := opencodeConfig{Permission: map[string]string{"*": "ask"}}
+	if len(servers) > 0 {
+		cfg.MCP = opencodeMCPEntries(servers)
 	}
-	m := make(map[string]entry, len(servers))
-	for _, s := range servers {
-		m[s.Name] = entry{Type: "local", Command: append([]string{s.Command}, s.Args...)}
-	}
-	b, err := json.Marshal(struct {
-		Schema string           `json:"$schema"`
-		MCP    map[string]entry `json:"mcp"`
-	}{Schema: "https://opencode.ai/config.json", MCP: m})
-	if err != nil {
-		return nil, nil
-	}
-	return nil, []bwrap.EnvVar{{Key: "OPENCODE_CONFIG_CONTENT", Value: string(b)}}
+	return opencodeConfigEnv(cfg)
 }
 
 // JSON-RPC 2.0 (MCP のメッセージの形)。ID は、通知 (応答しない) かどうかの判定に使うだけなので、そのまま
