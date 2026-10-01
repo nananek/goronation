@@ -176,9 +176,26 @@ func hiddenMetadata(raw json.RawMessage) bool {
 				return true
 			}
 			for _, f := range fs {
-				for fk := range f {
-					// additions・deletions・status は、patch の集計で、patch (詳細に出す) から分かる (採取した edit の files は全てこの形)
-					if fk != "file" && fk != "patch" && fk != "additions" && fk != "deletions" && fk != "status" {
+				for fk, fv := range f {
+					// file・patch は詳細に出す文字列。additions・deletions・status は patch の集計で、patch から分かる (採取した edit の files は
+					// 全てこの形)。型・長さを検査しないと、見えない場所に自由な値を持てる (詳細に出す側は、型違いを空にする)。
+					switch fk {
+					case "file", "patch":
+						var str string
+						if json.Unmarshal(fv, &str) != nil {
+							return true
+						}
+					case "additions", "deletions":
+						var n float64
+						if json.Unmarshal(fv, &n) != nil {
+							return true
+						}
+					case "status":
+						var str string
+						if json.Unmarshal(fv, &str) != nil || len(str) > 32 {
+							return true
+						}
+					default:
 						return true
 					}
 				}
