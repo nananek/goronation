@@ -1,6 +1,6 @@
 # 0053. 耐久イベントログは、同期の Store (eventlog) と、chat の非同期の書き手に分ける (M2)
 
-- 状態: 採用
+- 状態: 採用 (2026-10-01 に追記: 決定 4 のロックを、`events.lock` のファイルから、セッションのディレクトリ自身の flock に変えた (attack-review L-2)。決定 1 の `FirstUnpinned` は、chat の `EventStore` から削除した (③との契約調整)。`Trim` の返り値の契約は決定 1 のとおり)
 - 日付: 2026-10-01
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、ADR 0023・0024・0025・0027、`cmd/internal/chat`・`cmd/internal/eventlog` (実装の PR)
 
@@ -10,10 +10,10 @@ ADR 0023 決定 7 は、実装を `cmd/internal/eventlog` に置き、境界の�
 
 ## 決定
 
-1. **`eventlog` は、同期の Store だけを持つ。** 基本型 (`seq`・JSON のバイト列) の API: `Apply` (追記・固定・固定の解除を 1 トランザクション)・`Range(after, before, limit)` (読み取り専用の接続)・`FirstUnpinned`・`Trim(budget)` (`pinned=0` の古い行から削る)・`Size`・`Close(remove)`・起動時の `SweepStale`。キュー・縮退・W は持たない。`chat` を import しない。
+1. **`eventlog` は、同期の Store だけを持つ。** 基本型 (`seq`・JSON のバイト列) の API: `Apply` (追記・固定・固定の解除を 1 トランザクション)・`Range(after, before, limit)` (読み取り専用の接続)・`Trim(budget)` (`pinned=0` の古い行から削る。返り値は、削った範囲より後の、固定でない行の最小の `seq` (無ければ 0)。固定でない行の最小を単純に返すのではない。0 でない返り値は単調に増える。hello の `first_seq` の元)。`eventlog` の `FirstUnpinned` は、`Trim` が使うので残るが、chat の `EventStore` には含めない・`Size`・`Close(remove)`・起動時の `SweepStale`。キュー・縮退・W は持たない。`chat` を import しない。
 2. **非同期の書き手は `chat` が持つ。** `Hub.Update` は、Hub が実際に決めた結果 (固定できたもの・解除したもの・durable の Event) を、有界のキューに積むだけ。専用の goroutine が `Apply` し、W・縮退の判定 (ADR 0027 決定 5)・`Trim` の起動を持つ。縮退は、コールバックで呼び手 (serve) に知らせる (`chat` は標準エラー出力に書かない)。
 3. **インターフェース (`EventStore`) は `chat` に置く。** `eventlog` の型が満たす。型は、`chat` の側にも同じ形で持ち、`cmd/goronation` が薄く繋ぐ (`chat` が `eventlog` を import しない)。
-4. **ロックは `eventlog` が、DB と同じディレクトリの `events.lock` で持つ** (ADR 0023 決定 5)。`Close(remove)` が、DB・`-wal`・`-shm`・`events.lock` を消す。
+4. **ロックは `eventlog` が、セッションのディレクトリ自身の flock で持つ** (ADR 0023 決定 5。lock ファイルは無い)。`Close(remove)` が、DB・`-wal`・`-shm` を消す (ロックを持ったまま消し、最後に手放す)。
 5. **`Store` から読んだ行は、信用しない。** `chat` が、JSON として妥当か・大きさ・`seq` の単調増加を確かめてから配る (同じ利用者の別プロセスが、DB を書き換えうる)。
 
 ## 帰結
