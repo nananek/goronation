@@ -70,7 +70,10 @@ func (s *Stream) permissionAsked(o *out, data json.RawMessage) {
 		return
 	}
 	if s.pending == nil {
-		s.pending, s.seen = map[string]pendingPerm{}, map[[32]byte]uint8{}
+		s.pending = map[string]pendingPerm{}
+	}
+	if s.seen == nil { // form が先に来ていると、seen は既にある (作り直すと、見た ID を失う)
+		s.seen = map[[32]byte]uint8{}
 	}
 	s.seen[key] = stRequested
 	s.nextSeq++

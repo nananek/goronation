@@ -411,3 +411,17 @@ func TestToolNamesAreForgottenWhenDone(t *testing.T) {
 		t.Fatalf("calls = %d", len(s.calls))
 	}
 }
+
+// 先に form を決着させ、そのあとに最初の permission.asked が来ても、見た ID の記録 (seen) を失わない。失うと、決着済みの form の
+// 再要求が新しい要求として通る。
+func TestSeenSurvivesFirstPermission(t *testing.T) {
+	s := started(t)
+	feed(t, s, "form.created", formCreatedData("frm_1", "ses_root", colorField))
+	if _, _, err := cmdForm(t, s, v0.FormResolve{RequestID: "frm_1", Outcome: v0.FormCancelled}); err != nil {
+		t.Fatal(err)
+	}
+	feed(t, s, "permission.asked", asked("per_1", "ses_root", "shell", `["ls"]`, ""))
+	if envs := feed(t, s, "form.created", formCreatedData("frm_1", "ses_root", colorField)); len(envs) != 1 || envs[0].Type != v0.TypeAgentFrame {
+		t.Fatalf("決着済みの form の再要求が通った: %v", types(envs))
+	}
+}

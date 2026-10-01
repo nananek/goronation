@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/nananek/goronation/core/agent"
@@ -298,15 +299,15 @@ func (s *Stream) toolSuccess(o *out, data json.RawMessage) {
 		o.frame()
 		return
 	}
-	text := ""
+	var text strings.Builder
 	if !d.Content.Bad {
 		for _, c := range d.Content.V {
 			if c.Type.V == "text" {
-				text += c.Text.V
+				text.WriteString(c.Text.V)
 			}
 		}
 	}
-	m := map[string]any{"call_id": d.ID.V, "status": v0.ToolCompleted, "output": text}
+	m := map[string]any{"call_id": d.ID.V, "status": v0.ToolCompleted, "output": text.String()}
 	if !d.Metadata.Bad && !d.Metadata.V.Exit.Bad && d.Metadata.V.Exit.V != nil {
 		m["exit"] = *d.Metadata.V.Exit.V
 	}
