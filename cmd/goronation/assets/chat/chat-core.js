@@ -228,8 +228,8 @@
   // shownFully は、承認 (許可) してよい内容を、全部見せているか (chat.js の、枠を見た範囲・時間の判定は、別に要る)。詳細があれば詳細 (全項目を切らずに・
   // details_truncated でない)、旧い形は input。request_id が見た目どおりでなければ、どちらでも許可させない。
   function shownFully(item) {
-    if (item.idPlain !== true) return false;
-    if (item.details.has) return item.detailsTruncated === false && item.details.cut === false;
+    if (item.idPlain !== true || item.detailsTruncated !== false) return false; // details_truncated は、詳細が空・無くても、拒否だけ (ADR 0048 決定 1)
+    if (item.details.has) return item.details.cut === false;
     return item.input.cut === false;
   }
 

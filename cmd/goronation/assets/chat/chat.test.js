@@ -1234,6 +1234,10 @@ test('詳細の関門: details_truncated・項目の切り・項目数・形の�
     assert.strictEqual(it.details.has, false);
     assert.strictEqual(core.shownFully(it), true);
   }
+  for (const det of [undefined, []]) { // 詳細が空・無くても、details_truncated は拒否だけ
+    const it = stateWith([ev(0, 'permission.requested', permWithDetails('t', {details: det, details_truncated: true}))]).items[0];
+    assert.strictEqual(core.shownFully(it), false);
+  }
   const cutInput = stateWith([ev(0, 'permission.requested', permWithDetails('h', {details: undefined, input: {c: 'y'.repeat(1 << 20)}}))]).items[0];
   assert.strictEqual(core.shownFully(cutInput), false);
   // 詳細が全部見えていれば、input が巨大でも (畳んだ参考に過ぎない)、許可できる。
