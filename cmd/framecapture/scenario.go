@@ -58,6 +58,9 @@ type claudePermissionAnswer struct {
 	Outcome string `json:"outcome"`
 	// Message は、Outcome が "deny" のときの control_response の message (人間向けの却下理由)。
 	Message string `json:"message"`
+	// Answers は、Outcome が "allow" のときの、質問 (AskUserQuestion) への回答: tool の input に answers として足して、
+	// updatedInput で返す (質問の文 → 回答。複数選択の値の形は、場面で試す)。無ければ updatedInput を付けない。
+	Answers map[string]any `json:"answers"`
 }
 
 // loadScenario は、path の JSON を読んで検証する (未知のキーは、綴りの誤りとして error にする)。
