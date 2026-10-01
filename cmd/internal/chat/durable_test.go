@@ -658,6 +658,9 @@ func TestBackfillRejectsTamperedRows(t *testing.T) {
 		"durable でない": func(a, b uint64, l int) []StoredEvent {
 			return []StoredEvent{{Seq: a + 1, Payload: []byte(fmt.Sprintf(`{"seq":%d,"type":"x","durable":false}`, a+1))}}
 		},
+		"valid で大きすぎる": func(a, b uint64, l int) []StoredEvent {
+			return []StoredEvent{{Seq: a + 1, Payload: []byte(fmt.Sprintf(`{"seq":%d,"type":"x","durable":true,"p":"%s"}`, a+1, strings.Repeat("a", DefaultMaxEvent)))}}
+		},
 		"空": func(a, b uint64, l int) []StoredEvent { return []StoredEvent{{Seq: a + 1}} },
 		"大きすぎる": func(a, b uint64, l int) []StoredEvent {
 			return []StoredEvent{{Seq: a + 1, Payload: make([]byte, DefaultMaxEvent+1)}}
@@ -814,6 +817,7 @@ func TestBackfillStaleWhenTrimRunsDuringBackfill(t *testing.T) {
 	if err != nil || !s.Resumed() {
 		t.Fatal(err)
 	}
+	s.Backfill.batch = 2
 	if _, err := s.Backfill.Next(); err != nil {
 		t.Fatal(err)
 	}
@@ -860,4 +864,20 @@ func TestPinOnlyFloodIsBounded(t *testing.T) {
 		h.Update(nil, []Event{e}, nil) // 同じ Event の固定の繰り返し
 	}
 	waitFor(t, "縮退", func() bool { return p.n.Load() == 1 })
+}
+
+// durable でない Event は、Store に書かない。
+func TestNonDurableEventsAreNotStored(t *testing.T) {
+	st := newFakeStore()
+	h := NewHub(HubConfig{Store: st})
+	h.Publish(dev(0), Event{Seq: 1, Type: "message.delta", JSON: []byte(`{"seq":1}`)}, dev(2))
+	h.Close(0)
+	if err := h.WaitStore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if _, ok := st.rows[1]; ok || len(st.rows) != 2 {
+		t.Fatalf("rows=%v", st.rows)
+	}
 }
