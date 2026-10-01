@@ -155,6 +155,40 @@ func postJSON(t *testing.T, srv *httptest.Server, path, body string) (int, strin
 	return post(t, srv, path, "application/json", body)
 }
 
+// permissionEvent は、permission.requested を読み、request_id と content_hash を返す (応答に写す。ADR 0042 決定 3: 必須)。
+func permissionEvent(t *testing.T, sse *sseReader) (id, hash string) {
+	t.Helper()
+	f := sse.until(evType("permission.requested"))
+	var v struct {
+		Data struct {
+			RequestID   string `json:"request_id"`
+			ContentHash string `json:"content_hash"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(f.data), &v); err != nil || v.Data.RequestID == "" || !strings.HasPrefix(v.Data.ContentHash, "sha256:") {
+		t.Fatalf("permission.requested = %s", f.data)
+	}
+	return v.Data.RequestID, v.Data.ContentHash
+}
+
+// postPermission は、受けた content_hash を写して POST /permission する。
+func postPermission(t *testing.T, srv *httptest.Server, gen, id, hash, outcome string) (int, string) {
+	t.Helper()
+	b, _ := json.Marshal(map[string]string{"generation": gen, "request_id": id, "outcome": outcome, "content_hash": hash})
+	return postJSON(t, srv, "/permission", string(b))
+}
+
+// postForm は、受けた content_hash を写して POST /form する (answer は、answered のときだけ)。
+func postForm(t *testing.T, srv *httptest.Server, gen, id, hash, outcome string, answer map[string]any) (int, string) {
+	t.Helper()
+	m := map[string]any{"generation": gen, "request_id": id, "outcome": outcome, "content_hash": hash}
+	if answer != nil {
+		m["answer"] = answer
+	}
+	b, _ := json.Marshal(m)
+	return postJSON(t, srv, "/form", string(b))
+}
+
 func withTimeout(t *testing.T, d time.Duration) {
 	t.Helper()
 	timer := time.AfterFunc(d, func() { panic("timeout: " + t.Name()) })
@@ -182,28 +216,19 @@ func TestChatHTTPFlow(t *testing.T) {
 	if code, _ := postJSON(t, srv, "/message", `{"text":"again"}`); code != 409 { // ターンの途中
 		t.Errorf("ターン中の message = %d (409 のはず)", code)
 	}
-	req := sse.until(evType("permission.requested"))
-	var rv struct {
-		Data struct {
-			RequestID string `json:"request_id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(req.data), &rv); err != nil || rv.Data.RequestID == "" {
-		t.Fatalf("permission.requested = %s", req.data)
-	}
-	id := rv.Data.RequestID
+	id, hash := permissionEvent(t, sse)
 	body := func(gen, outcome string) string {
-		b, _ := json.Marshal(map[string]string{"generation": gen, "request_id": id, "outcome": outcome})
+		b, _ := json.Marshal(map[string]string{"generation": gen, "request_id": id, "outcome": outcome, "content_hash": hash})
 		return string(b)
 	}
 	for _, tc := range []struct {
 		name, body string
 		want       int
 	}{
-		{"世代なし", `{"request_id":"` + id + `","outcome":"allow_once"}`, 400},
+		{"世代なし", `{"request_id":"` + id + `","outcome":"allow_once","content_hash":"` + hash + `"}`, 400},
 		{"世代が空", body("", "allow_once"), 400},
 		{"別の起動の世代", body("00000000000000000000000000000000", "allow_once"), 409},
-		{"未知の request_id", `{"generation":"` + h.Generation + `","request_id":"nope","outcome":"allow_once"}`, 404},
+		{"未知の request_id", `{"generation":"` + h.Generation + `","request_id":"nope","outcome":"allow_once","content_hash":"` + hash + `"}`, 404},
 		{"不正な outcome", body(h.Generation, "allow_always"), 400},
 	} {
 		if code, b := postJSON(t, srv, "/permission", tc.body); code != tc.want {
@@ -251,7 +276,7 @@ func TestChatHTTPGenerationDiffersPerLaunch(t *testing.T) {
 	if g1 == "" || g1 == g2 {
 		t.Fatalf("世代が起動ごとに違わない: %q %q", g1, g2)
 	}
-	if code, _ := postJSON(t, srv2, "/permission", `{"generation":"`+g1+`","request_id":"r","outcome":"allow_once"}`); code != 409 {
+	if code, _ := postJSON(t, srv2, "/permission", `{"generation":"`+g1+`","request_id":"r","outcome":"allow_once","content_hash":"sha256:00"}`); code != 409 {
 		t.Errorf("別の起動の世代 = %d (409 のはず)", code)
 	}
 }
@@ -362,6 +387,59 @@ func TestChatHTTPSSEDropsRawNewlineEvent(t *testing.T) {
 		if l == "event: end" || strings.Contains(l, "\r") {
 			t.Errorf("偽造された行が届いた: %q", sse.raw)
 		}
+	}
+}
+
+// 本番の既定は、content_hash 必須 (ADR 0042 決定 3): 無ければ 400 content_hash_required・違えば 409 content_changed・写せば 200。拒否では未決が動かない。
+// 限界: 内容の取り違え (別タブ・古い画面) を防ぐもので、乗っ取り (hash を読める者が、その値を写す) には効かない (ADR 0042 決定 5)。
+func TestChatHTTPContentHashRequired(t *testing.T) {
+	withTimeout(t, 60*time.Second)
+	for _, kind := range []string{"permission", "form"} {
+		t.Run(kind, func(t *testing.T) {
+			mode, msg := "flow", "hi"
+			if kind == "form" {
+				mode, msg = "ask", "ask"
+			}
+			s, srv := newInProcChat(t, mode)
+			sse := openSSE(t, srv)
+			hello, _ := sse.next()
+			var h struct{ Generation string }
+			json.Unmarshal([]byte(hello.data), &h)
+			if code, b := postJSON(t, srv, "/message", `{"text":"`+msg+`"}`); code != 200 {
+				t.Fatalf("message: %d %s", code, b)
+			}
+			var id, hash string
+			resolve := func(hash string) (int, string) {
+				m := map[string]any{"generation": h.Generation, "request_id": id}
+				if hash != "" {
+					m["content_hash"] = hash
+				}
+				if kind == "form" {
+					m["outcome"], m["answer"] = "answered", map[string]any{"q0": "青"}
+				} else {
+					m["outcome"] = "allow_once"
+				}
+				b, _ := json.Marshal(m)
+				return postJSON(t, srv, "/"+kind, string(b))
+			}
+			if kind == "form" {
+				id, hash = formEvent(t, sse)
+			} else {
+				id, hash = permissionEvent(t, sse)
+			}
+			if code, b := resolve(""); code != 400 || errCode(b) != "content_hash_required" {
+				t.Errorf("hash 無し: %d %s", code, b)
+			}
+			if code, b := resolve("sha256:00"); code != 409 || errCode(b) != "content_changed" {
+				t.Errorf("違う hash: %d %s", code, b)
+			}
+			if s.Chat.Conv.Pending() != 1 {
+				t.Fatalf("拒否された応答で、未決が動いた: pending=%d", s.Chat.Conv.Pending())
+			}
+			if code, b := resolve(hash); code != 200 {
+				t.Errorf("正しい hash: %d %s", code, b)
+			}
+		})
 	}
 }
 
@@ -507,7 +585,7 @@ func TestChatHTTPFormFlow(t *testing.T) {
 		{"回答が数値", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":1}`), 400, "bad_json"},
 		{"回答が null", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":null}`), 400, "bad_json"},
 		{"配列の要素が数値", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":[1]}`), 400, "bad_json"},
-		{"cancelled に answer", "/form", "application/json", body(`"outcome":"cancelled","answer":{"q0":"青"}`), 400, "bad_answer"},
+		{"cancelled に answer", "/form", "application/json", body(`"outcome":"cancelled","answer":{"q0":"青"},"content_hash":"` + hash + `"`), 400, "bad_answer"},
 		{"知らない outcome", "/form", "application/json", body(`"outcome":"allow_once"`), 400, "bad_request"},
 		{"content_hash が違う", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":"青"},"content_hash":"sha256:00"`), 409, "content_changed"},
 		{"重複したキー (answer)", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":"赤","q0":"青"}`), 400, "bad_json"},
@@ -554,8 +632,8 @@ func TestChatHTTPFormCancelAndPermissionHash(t *testing.T) {
 	var h struct{ Generation string }
 	json.Unmarshal([]byte(hello.data), &h)
 	postJSON(t, srv, "/message", `{"text":"ask"}`)
-	id, _ := formEvent(t, sse)
-	if code, b := postJSON(t, srv, "/form", `{"generation":"`+h.Generation+`","request_id":"`+id+`","outcome":"cancelled"}`); code != 200 {
+	id, fhash := formEvent(t, sse)
+	if code, b := postForm(t, srv, h.Generation, id, fhash, "cancelled", nil); code != 200 {
 		t.Fatalf("取り消し: %d %s", code, b)
 	}
 	msg := sse.until(func(f sseFrame) bool { return evType("message.text")(f) && strings.Contains(f.data, "request=") })

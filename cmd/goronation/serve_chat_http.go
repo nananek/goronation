@@ -33,8 +33,8 @@ const chatSSEWriteTimeout = 30 * time.Second
 //
 //	GET  /events      SSE。event: hello (first_seq・generation・resumed・durable) → (after・generation が正しければ、耐久ログの続き) → バッファ → ライブ (id: <seq>・data: は Event の JSON 1 行) → event: end (exit)。クエリ after・generation (ADR 0024・0054)
 //	POST /message     {"text"}
-//	POST /permission  {"generation","request_id","outcome","content_hash"?}  (generation は必須。欠落 400・別の起動 409。content_hash は、見た要求の値の写し)
-//	POST /form        {"generation","request_id","outcome":"answered"|"cancelled","answer"?:{"<key>":"<文字列>"|["<文字列>",…]},"content_hash"?}  (ADR 0046)
+//	POST /permission  {"generation","request_id","outcome","content_hash"}  (generation・content_hash は必須。欠落 400 (content_hash_required)・別の起動 409・hash が違えば 409 (content_changed)。content_hash は、見た要求の値の写し)
+//	POST /form        {"generation","request_id","outcome":"answered"|"cancelled","answer"?:{"<key>":"<文字列>"|["<文字列>",…]},"content_hash"}  (content_hash は必須。ADR 0046)
 //	POST /stop        {} (本文なし可)
 //
 // 書き込みの本文は、上限つき・厳格な JSON (未知のフィールド・後ろの余分な値・重複したキーは 400)。エラーは {"error":"<コード>"}。

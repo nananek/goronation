@@ -180,6 +180,26 @@ func requestIDOf(t *testing.T, e chat.Event) string {
 	return v.Data.RequestID
 }
 
+// contentHashOf は、permission.requested・form.requested の Event の data.content_hash (応答に写す。ADR 0042 決定 3: 必須)。
+func contentHashOf(t *testing.T, e chat.Event) string {
+	t.Helper()
+	var v struct {
+		Data struct {
+			ContentHash string `json:"content_hash"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(e.JSON, &v); err != nil || !strings.HasPrefix(v.Data.ContentHash, "sha256:") {
+		t.Fatalf("content_hash が無い: %s (%v)", e.JSON, err)
+	}
+	return v.Data.ContentHash
+}
+
+// resolvePerm は、要求の Event (permission.requested) の content_hash を写して、承認・拒否する。
+func resolvePerm(t *testing.T, conv *chat.Conversation, req chat.Event, outcome string) error {
+	t.Helper()
+	return conv.ResolvePermissionIn(conv.Generation(), chat.PermissionResolve{RequestID: requestIDOf(t, req), Outcome: outcome, ContentHash: contentHashOf(t, req)})
+}
+
 func startChatFixture(t *testing.T, scene string) (*chatSession, *chatEvents, *bytes.Buffer) {
 	t.Helper()
 	f := newRunFixture(t)
@@ -224,10 +244,10 @@ func TestChatSessionTwoTurnsWithPermissionsThroughCage(t *testing.T) {
 	if err := conv.Send("割り込み"); err == nil {
 		t.Error("ターン中の Send が通った")
 	}
-	if err := conv.ResolveIn(conv.Generation(), id1, "allow_once"); err != nil {
+	if err := resolvePerm(t, conv, req1, "allow_once"); err != nil {
 		t.Fatal(err)
 	}
-	if err := conv.ResolveIn(conv.Generation(), id1, "allow_once"); err == nil {
+	if err := resolvePerm(t, conv, req1, "allow_once"); err == nil {
 		t.Error("同じ要求への 2 回目の承認が通った")
 	}
 	// 許可した input は、要求時に保持した値そのもの。claude が受け取った内容を、メッセージに書く。
@@ -248,7 +268,7 @@ func TestChatSessionTwoTurnsWithPermissionsThroughCage(t *testing.T) {
 		t.Fatal(err)
 	}
 	req2, at := ev.waitFor("2 つ目の権限要求", at, typeIs("permission.requested"))
-	if err := conv.ResolveIn(conv.Generation(), requestIDOf(t, req2), "reject_once"); err != nil {
+	if err := resolvePerm(t, conv, req2, "reject_once"); err != nil {
 		t.Fatal(err)
 	}
 	msg2, at := ev.waitFor("拒否の結果のメッセージ", at, func(e chat.Event) bool {
@@ -294,7 +314,7 @@ func TestChatSessionStopExpiresPendingThroughCage(t *testing.T) {
 		t.Errorf("失効の Event = %s", res.JSON)
 	}
 	s.Wait()
-	if err := conv.ResolveIn(conv.Generation(), id, "allow_once"); err == nil {
+	if err := resolvePerm(t, conv, req, "allow_once"); err == nil {
 		t.Error("失効した要求への承認が通った")
 	}
 	// Hub は終わっている (新しい購読者は、Snapshot の後、すぐ EOF)。

@@ -207,18 +207,12 @@ func TestWebChatFlow(t *testing.T) {
 	if code, b := cw.req("POST", evPath(chatTestID, "message"), `{"text":"hi"}`, nil); code != 200 {
 		t.Fatalf("message: %d %s", code, b)
 	}
-	req := sse.until(evType("permission.requested"))
-	var rv struct {
-		Data struct {
-			RequestID string `json:"request_id"`
-		} `json:"data"`
-	}
-	json.Unmarshal([]byte(req.data), &rv)
+	reqID, hash := permissionEvent(t, sse)
 	perm := func(gen string) (int, string) {
-		b, _ := json.Marshal(map[string]string{"generation": gen, "request_id": rv.Data.RequestID, "outcome": "allow_once"})
+		b, _ := json.Marshal(map[string]string{"generation": gen, "request_id": reqID, "outcome": "allow_once", "content_hash": hash})
 		return cw.req("POST", evPath(chatTestID, "permission"), string(b), nil)
 	}
-	if code, _ := cw.req("POST", evPath(chatTestID, "permission"), `{"request_id":"`+rv.Data.RequestID+`","outcome":"allow_once"}`, nil); code != 400 {
+	if code, _ := cw.req("POST", evPath(chatTestID, "permission"), `{"request_id":"`+reqID+`","outcome":"allow_once","content_hash":"`+hash+`"}`, nil); code != 400 {
 		t.Errorf("世代なし = %d (400 のはず)", code)
 	}
 	if code, _ := perm("00000000000000000000000000000000"); code != 409 {

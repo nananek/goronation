@@ -109,12 +109,13 @@ func TestServeChatEndToEnd(t *testing.T) {
 	req := read(func(e, d string) bool { return e == "" && strings.Contains(d, `"type":"permission.requested"`) })
 	var rv struct {
 		Data struct {
-			RequestID string `json:"request_id"`
+			RequestID   string `json:"request_id"`
+			ContentHash string `json:"content_hash"`
 		} `json:"data"`
 	}
 	json.Unmarshal([]byte(req), &rv)
 	perm := func(gen string) (int, string) {
-		b, _ := json.Marshal(map[string]string{"generation": gen, "request_id": rv.Data.RequestID, "outcome": "allow_once"})
+		b, _ := json.Marshal(map[string]string{"generation": gen, "request_id": rv.Data.RequestID, "outcome": "allow_once", "content_hash": rv.Data.ContentHash})
 		return do("/permission", string(b))
 	}
 	if code, _ := perm("0123456789abcdef0123456789abcdef"); code != 409 {

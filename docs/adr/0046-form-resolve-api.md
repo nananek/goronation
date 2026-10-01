@@ -1,6 +1,6 @@
 # 0046. form の応答の API (POST /form) と、承認の応答の content_hash (M2)
 
-- 状態: 採用
+- 状態: 採用 (2026-10-01: 決定 6 を実施 (必須にした。乗っ取りには効かない))
 - 日付: 2026-10-01
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、ADR 0013・0016・0040・0042・0044・0047、`cmd/goronation/serve_chat_http.go`
 
