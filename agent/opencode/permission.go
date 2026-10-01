@@ -65,6 +65,9 @@ func (s *Stream) permissionAsked(o *out, data json.RawMessage) {
 		return
 	}
 	req, truncated := buildPermission(d)
+	if hiddenTopLevel(data) { // 採取した形の外の欄は、承認する対象の一部かもしれない (見せていないものは承認させない)
+		truncated, req.DetailsTruncated = true, true
+	}
 	if err := req.Validate(); err != nil {
 		o.frame()
 		o.add(v0.TypeError, true, nil, errorData(invalidMessage))
@@ -151,6 +154,34 @@ func buildPermission(d permissionAsked) (v0.PermissionRequested, bool) {
 	}
 	req.DetailsTruncated = truncated
 	return req, truncated
+}
+
+// hiddenTopLevel は、permission.asked の data に、採取した形 (opencode 2.0.20) の外の欄があるか。id・sessionID・action・resources・
+// metadata は変換が読む。source は {id, messageID, type} (帰属の情報)・save は always の保存の対象 (v0 は always を出さないので、once の
+// 承認の対象ではない)。ほかの欄は input にも詳細にも入らないので、あれば、採取し直すまで承認させない (fail closed。拒否はできる)。
+func hiddenTopLevel(data json.RawMessage) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(data, &m) != nil {
+		return true
+	}
+	for k, v := range m {
+		switch k {
+		case "id", "sessionID", "action", "resources", "metadata", "save":
+		case "source":
+			var src map[string]json.RawMessage
+			if json.Unmarshal(v, &src) != nil {
+				return true
+			}
+			for sk := range src {
+				if sk != "id" && sk != "messageID" && sk != "type" {
+					return true
+				}
+			}
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // hiddenMetadata は、metadata に、buildPermission が詳細に出さない欄 (または読めない形) があるか。
