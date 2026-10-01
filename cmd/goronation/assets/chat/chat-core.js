@@ -300,7 +300,7 @@
       durable: null,      // 最後の hello の durable (true・false。欠落・不正なら null)。false のときだけ、画面が注意を出す
       lastSeq: -1,
       items: [],          // 表示する項目 (古い順)
-      byCall: new Map(),  // call_id → tool の項目
+      byCall: new Map(),  // call_id と帰属の鍵 → tool の項目
       pending: new Map(), // request_id → permission の項目 (未決・決着の両方。項目が捨てられるまで)
       nextId: 1,
       trimmed: false,     // 古い項目を捨てた
@@ -310,6 +310,7 @@
       dirty: new Map(),   // id → 項目 (描画が要る)
       removed: [],        // 描画から外す項目の id
       reset: false,       // 表示を全部作り直す (世代が変わった)
+      agent: '',          // 最後のメインの session.started の agent (origin を付ける agent かの判断に使う)
       sessionStarted: false, // session.started を受けたか (権限モードを確認できたかの判断に使う)
       permissionMode: '', // claude の権限モード (session.started の permission_mode。default 以外は、tool が承認なしで実行されうる。無ければ '')
       turnActive: false,  // ターンの途中か (turn.started から turn.completed まで。送信欄を無効にする)
@@ -347,7 +348,7 @@
         dropped++;
         state.dirty.delete(it.id);
         state.removed.push(it.id);
-        if (it.kind === 'tool') state.byCall.delete(it.callId);
+        if (it.kind === 'tool' && it.callKey) state.byCall.delete(it.callKey);
         if (it.kind === 'permission' || it.kind === 'form') state.pending.delete(it.requestId);
       } else {
         keep.push(it);
@@ -378,6 +379,7 @@
       state.turnCount = 0;
       state.permissionMode = '';
       state.sessionStarted = false;
+      state.agent = '';
       state.reset = true;
     }
     state.generation = gen;
@@ -393,6 +395,20 @@
     state.ended = {exit: Number.isSafeInteger(d.exit) ? d.exit : null};
   }
 
+  // normalizeOrigin は、Event の origin (ADR 0045: サブエージェントの帰属。{id, parent}) を、表示用にする。無い (undefined・null) だけが、メインのエージェント (null を返す)。
+  // 型が違う・id が文字列でない/空/長すぎる・parent が文字列でない/長すぎる、は「帰属が壊れている」(bad): 不明な origin を、メインのものに見せない
+  // (サブエージェント扱いで、id・parent は出さない)。値はエージェントの申告で、検証されていない (帰属はセキュリティの境界でなく、表示の手がかり)。
+  // 値は short() を通す (制御文字・双方向制御は印)。id・parent は、比較の鍵 (key) にも使う (長さを限った生の値の JSON。区切りの文字を含む値でも、別の組と衝突しない)。
+  function normalizeOrigin(v) {
+    if (v === undefined || v === null) return null;
+    const bad = {bad: true, id: '', parent: '', hasParent: false, key: '!'};
+    if (!isObj(v)) return bad;
+    if (typeof v.id !== 'string' || v.id === '' || v.id.length > LIMITS.maxShort) return bad;
+    const hasParent = v.parent !== undefined && v.parent !== null && v.parent !== '';
+    if (hasParent && (typeof v.parent !== 'string' || v.parent.length > LIMITS.maxShort)) return bad;
+    return {bad: false, id: short(v.id), parent: hasParent ? short(v.parent) : '', hasParent: hasParent, key: JSON.stringify([v.id, hasParent ? v.parent : ''])};
+  }
+
   // applyEvent は、Event 1 つを受ける。表示に反映したら true。
   function applyEvent(state, ev) {
     const e = obj(ev);
@@ -406,32 +422,42 @@
     }
     state.lastSeq = e.seq;
     const d = obj(e.data);
+    const origin = normalizeOrigin(e.origin); // null = メインのエージェント。サブエージェントの出力は、状態機械 (ターン・権限モード) を動かさない
+    const main = origin === null;
+    const put = (item) => { item.origin = origin; return add(state, item); };
     switch (e.type) {
       case 'session.started': {
-        state.sessionStarted = true;
-        state.permissionMode = short(d.permission_mode);
-        add(state, {kind: 'session', agent: short(d.agent), model: short(d.model), cwd: short(d.cwd), permissionMode: state.permissionMode});
+        const mode = short(d.permission_mode);
+        if (main) {
+          state.sessionStarted = true;
+          state.agent = short(d.agent);
+          state.permissionMode = mode;
+        }
+        put({kind: 'session', agent: short(d.agent), model: short(d.model), cwd: short(d.cwd), permissionMode: mode});
         return true;
       }
       case 'turn.started': {
-        state.turnActive = true;
-        state.turnCount++;
+        if (main) {
+          state.turnActive = true;
+          state.turnCount++;
+        }
         const t = clip(d.text, LIMITS.maxText);
-        add(state, {kind: 'user', text: t.text, cut: t.cut, total: t.total});
+        put({kind: 'user', text: t.text, cut: t.cut, total: t.total});
         return true;
       }
       case 'message.text': {
         const t = clip(d.text, LIMITS.maxText);
-        add(state, {kind: 'assistant', text: t.text, cut: t.cut, total: t.total});
+        put({kind: 'assistant', text: t.text, cut: t.cut, total: t.total});
         return true;
       }
       case 'tool.call': {
         const callId = short(d.call_id);
-        let it = callId ? state.byCall.get(callId) : undefined;
+        const key = callId ? callId + '\u0000' + (main ? '' : origin.key) : ''; // 別の帰属の同じ call_id は、別の項目 (子が、メインの tool の枠を書き換えない)
+        let it = key ? state.byCall.get(key) : undefined;
         const input = d.input === undefined || d.input === null ? {text: '', cut: false, total: 0} : clip(d.input, LIMITS.maxInput);
         if (!it) {
-          it = add(state, {kind: 'tool', callId: callId, name: '', toolKind: '', status: '', input: input, output: null, error: null});
-          if (callId) state.byCall.set(callId, it);
+          it = put({kind: 'tool', callId: callId, name: '', toolKind: '', status: '', input: input, output: null, error: null, callKey: key});
+          if (key) state.byCall.set(key, it);
         }
         it.name = short(d.name);
         it.toolKind = short(d.kind);
@@ -442,10 +468,11 @@
       }
       case 'tool.update': {
         const callId = short(d.call_id);
-        let it = callId ? state.byCall.get(callId) : undefined;
+        const key = callId ? callId + '\u0000' + (main ? '' : origin.key) : '';
+        let it = key ? state.byCall.get(key) : undefined;
         if (!it) { // 呼び出しが、履歴から省略された
-          it = add(state, {kind: 'tool', callId: callId, name: '(履歴から省略)', toolKind: '', status: '', input: {text: '', cut: false, total: 0}, output: null, error: null});
-          if (callId) state.byCall.set(callId, it);
+          it = put({kind: 'tool', callId: callId, name: '(履歴から省略)', toolKind: '', status: '', input: {text: '', cut: false, total: 0}, output: null, error: null, callKey: key});
+          if (key) state.byCall.set(key, it);
         }
         it.status = short(d.status);
         if (d.output !== undefined && d.output !== null) it.output = clip(d.output, LIMITS.maxInput);
@@ -462,7 +489,7 @@
           return false;
         }
         const shown = clip(rid, LIMITS.maxShort, true);
-        const it = add(state, {
+        const it = put({
           kind: 'permission', requestId: rid, idShown: shown.text, idPlain: !shown.cut && shown.text === rid,
           callId: short(d.call_id),
           toolName: short(d.tool_name), toolKind: short(d.kind),
@@ -485,7 +512,7 @@
         const shown = clip(rid, LIMITS.maxShort, true);
         const f = normalizeFields(d.fields);
         const idPlain = !shown.cut && shown.text === rid;
-        const it = add(state, {
+        const it = put({
           kind: 'form', requestId: rid, idShown: shown.text, idPlain: idPlain,
           formKind: short(d.kind), title: clip(d.title, LIMITS.maxFormTitle, true).text, fields: f.fields, answerable: f.answerable && idPlain,
           contentHash: typeof d.content_hash === 'string' ? d.content_hash : '',
@@ -521,17 +548,17 @@
       }
       case 'usage': {
         const num = (v) => (Number.isFinite(v) ? v : null);
-        add(state, {kind: 'usage', inputTokens: num(d.input_tokens), outputTokens: num(d.output_tokens), costUSD: num(d.cost_usd), contextWindow: num(d.context_window)});
+        put({kind: 'usage', inputTokens: num(d.input_tokens), outputTokens: num(d.output_tokens), costUSD: num(d.cost_usd), contextWindow: num(d.context_window)});
         return true;
       }
       case 'turn.completed': {
-        state.turnActive = false;
-        add(state, {kind: 'turn_end', stopReason: short(d.stop_reason), isError: d.is_error === true});
+        if (main) state.turnActive = false;
+        put({kind: 'turn_end', stopReason: short(d.stop_reason), isError: d.is_error === true});
         return true;
       }
       case 'error': {
         const m = clip(d.message, LIMITS.maxInput);
-        add(state, {kind: 'error', status: Number.isFinite(d.status) ? d.status : null, message: m.text, cut: m.cut});
+        put({kind: 'error', status: Number.isFinite(d.status) ? d.status : null, message: m.text, cut: m.cut});
         return true;
       }
       default: // agent.frame・未知の type
@@ -549,7 +576,7 @@
     return out;
   }
 
-  const api = {isGeneration: (g) => typeof g === 'string' && GENERATION_RE.test(g), LIMITS: LIMITS, sanitize: sanitize, clip: clip, shownFully: shownFully, createState: createState, applyHello: applyHello, applyEnd: applyEnd, applyEvent: applyEvent, drain: drain};
+  const api = {isGeneration: (g) => typeof g === 'string' && GENERATION_RE.test(g), LIMITS: LIMITS, sanitize: sanitize, clip: clip, shownFully: shownFully, createState: createState, normalizeOrigin: normalizeOrigin, applyHello: applyHello, applyEnd: applyEnd, applyEvent: applyEvent, drain: drain};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.GoroChatCore = api;
 })(typeof self !== 'undefined' ? self : this);

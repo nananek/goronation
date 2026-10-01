@@ -51,4 +51,12 @@ header { position: sticky; top: 0; display: flex; gap: 1em; align-items: baselin
 .form-option input[type=text] { width: 60%; margin-left: 0.5em; }
 
 /* エージェントが決める行は、長くても枠 (詳細) を領域の外へ押し出さない: 3 行までで、あとはスクロール */
-.dialog > .label, .dialog-tool, .dialog-title { max-height: 4.5em; overflow: auto; }
+.dialog > .label, .dialog-tool, .dialog-title, .dialog-origin { max-height: 4.5em; overflow: auto; }
+
+/* サブエージェント (origin): インデントと色で、メインと区別する。ダイアログの「要求元」は、メインにも出す */
+.item-sub { margin-left: 2em; border-left-color: #a4c; background: #a4c1; }
+.item-sub-bad { border-left-color: #c44; }
+.item-sub .origin { color: #a4c; }
+.dialog-origin { font-weight: bold; }
+.dialog-origin-sub { color: #a4c; }
+.dialog-sub { border-left-color: #a4c; }

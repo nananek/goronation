@@ -81,9 +81,34 @@
       return /^[a-z_]{1,20}$/.test(v) ? v : 'other';
     }
 
+    // 帰属 (origin。ADR 0045): エージェントの申告で、検証されていない (帰属はセキュリティの境界でなく、表示の手がかり)。null はメインのエージェント。
+    // 壊れた origin (型違い・長すぎる・id が無い) は、メインに見せない (サブエージェント扱い。値は出さない)。
+    const ORIGIN_NOTE = '(エージェントの申告。検証されていない)';
+    const ORIGIN_ID_SHOWN = 16; // ラベルに出す id の長さ (全部は、ダイアログの要求元に出す)
+
+    function originLabel(o) {
+      if (o.bad) return 'サブエージェント (帰属が壊れている)';
+      return 'サブエージェント ' + (o.id.length > ORIGIN_ID_SHOWN ? o.id.slice(0, ORIGIN_ID_SHOWN) + '…' : o.id);
+    }
+
+    // originSource は、権限・form のダイアログの「要求元」の行 (メインにも出す: 出さないことが、メインの印にならないように)。
+    // origin を付ける agent (opencode) の origin 無しだけが、メイン確定。それ以外 (claude は agent_id を読まない。ADR 0045 決定 5・PR⑤b) は、区別できない。
+    const hasOrigin = () => state.agent === 'opencode';
+    function originSource(o) {
+      if (o === null && !hasOrigin()) return '要求元: このエージェントでは、サブエージェントかどうかを区別できない (サブエージェントの要求かもしれない) ' + ORIGIN_NOTE;
+      if (o === null) return '要求元: メインのエージェント ' + ORIGIN_NOTE;
+      if (o.bad) return '要求元: サブエージェント (帰属が壊れていて、どこから来たか分からない。メインのエージェントとは見なさない) ' + ORIGIN_NOTE;
+      return '要求元: サブエージェント ' + o.id + ' (起動した tool 呼び出し: ' + (o.hasParent ? o.parent : '不明') + ') ' + ORIGIN_NOTE;
+    }
+
+    function sourceRow(o) {
+      return el('div', o === null && hasOrigin() ? 'dialog-origin' : 'dialog-origin dialog-origin-sub', originSource(o));
+    }
+
     // fill は、項目 it の要素 e の中身を、作り直す (textContent だけ)。
     function fill(e, it) {
       e.textContent = '';
+      if (it.origin) e.appendChild(el('div', 'meta origin', originLabel(it.origin) + ' ' + ORIGIN_NOTE)); // 先頭の行 (class は下で足す)
       switch (it.kind) {
         case 'session':
           e.className = 'item item-session';
@@ -161,6 +186,9 @@
           break;
         default:
           e.className = 'item';
+      }
+      if (it.origin) { // サブエージェントの項目: ラベル・インデント・色 (class は固定の語だけ)
+        e.className += it.origin.bad ? ' item-sub item-sub-bad' : ' item-sub';
       }
     }
 
@@ -403,7 +431,9 @@
 
     function buildDialog(item) {
       const d = {el: el('div', 'dialog'), gen: state.generation, busy: false, done: false, approve: null, deny: null, note: null, hint: null, pre: null, cells: [], view: null, tick: null, removed: false, item: item};
+      if (item.origin) d.el.className += ' dialog-sub';
       d.el.appendChild(el('div', 'label', item.summary ? '権限の要求: ' + item.summary : '権限の要求'));
+      d.el.appendChild(sourceRow(item.origin)); // tool: の行の上
       d.el.appendChild(el('div', 'dialog-tool', 'tool: ' + (item.toolName || '(名前なし)') + (item.toolKind ? ' (' + item.toolKind + ')' : '')));
       if (item.title) d.el.appendChild(el('div', 'dialog-title', '説明 (エージェントの自己申告。検証されていない): ' + item.title));
       d.approve = el('button', 'approve', '許可 (今回だけ)');
@@ -446,7 +476,9 @@
     // 値は、項目が持つ生の key・選択肢の value に結ぶ (DOM の属性・表示用の文字列から、キーを読み戻さない)。
     function buildFormDialog(item) {
       const d = {el: el('div', 'dialog dialog-form'), gen: state.generation, busy: false, done: false, submit: null, cancel: null, note: null, controls: [], removed: false, item: item};
+      if (item.origin) d.el.className += ' dialog-sub';
       d.el.appendChild(el('div', 'label', '質問 (エージェントから)' + (item.title ? ': ' + item.title : '')));
+      d.el.appendChild(sourceRow(item.origin));
       d.el.appendChild(el('div', 'warn', 'この回答は、エージェントに渡ります。秘密・パスワードは、入力しない。質問の文は、エージェントが書いたもの (検証されていない)'));
       d.cancel = el('button', 'deny', '回答しない (取り消す)');
       d.submit = el('button', 'approve', '回答を送る');
