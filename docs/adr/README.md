@@ -51,6 +51,8 @@
 | [0043](0043-question-permission.md) | opencode の question の tool は、session の permissions で承認の段を省く (M2) | 採用 |
 | [0044](0044-claude-ask-user-question.md) | claude の AskUserQuestion は form にし、回答は updatedInput.answers で返す (M2) | 採用 |
 | [0045](0045-subagent-origin.md) | サブエージェントの出力には、帰属 (origin) を付ける (M2) | 採用 |
+| [0049](0049-opencode-event-mapping.md) | opencode の SSE は、表のとおりに v0 に写し、承認できない形・未知の type は落とさず agent.frame か TypeError にする (M2) | 採用 |
+| [0050](0050-opencode-command-encoding.md) | opencode の EncodeCommand は HTTP 要求の記述を返し、承認は once・reject だけ、ID は検査済みの形だけを path に入れる (M2) | 採用 |
 
 ## 書き方
 

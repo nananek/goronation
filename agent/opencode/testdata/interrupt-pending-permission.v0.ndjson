@@ -1,0 +1,7 @@
+{"type":"session.started","durable":true,"data":{"agent":"opencode","agent_session":"ses_1","cwd":"/work","version":"2.0.20"}}
+{"type":"turn.started","durable":true,"data":{"text":"Do it."}}
+{"type":"tool.call","durable":true,"data":{"call_id":"call_1","input":{"command":"echo goro-hi","description":"run a command"},"kind":"execute","name":"shell","status":"pending"}}
+{"type":"permission.requested","durable":true,"data":{"request_id":"per_1","call_id":"call_1","tool_name":"shell","kind":"execute","input":{"action":"shell","resources":["echo goro-hi"]},"summary":"shell: echo goro-hi","details":[{"label":"command","text":"echo goro-hi","kind":"command"}]}}
+{"type":"tool.update","durable":true,"data":{"call_id":"call_1","error":"Tool execution interrupted","status":"failed"}}
+{"type":"permission.resolved","durable":true,"data":{"by":"agent","outcome":"cancelled","request_id":"per_1"}}
+{"type":"turn.completed","durable":true,"data":{"is_error":false,"reason":"user","stop_reason":"cancelled"}}
