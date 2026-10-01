@@ -27,7 +27,7 @@ define each_module
 	done <<< "$$mods"
 endef
 
-.PHONY: check fmt-check vet vet-darwin test build test-bwrap docs docs-check help
+.PHONY: check fmt-check vet vet-darwin test build test-bwrap vulncheck docs docs-check help
 
 # `## ` の後ろは、make help が出す説明 (target の行に書く)。
 check: fmt-check vet vet-darwin test build ## 下の fmt-check・vet・vet-darwin・test・build をすべて実行する (CI が回すのはこれ)
@@ -62,6 +62,11 @@ build: ## CGO_ENABLED=0 で bin/goronation を作る (単一バイナリと cgo 
 # bwrap を要するテストを、skip ではなく必須にして回す (CI の bwrap leg と同じ)。
 test-bwrap: ## GORO_REQUIRE_BWRAP=1 で make test を実行する (bwrap を skip でなく必須にする)
 	GORO_REQUIRE_BWRAP=1 $(MAKE) test
+
+# 既知の脆弱性 (ADR 0026: modernc.org/sqlite は版を固定する。追随の義務)。govulncheck は go 1.26 を要するので、go が toolchain を取りに行く
+# (ネットワークが要る)。check には入れない: 新しい勧告が、無関係な変更を赤にするため。CI の vulncheck job が、push・PR・週次で回す。
+vulncheck: ## govulncheck (cmd module。依存の既知の脆弱性。ネットワークが要る)
+	cd cmd && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 # 文書 (docs/reference/ と、ADR の索引の生成区間) を、Go の doc comment から生成する。
 # docgen は、cwd の 2 つ上を repo の root に固定する (tools/docgen で実行する)。

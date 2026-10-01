@@ -8,6 +8,8 @@ on:
   pull_request:
   push:
     branches: [main, develop]
+  schedule:
+    - cron: "17 3 * * 1" # 週次 (vulncheck だけが使う。ADR 0026)
 
 permissions:
   contents: read
@@ -23,6 +25,7 @@ jobs:
   # bwrap を要するテストは skip される (理由がログに出る)。
   base:
     name: base
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -46,6 +49,7 @@ jobs:
   # 実行層の leg。bwrap が使えなければ、skip ではなく fail する。
   bwrap:
     name: bwrap
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -68,3 +72,20 @@ jobs:
       - name: unprivileged user namespace の制限を外す
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: make check
+
+  # 依存の既知の脆弱性 (ADR 0026: modernc.org/sqlite を版で固定する代わりに、追随を義務にする)。push・PR・週次。
+  # required check にしない: 新しい勧告が、無関係な PR を赤にするため。赤になったら、版を上げる別の決定を、最優先で行う。
+  # govulncheck は go 1.26 を要するので、go が toolchain を取りに行く (proxy.golang.org・vuln.go.dev へのネットワーク)。版は固定する。
+  vulncheck:
+    name: vulncheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.work
+          cache: false
+      - run: make vulncheck

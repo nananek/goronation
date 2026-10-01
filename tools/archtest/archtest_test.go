@@ -283,6 +283,17 @@ func TestFixtures(t *testing.T) {
 		// 標準ライブラリの中で os/exec を使う package (net/http/cgi など) は、import するだけで子プロセスを起動できる
 		// (標準ライブラリの中の import は、exec-import の対象外)。os/exec と同じ場所にだけ許す。
 		// control.go は対照 (os/exec に依存しない go/build/constraint と net/http)。
+		// modernc.org/sqlite (と、実行系の modernc.org/libc) を import してよいのは cmd/internal/eventlog/** だけ (ADR 0026)。
+		// eventlog の中 (ok.go・ok_test.go・sub/ok.go) は許可の対照。eventlogx は、接頭辞だけが同じ別の package (違反)。
+		{"sqlite-only-dep", 10, []string{
+			"cmd/goronation/main.go:3: sqlite-only-dep",
+			"cmd/internal/chat/x.go:3: sqlite-only-dep",
+			"cmd/internal/eventlogx/x.go:3: sqlite-only-dep",
+			"egress/lib.go:3: sqlite-only-dep",
+			"egress/libc.go:3: sqlite-only-dep",
+			"egress/x.go:3: sqlite-only-dep",
+			"egress/x_test.go:3: sqlite-only-dep",
+		}},
 		{"exec-std", 8, []string{
 			"core/build.go:3: exec-import",
 			"core/cgi.go:3: exec-import",
@@ -339,6 +350,15 @@ func TestGoldenOutput(t *testing.T) {
 			`vault/spec.go:3: v0-only-in-chat: import "` + m + `/spec/v0" は agent/**, core/**, spec/**, cmd/internal/chat/** 以外では使えない`,
 			`vault/third.go:3: dep-vault: vault/** から import "golang.org/x/sys/unix" は使えない (標準ライブラリと ` + allowVault + `)`,
 			`vault/x_test.go:3: dep-vault: vault/** から import "` + m + `/sandbox" は使えない (標準ライブラリと ` + allowVault + `)`,
+		}},
+		{"sqlite-only-dep", []string{
+			`cmd/goronation/main.go:3: sqlite-only-dep: import "modernc.org/sqlite" は cmd/internal/eventlog/** 以外では使えない`,
+			`cmd/internal/chat/x.go:3: sqlite-only-dep: import "modernc.org/sqlite" は cmd/internal/eventlog/** 以外では使えない`,
+			`cmd/internal/eventlogx/x.go:3: sqlite-only-dep: import "modernc.org/sqlite" は cmd/internal/eventlog/** 以外では使えない`,
+			`egress/lib.go:3: sqlite-only-dep: import "modernc.org/sqlite/lib" は cmd/internal/eventlog/** 以外では使えない`,
+			`egress/libc.go:3: sqlite-only-dep: import "modernc.org/libc" は cmd/internal/eventlog/** 以外では使えない`,
+			`egress/x.go:3: sqlite-only-dep: import "modernc.org/sqlite" は cmd/internal/eventlog/** 以外では使えない`,
+			`egress/x_test.go:3: sqlite-only-dep: import "modernc.org/sqlite" は cmd/internal/eventlog/** 以外では使えない`,
 		}},
 		{"vault-no-require", []string{
 			`vault/go.mod:5: vault-no-require: vault の go.mod は require を持てない (外部の module に依存しない。workspace では、他の module の require で解決できてしまう)`,

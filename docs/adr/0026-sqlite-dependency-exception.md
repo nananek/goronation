@@ -1,6 +1,6 @@
 # 0026. 耐久イベントログに限り、`modernc.org/sqlite` を使う (依存ゼロの方針の例外)
 
-- 状態: 採用
+- 状態: 採用 (2026-10-01 に追記: `sqlite-only-dep` 規則 (`modernc.org/sqlite/**`・`modernc.org/libc/**`) と、`govulncheck` の CI job (`make vulncheck`。push・PR・週次。required check にしない) を実装した)
 - 日付: 2026-09-30
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、[ADR 0004](0004-webauthn-dependency-exception.md)・[ADR 0005](0005-websocket-dependency-exception.md) (同じ枠組みの先例)、ADR 0023
 
@@ -24,6 +24,7 @@
 - 供給網の攻撃面が増える (C から機械変換された大きなコード)。入力は、goronation 自身が組んだ SQL と、検証した Event の JSON だけで、檻の入力を SQL として解釈しない。
 - DB の破損・ロックの待ちは、縮退で受ける (ADR 0025)。
 - **固定の間は、セキュリティ更新を、取り込めない期間ができる。** 追随の方針: 実装 PR (②) が `govulncheck` を CI に足し、push ごと・週次で `modernc.org/sqlite` の既知の脆弱性を確かめる。検出したら、版を上げる別の決定 (go の版の引き上げを含む) を、最優先で行う。
+- **govulncheck の実測 (2026-10-01)**: `golang.org/x/vuln` v1.8.0 は go 1.26 を要し、go が toolchain を取りに行く (約 30 秒・ネットワークが要る)。このため、版 (v1.8.0) を固定して `go run` し、`make check` には入れない (新しい勧告が、無関係な変更を赤にする)。結果: コードが呼ぶ脆弱性は 0 件。要求している module に 1 件 (`golang.org/x/sys` の windows 専用 GO-2026-5024。この repo は windows を対象にしない)。
 
 ## 代替案
 

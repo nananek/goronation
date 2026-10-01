@@ -96,6 +96,15 @@ var DefaultRules = Rules{
 			Imports: []string{"github.com/coder/websocket"},
 			OnlyIn:  []string{"cmd/internal/termrelay/**"},
 		},
+
+		// ADR 0026: 全 module 依存ゼロの方針のもう 1 つの例外は、耐久イベントログの SQLite に限る。modernc.org/sqlite (と、
+		// その実行系 modernc.org/libc) を import してよいのは、cmd/internal/eventlog とその配下だけ。規則を広げるときは、
+		// 新しい ADR を書き、この表だけを変える。
+		{
+			ID:      "sqlite-only-dep",
+			Imports: []string{"modernc.org/sqlite/**", "modernc.org/libc/**"},
+			OnlyIn:  []string{"cmd/internal/eventlog/**"},
+		},
 	},
 
 	ForbidImports: []ForbidImport{
