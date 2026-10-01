@@ -48,17 +48,13 @@ func TestHashlessPendingRequestCannotBeResolved(t *testing.T) {
 	e.c.mu.Lock()
 	e.c.pending = map[string]pendingItem{"p1": {ev: Event{Type: v0.TypePermissionRequested, Seq: 1}}} // hash が空
 	e.c.mu.Unlock()
-	for _, got := range []string{"", "sha256:00", "sha256:" + strings.Repeat("0", 64)} {
-		err := e.c.ResolveIn(e.c.Generation(), "p1", v0.AllowOnce)
-		if got != "" {
-			err = e.c.ResolvePermissionIn(e.c.Generation(), v0.PermissionResolve{RequestID: "p1", Outcome: v0.AllowOnce, ContentHash: got})
-		}
-		want := ErrContentHashRequired
-		if got != "" {
-			want = ErrContentChanged
-		}
-		if !errors.Is(err, want) {
-			t.Errorf("got=%q: err = %v (%v のはず)", got, err, want)
+	if err := e.c.ResolveIn(e.c.Generation(), "p1", v0.AllowOnce); !errors.Is(err, ErrContentHashRequired) {
+		t.Errorf("hash 無し: err = %v (ErrContentHashRequired のはず)", err)
+	}
+	for _, got := range []string{"sha256:00", "sha256:" + strings.Repeat("0", 64)} {
+		err := e.c.ResolvePermissionIn(e.c.Generation(), v0.PermissionResolve{RequestID: "p1", Outcome: v0.AllowOnce, ContentHash: got})
+		if !errors.Is(err, ErrContentChanged) {
+			t.Errorf("got=%q: err = %v (ErrContentChanged のはず)", got, err)
 		}
 	}
 	if e.c.Pending() != 1 || len(e.written()) != 0 {
