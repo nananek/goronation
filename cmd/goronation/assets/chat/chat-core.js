@@ -11,12 +11,27 @@
     maxShort: 300,      // 名前・title・message の、文字数
     maxPending: 64,     // 未決の権限要求の数 (これ以上は、表示しない)
     maxRequestID: 1000, // request_id の長さ (これより長い要求は、扱えないので、表示しない)
+    // 要約・詳細・form (spec/v0 の上限は文字数 (rune)。ここは UTF-16 の単位なので、サーバーが通す値を、切らない大きさにしてある)。
+    maxSummary: 400,    // 要約 (spec/v0: 200 字)
+    maxDetails: 16,     // 詳細の項目の数 (spec/v0: 16)
+    maxDetailText: 8000, // 詳細の 1 項目の本文 (spec/v0: 4,000 字)
+    maxFields: 16,      // form のフィールドの数 (spec/v0: 16)
+    maxOptions: 32,     // 1 つのフィールドの選択肢の数 (spec/v0: 32)
+    maxKey: 128,        // フィールドの key (spec/v0: 64 字)。送り返す値なので、切らずに、超えたら答えられない形にする
+    maxValue: 400,      // 選択肢の value (spec/v0: 200 字)。同上
+    maxFormTitle: 400,  // form・フィールドの title・選択肢の label (spec/v0: 200 字)
+    maxFormDesc: 2000,  // description (spec/v0: 1,000 字)
+    maxAnswer: 4000,    // 回答 1 つの長さ (spec/v0: 4,000 字。入力欄の maxlength)
+    maxAnswerValues: 40, // multiselect の回答の個数 (spec/v0: 40)
   };
 
   const TRIM_SLACK = 250;
   const MAX_DEPTH = 40; // 表示する入れ子の深さ (これより深い input は、打ち切る = 全部は表示できない)
   const GENERATION_RE = /^[0-9a-f]{32}$/; // serve の世代 (ADR 0013)
   const OUTCOMES = new Set(['allow_once', 'reject_once', 'cancelled']); // permission.resolved の outcome (これ以外は unknown)
+  const FORM_OUTCOMES = new Set(['answered', 'cancelled']); // form.resolved の outcome (permission とは別の集合。これ以外は unknown)
+  const DETAIL_KINDS = new Set(['text', 'command', 'path', 'url']); // 詳細の項目の kind (知らない kind は text)
+  const FIELD_TYPES = new Set(['text', 'select', 'multiselect']); // form のフィールドの type (知らない type があれば、答えられない)
 
   // 表示に危険な文字の判定 (コードポイントで持つ: 原稿に、見えない文字を書かない)。
   function isDangerous(cp) {
@@ -181,6 +196,93 @@
     return v !== null && typeof v === 'object' && !Array.isArray(v) ? v : {};
   }
 
+  function isObj(v) {
+    return v !== null && typeof v === 'object' && !Array.isArray(v);
+  }
+
+  // normalizeDetails は、permission.requested の詳細 (ADR 0041) を表示用にする。配列でない・空は「詳細なし」(旧い形。input の表示に戻る)。
+  // 1 つでも、切った・形が不正・数が上限を超える項目があれば、全体を cut にする (承認の関門。見せていないものを承認させない)。
+  // label は、エージェントが決めたキーを含むので、厳しい印 (short)。text の行は、4 字下げて出す: 本文の改行で、見出しの行 (■ label) を偽造させない。
+  function normalizeDetails(v) {
+    if (!Array.isArray(v) || v.length === 0) return {has: false, items: [], cut: false, text: ''};
+    let cut = v.length > LIMITS.maxDetails;
+    const items = [];
+    for (let i = 0; i < v.length && i < LIMITS.maxDetails; i++) {
+      const x = v[i];
+      if (!isObj(x) || typeof x.text !== 'string' || typeof x.label !== 'string') { // 形が不正: 何を承認するのか、見せられない
+        cut = true;
+        continue;
+      }
+      const t = clip(x.text, LIMITS.maxDetailText);
+      if (t.cut) cut = true;
+      items.push({label: short(x.label), kind: typeof x.kind === 'string' && DETAIL_KINDS.has(x.kind) ? x.kind : 'text', text: t.text, cut: t.cut});
+    }
+    const lines = [];
+    for (const it of items) {
+      lines.push('■ ' + it.label + (it.kind !== 'text' ? ' [' + it.kind + ']' : ''));
+      lines.push('    ' + (it.text === '' ? '(空)' : it.text.split('\n').join('\n    ')) + (it.cut ? ' …(以降は表示しない)' : ''));
+    }
+    return {has: true, items: items, cut: cut, text: lines.join('\n')};
+  }
+
+  // shownFully は、承認 (許可) してよい内容を、全部見せているか (chat.js の、枠を見た範囲・時間の判定は、別に要る)。詳細があれば詳細 (全項目を切らずに・
+  // details_truncated でない)、旧い形は input。request_id が見た目どおりでなければ、どちらでも許可させない。
+  function shownFully(item) {
+    if (item.idPlain !== true) return false;
+    if (item.details.has) return item.detailsTruncated === false && item.details.cut === false;
+    return item.input.cut === false;
+  }
+
+  // normalizeFields は、form のフィールドを表示・送信用にする。key・選択肢の value は、送り返す値なので、生のまま持つ (表示は keyShown・label)。
+  // 上限を超える・形が不正・key の重複・知らない type があれば、答えられない (answerable: false。取り消しだけ)。
+  function normalizeFields(v) {
+    let ok = Array.isArray(v) && v.length > 0 && v.length <= LIMITS.maxFields;
+    const fields = [];
+    if (Array.isArray(v)) {
+      const keys = new Set();
+      for (let i = 0; i < v.length && i < LIMITS.maxFields; i++) {
+        const x = v[i];
+        if (!isObj(x)) { ok = false; continue; }
+        const key = typeof x.key === 'string' ? x.key : '';
+        if (key === '' || key.length > LIMITS.maxKey || keys.has(key)) ok = false;
+        keys.add(key);
+        const type = typeof x.type === 'string' && FIELD_TYPES.has(x.type) ? x.type : '';
+        if (type === '') ok = false;
+        const options = [];
+        if (type === 'select' || type === 'multiselect') {
+          const o = Array.isArray(x.options) ? x.options : [];
+          if (o.length === 0 || o.length > LIMITS.maxOptions) ok = false;
+          const vals = new Set();
+          for (let j = 0; j < o.length && j < LIMITS.maxOptions; j++) {
+            const op = obj(o[j]);
+            const value = typeof op.value === 'string' ? op.value : '';
+            if (value === '' || value.length > LIMITS.maxValue || vals.has(value)) ok = false;
+            vals.add(value);
+            options.push({value: value, label: clip(op.label, LIMITS.maxFormTitle, true).text, description: clip(op.description, LIMITS.maxFormDesc).text});
+          }
+        }
+        fields.push({key: key, keyShown: short(key), type: type, title: clip(x.title, LIMITS.maxFormTitle, true).text, description: clip(x.description, LIMITS.maxFormDesc).text,
+          required: x.required === true, custom: x.custom === true && type !== 'text', options: options});
+      }
+    }
+    return {fields: fields, answerable: ok};
+  }
+
+  // formAnswer は、form.resolved の answer を、表示用にする (キー → 文字列か文字列の配列の値だけ。型が違えば、その項目は出さない)。
+  function formAnswer(v) {
+    if (!isObj(v)) return null;
+    const out = [];
+    for (const k of Object.keys(v)) {
+      if (out.length >= LIMITS.maxFields) break;
+      const x = v[k];
+      let text = null;
+      if (typeof x === 'string') text = clip(x, LIMITS.maxAnswer).text;
+      else if (Array.isArray(x) && x.every((e) => typeof e === 'string')) text = x.slice(0, LIMITS.maxAnswerValues).map((e) => clip(e, LIMITS.maxAnswer).text).join(', ');
+      if (text !== null) out.push({key: k, text: text});
+    }
+    return out;
+  }
+
   function createState() {
     return {
       generation: null,   // 最後の hello の世代 (変わったら、表示を作り直す)
@@ -229,13 +331,13 @@
     const keep = [];
     let dropped = 0;
     for (const it of state.items) {
-      const pinned = it.kind === 'permission' && it.state === 'pending';
+      const pinned = (it.kind === 'permission' || it.kind === 'form') && it.state === 'pending';
       if (dropped < excess && !pinned) {
         dropped++;
         state.dirty.delete(it.id);
         state.removed.push(it.id);
         if (it.kind === 'tool') state.byCall.delete(it.callId);
-        if (it.kind === 'permission') state.pending.delete(it.requestId);
+        if (it.kind === 'permission' || it.kind === 'form') state.pending.delete(it.requestId);
       } else {
         keep.push(it);
       }
@@ -352,15 +454,50 @@
           callId: short(d.call_id),
           toolName: short(d.tool_name), toolKind: short(d.kind),
           title: short(d.title), input: permissionInput(d.input),
+          summary: typeof d.summary === 'string' ? clip(d.summary, LIMITS.maxSummary, true).text : '',
+          details: normalizeDetails(d.details), detailsTruncated: d.details_truncated === true,
+          contentHash: typeof d.content_hash === 'string' ? d.content_hash : '', // 生の値のまま (承認の応答に、そのまま写す。検査・加工しない)
           state: 'pending', by: '',
         });
         state.pending.set(rid, it);
         return true;
       }
+      case 'form.requested': {
+        // permission.requested と同じ名前空間・上限 (request_id は、サーバーでも共通)。key・選択肢の value・request_id は、生の値のまま持つ。
+        const rid = typeof d.request_id === 'string' ? d.request_id : '';
+        if (!rid || rid.length > LIMITS.maxRequestID || state.pending.has(rid) || unresolved(state) >= LIMITS.maxPending) {
+          state.ignored++;
+          return false;
+        }
+        const shown = clip(rid, LIMITS.maxShort, true);
+        const f = normalizeFields(d.fields);
+        const idPlain = !shown.cut && shown.text === rid;
+        const it = add(state, {
+          kind: 'form', requestId: rid, idShown: shown.text, idPlain: idPlain,
+          formKind: short(d.kind), title: clip(d.title, LIMITS.maxFormTitle, true).text, fields: f.fields, answerable: f.answerable && idPlain,
+          contentHash: typeof d.content_hash === 'string' ? d.content_hash : '',
+          state: 'pending', by: '', answer: null,
+        });
+        state.pending.set(rid, it);
+        return true;
+      }
+      case 'form.resolved': {
+        const rid = typeof d.request_id === 'string' ? d.request_id : '';
+        const it = rid ? state.pending.get(rid) : undefined;
+        if (!it || it.kind !== 'form') { // 要求が履歴から省略された・種類が違う決着。表示しない
+          state.ignored++;
+          return false;
+        }
+        it.state = FORM_OUTCOMES.has(d.outcome) ? d.outcome : 'unknown';
+        it.by = short(d.by);
+        it.answer = it.state === 'answered' ? formAnswer(d.answer) : null;
+        touch(state, it);
+        return true;
+      }
       case 'permission.resolved': {
         const rid = typeof d.request_id === 'string' ? d.request_id : '';
         const it = rid ? state.pending.get(rid) : undefined;
-        if (!it) { // 要求が、履歴から省略された (決着だけが残った)。表示しない
+        if (!it || it.kind !== 'permission') { // 要求が、履歴から省略された (決着だけが残った)。表示しない
           state.ignored++;
           return false;
         }
@@ -399,7 +536,7 @@
     return out;
   }
 
-  const api = {isGeneration: (g) => typeof g === 'string' && GENERATION_RE.test(g), LIMITS: LIMITS, sanitize: sanitize, clip: clip, createState: createState, applyHello: applyHello, applyEnd: applyEnd, applyEvent: applyEvent, drain: drain};
+  const api = {isGeneration: (g) => typeof g === 'string' && GENERATION_RE.test(g), LIMITS: LIMITS, sanitize: sanitize, clip: clip, shownFully: shownFully, createState: createState, applyHello: applyHello, applyEnd: applyEnd, applyEvent: applyEvent, drain: drain};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.GoroChatCore = api;
 })(typeof self !== 'undefined' ? self : this);

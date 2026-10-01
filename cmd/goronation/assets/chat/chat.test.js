@@ -240,7 +240,7 @@ function harness() {
   const env = {
     document: doc, EventSource: FakeES, setTimeout: (f, ms) => { timers.push({f, ms}); return timers.length; }, scroller: null,
     fetch: (url, opts) => new Promise((resolve, reject) => {
-      calls.push({url, opts, body: JSON.parse(opts.body), respond: (status) => resolve({status}), fail: () => reject(new Error('net'))});
+      calls.push({url, opts, body: JSON.parse(opts.body), respond: (status, json) => resolve({status, json: async () => json}), fail: () => reject(new Error('net'))});
     }),
     TextEncoder: TextEncoder, now: () => clock.t,
   };
@@ -1181,4 +1181,367 @@ test('権限モード: default 以外は、警告を出す。default では出�
   h.es().fire('message', ev(0, 'session.started', {agent: 'claude', permission_mode: 'default'}));
   h.runTimers();
   assert.ok(!h.doc.byId.notices.textContent.includes('警告'));
+});
+
+// ---- PR⑤b-2: 要約・詳細・content_hash・form (ADR 0048) ----
+
+function walk(e, pred, out) {
+  out = out || [];
+  if (pred(e)) out.push(e);
+  for (const c of e.children) walk(c, pred, out);
+  return out;
+}
+const ofTag = (e, tag) => walk(e, (x) => x.tagName === tag);
+function permWithDetails(rid, extra) {
+  return Object.assign({
+    request_id: rid, tool_name: 'Bash', kind: 'execute', title: 'list', summary: 'Bash: ls', input: {command: 'ls'},
+    details: [{label: 'command', text: 'ls', kind: 'command'}], content_hash: 'sha256:' + 'ab'.repeat(32),
+  }, extra || {});
+}
+
+test('詳細: 全項目を切らずに見せていれば、許可できる。見出しは、本文の改行で偽造できない。知らない kind は text', () => {
+  const s = stateWith([ev(0, 'permission.requested', permWithDetails('r', {details: [
+    {label: 'command', text: 'ls\n■ path\n    /safe', kind: 'command'}, {label: 'x', text: 'y', kind: 'weird<kind>'}]}))]);
+  const it = s.items[0];
+  assert.strictEqual(it.details.has, true);
+  assert.strictEqual(core.shownFully(it), true);
+  assert.strictEqual(it.details.items[1].kind, 'text');
+  const lines = it.details.text.split('\n');
+  assert.deepStrictEqual(lines.filter((l) => l.startsWith('■')), ['■ command [command]', '■ x']); // 本文の「■ path」は、字下げされ、見出しにならない
+  assert.strictEqual(it.summary, 'Bash: ls');
+  assert.strictEqual(it.contentHash, 'sha256:' + 'ab'.repeat(32));
+});
+
+test('詳細の関門: details_truncated・項目の切り・項目数・形の不正・request_id の印のどれでも、許可できない。旧い形は input の関門', () => {
+  const big = 'a'.repeat(core.LIMITS.maxDetailText + 1);
+  const cases = {
+    'details_truncated': permWithDetails('a', {details_truncated: true}),
+    '項目が長い': permWithDetails('b', {details: [{label: 'c', text: big}]}),
+    '項目が多い': permWithDetails('c', {details: Array.from({length: core.LIMITS.maxDetails + 1}, (_, i) => ({label: 'k' + i, text: 'v'}))}),
+    '項目が不正 (配列の中の文字列)': permWithDetails('d', {details: [{label: 'c', text: 'x'}, 'oops']}),
+    '本文が文字列でない': permWithDetails('e', {details: [{label: 'c', text: {a: 1}}]}),
+    'request_id に不可視': permWithDetails('f' + cp(0x202e)),
+  };
+  for (const [name, d] of Object.entries(cases)) {
+    const it = stateWith([ev(0, 'permission.requested', d)]).items[0];
+    assert.strictEqual(core.shownFully(it), false, name);
+  }
+  // 詳細が配列でない・空: 詳細なし (旧い形)。input を全部見せていれば許可できる。input が切れていれば許可できない。
+  for (const det of [undefined, null, 'x', {a: 1}, []]) {
+    const it = stateWith([ev(0, 'permission.requested', permWithDetails('g', {details: det}))]).items[0];
+    assert.strictEqual(it.details.has, false);
+    assert.strictEqual(core.shownFully(it), true);
+  }
+  const cutInput = stateWith([ev(0, 'permission.requested', permWithDetails('h', {details: undefined, input: {c: 'y'.repeat(1 << 20)}}))]).items[0];
+  assert.strictEqual(core.shownFully(cutInput), false);
+  // 詳細が全部見えていれば、input が巨大でも (畳んだ参考に過ぎない)、許可できる。
+  const ok = stateWith([ev(0, 'permission.requested', permWithDetails('i', {input: {c: 'y'.repeat(1 << 20)}}))]).items[0];
+  assert.strictEqual(core.shownFully(ok), true);
+});
+
+test('UI: 詳細つきの許可。見出しは要約・詳細の枠が関門・生の input は畳む。details_truncated は拒否だけ', async () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'permission.requested', permWithDetails('ok1')));
+  h.fire(ev(1, 'permission.requested', permWithDetails('cut1', {details_truncated: true})));
+  h.runTimers();
+  const [d1, d2] = dialogEls(h);
+  assert.ok(d1.textContent.includes('権限の要求: Bash: ls'));
+  assert.ok(d1.textContent.includes('■ command [command]'));
+  assert.strictEqual(ofTag(d1, 'details').length, 1, '生の input は、畳む');
+  assert.strictEqual(findBtn(d1, 'approve').disabled, false);
+  assert.strictEqual(findBtn(d2, 'approve').disabled, true, 'details_truncated を許可できる');
+  assert.strictEqual(findBtn(d2, 'deny').disabled, false);
+  assert.ok(d2.textContent.includes('詳細が長すぎる'));
+});
+
+test('UI: 許可・拒否に、受け取った content_hash を、そのまま写す。無ければ欄を付けない。409 は content_changed と決着済みを分ける', async () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'permission.requested', permWithDetails('r1')));
+  h.fire(ev(1, 'permission.requested', pendingReq('r2')));
+  h.fire(ev(2, 'permission.requested', permWithDetails('r3', {content_hash: 'sha256:'.concat('A', cp(0x200b), ' x')})));
+  h.runTimers();
+  const [d1, d2, d3] = dialogEls(h);
+  h.click(findBtn(d1, 'approve'));
+  assert.deepStrictEqual(h.calls[0].body, {generation: G1, request_id: 'r1', outcome: 'allow_once', content_hash: 'sha256:' + 'ab'.repeat(32)});
+  h.click(findBtn(d2, 'deny'));
+  assert.deepStrictEqual(h.calls[1].body, {generation: G1, request_id: 'r2', outcome: 'reject_once'});
+  h.click(findBtn(d3, 'deny'));
+  assert.strictEqual(h.calls[2].body.content_hash, 'sha256:A' + cp(0x200b) + ' x', '加工せず、生の値を写す');
+  h.calls[0].respond(409, {error: 'content_changed'});
+  await h.tick();
+  assert.ok(d1.textContent.includes('いまの要求が違う'));
+  assert.ok(!d1.textContent.includes('すでに決着済み'));
+  assert.strictEqual(findBtn(d1, 'deny').disabled, false, 'content_changed は、まだ未決');
+  h.click(findBtn(d1, 'deny'));
+  h.calls[3].respond(409, {error: 'already_resolved'});
+  await h.tick();
+  assert.ok(d1.textContent.includes('すでに決着済み'));
+  h.calls[1].respond(400, {error: 'content_hash_required'});
+  await h.tick();
+  assert.ok(d2.textContent.includes('content_hash'));
+});
+
+const FORM = (rid, extra) => Object.assign({
+  request_id: rid, kind: 'question', title: 'q', content_hash: 'sha256:' + 'cd'.repeat(32),
+  fields: [
+    {key: 'color', title: 'Color', description: 'pick', type: 'select', options: [{label: 'Red', value: 'red'}, {label: 'Blue', value: 'blue'}], custom: true, required: true},
+    {key: 'langs', title: 'Langs', type: 'multiselect', options: [{label: 'Go', value: 'go'}, {label: 'Zig', value: 'zig'}], custom: true},
+    {key: 'note', title: 'Note', type: 'text'},
+  ],
+}, extra || {});
+const inputsOf = (dlg) => ofTag(dlg, 'input');
+function setChecked(inp, v) { inp.checked = v; for (const f of inp.listeners.change || []) f(); }
+function setText(inp, v) { inp.value = v; for (const f of inp.listeners.input || []) f(); }
+
+test('form: 部品は form.requested の項目から作る。required を満たすまで送れない。回答は、生の key をキーに、固定の URL へ', async () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'form.requested', FORM('f1')));
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  assert.ok(dlg.textContent.includes('この回答は、エージェントに渡ります'));
+  const inps = inputsOf(dlg);
+  assert.deepStrictEqual(inps.map((i) => i.type), ['radio', 'radio', 'radio', 'text', 'checkbox', 'checkbox', 'checkbox', 'text', 'text']);
+  assert.ok(inps.filter((i) => i.type === 'text').every((i) => i.autocomplete === 'off' && i.maxLength === core.LIMITS.maxAnswer));
+  const submit = findBtn(dlg, 'approve');
+  const cancel = findBtn(dlg, 'deny');
+  assert.strictEqual(submit.disabled, true, '必須が空で送れる');
+  assert.strictEqual(cancel.disabled, false);
+  setChecked(inps[1], true); // blue
+  assert.strictEqual(submit.disabled, false);
+  setChecked(inps[4], true); // go
+  setChecked(inps[5], true); // zig
+  setText(inps[7], 'extra'); // multiselect の「その他」(書くと選ばれる)
+  setText(inps[8], '  ');    // 空白だけの text は、省く
+  assert.strictEqual(inps[6].checked, true);
+  h.click(submit);
+  h.click(submit);
+  assert.strictEqual(h.calls.length, 1, '二重の送信');
+  assert.strictEqual(h.calls[0].url, BASE + '/form');
+  assert.deepStrictEqual(h.calls[0].body, {generation: G1, request_id: 'f1', outcome: 'answered', answer: {color: 'blue', langs: ['go', 'zig', 'extra']}, content_hash: 'sha256:' + 'cd'.repeat(32)});
+  h.calls[0].respond(200);
+  await h.tick();
+  assert.ok(!(h.doc.byId.log.textContent + dlg.textContent).includes('決着: answered'), '送っただけで、決着と表示した');
+  h.fire(ev(1, 'form.resolved', {request_id: 'f1', outcome: 'answered', by: 'human', answer: {color: 'blue', langs: ['go', 'zig', 'extra']}}));
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 0);
+  const log = h.doc.byId.log.textContent;
+  assert.ok(log.includes('決着: answered (human)') && log.includes('→ blue') && log.includes('→ go, zig, extra'));
+});
+
+test('form: 取り消しは answer なし。custom の select は、その他の入力で答えられる。重複する値は送らない', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'form.requested', FORM('f1')));
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  h.click(findBtn(dlg, 'deny'));
+  assert.deepStrictEqual(h.calls[0].body, {generation: G1, request_id: 'f1', outcome: 'cancelled', content_hash: 'sha256:' + 'cd'.repeat(32)});
+  const h2 = harness();
+  h2.hello();
+  h2.fire(ev(0, 'form.requested', FORM('f2', {content_hash: undefined})));
+  h2.runTimers();
+  const d2 = dialogEls(h2)[0];
+  const i2 = inputsOf(d2);
+  setText(i2[3], 'mauve'); // select の「その他」
+  assert.strictEqual(i2[2].checked, true);
+  setChecked(i2[4], true);
+  setText(i2[7], 'go'); // option と同じ値: 重複は、サーバーが拒否するので、送らない
+  setChecked(i2[6], true);
+  h2.click(findBtn(d2, 'approve'));
+  assert.deepStrictEqual(h2.calls[0].body, {generation: G1, request_id: 'f2', outcome: 'answered', answer: {color: 'mauve', langs: ['go']}});
+});
+
+test('form: key が __proto__・constructor でも、プロトタイプを汚さず、own property で送る', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'form.requested', {request_id: 'p', kind: 'question', fields: [
+    {key: '__proto__', title: 'a', type: 'text'}, {key: 'constructor', type: 'select', options: [{label: 'x', value: '__proto__'}]}, {key: 'toString', type: 'text'}]}));
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  const inps = inputsOf(dlg);
+  setText(inps[0], 'polluted');
+  setChecked(inps[1], true);
+  setText(inps[2], 'ts');
+  h.click(findBtn(dlg, 'approve'));
+  const sent = h.calls[0].opts.body;
+  assert.strictEqual(sent, '{"generation":"' + G1 + '","request_id":"p","outcome":"answered","answer":{"__proto__":"polluted","constructor":"__proto__","toString":"ts"}}');
+  assert.strictEqual({}.polluted, undefined);
+  assert.strictEqual(Object.getPrototypeOf(h.calls[0].body.answer), Object.prototype);
+});
+
+test('form: 答えられない形 (未知の type・key の重複・上限超過・選択肢なし・空の key・request_id の印) は、取り消しだけ。部品を作らない', () => {
+  const opt = [{label: 'a', value: 'a'}];
+  const bad = {
+    '未知の type': [{key: 'a', type: 'password'}],
+    'key が重複': [{key: 'a', type: 'text'}, {key: 'a', type: 'text'}],
+    'フィールドが多い': Array.from({length: core.LIMITS.maxFields + 1}, (_, i) => ({key: 'k' + i, type: 'text'})),
+    '選択肢が無い': [{key: 'a', type: 'select', options: []}],
+    '選択肢が多い': [{key: 'a', type: 'select', options: Array.from({length: core.LIMITS.maxOptions + 1}, (_, i) => ({label: 'l', value: 'v' + i}))}],
+    'value が重複': [{key: 'a', type: 'select', options: [{label: 'x', value: 'v'}, {label: 'y', value: 'v'}]}],
+    '空の key': [{key: '', type: 'text'}],
+    'key が長い': [{key: 'k'.repeat(core.LIMITS.maxKey + 1), type: 'text'}],
+    'value が空': [{key: 'a', type: 'select', options: [{label: 'x', value: ''}]}],
+    'フィールドが配列でない': 'x',
+    'フィールドが空': [],
+    'フィールドの中身が不正': [5, opt],
+  };
+  for (const [name, fields] of Object.entries(bad)) {
+    const h = harness();
+    h.hello();
+    h.fire(ev(0, 'form.requested', {request_id: 'b', kind: 'question', fields: fields}));
+    h.runTimers();
+    const dlg = dialogEls(h)[0];
+    assert.strictEqual(inputsOf(dlg).length, 0, name + ': 部品を作った');
+    assert.ok(dlg.textContent.includes('答えられない'), name);
+    assert.strictEqual(findBtn(dlg, 'approve').disabled, true, name);
+    assert.strictEqual(findBtn(dlg, 'deny').disabled, false, name);
+    h.click(findBtn(dlg, 'approve'));
+    assert.strictEqual(h.calls.length, 0, name + ': 送れた');
+    h.click(findBtn(dlg, 'deny'));
+    assert.strictEqual(h.calls[0].body.outcome, 'cancelled');
+  }
+  const hh = harness();
+  hh.hello();
+  hh.fire(ev(0, 'form.requested', {request_id: 'x' + cp(0x202e), kind: 'question', fields: [{key: 'a', type: 'text'}]}));
+  hh.runTimers();
+  assert.strictEqual(inputsOf(dialogEls(hh)[0]).length, 0, 'request_id に印がある form に、部品を作った');
+});
+
+test('form: 応答のコードごとの文言。404・409 は決着済み、400 bad_answer と通信の失敗はもう一度', async () => {
+  const h = harness();
+  h.hello();
+  for (const [i, rid] of ['a', 'b', 'c', 'd'].entries()) h.fire(ev(i, 'form.requested', FORM(rid)));
+  h.runTimers();
+  const dls = dialogEls(h);
+  for (const dlg of dls) setChecked(inputsOf(dlg)[0], true);
+  h.click(findBtn(dls[0], 'approve'));
+  h.calls[0].respond(409, {error: 'already_resolved'});
+  await h.tick();
+  assert.ok(dls[0].textContent.includes('すでに決着済み'));
+  assert.strictEqual(findBtn(dls[0], 'approve').disabled, true);
+  h.click(findBtn(dls[1], 'approve'));
+  h.calls[1].respond(400, {error: 'bad_answer'});
+  await h.tick();
+  assert.ok(dls[1].textContent.includes('回答の形が、サーバーに拒否'));
+  assert.strictEqual(findBtn(dls[1], 'approve').disabled, false);
+  h.click(findBtn(dls[2], 'approve'));
+  h.calls[2].fail();
+  await h.tick();
+  assert.ok(dls[2].textContent.includes('通信の失敗'));
+  h.click(findBtn(dls[3], 'approve'));
+  h.calls[3].respond(409, {error: 'content_changed'});
+  await h.tick();
+  assert.ok(dls[3].textContent.includes('いまの質問が違う'));
+  assert.strictEqual(findBtn(dls[3], 'deny').disabled, false);
+});
+
+test('form: 世代が変わった後・切断中は、送らない。古い form のダイアログは消える', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'form.requested', FORM('f1')));
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  setChecked(inputsOf(dlg)[0], true);
+  h.es().fire('error', {});
+  h.runTimers();
+  assert.strictEqual(findBtn(dlg, 'approve').disabled, true, '切断中に送れる');
+  assert.strictEqual(findBtn(dlg, 'deny').disabled, true);
+  h.click(findBtn(dlg, 'approve'));
+  assert.strictEqual(h.calls.length, 0);
+  h.es().fire('hello', {first_seq: 0, generation: G2});
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 0, '古い世代の form が残った');
+});
+
+test('form: 権限と同じ request_id の名前空間。種類の違う決着・重複・上限は、無視する', () => {
+  const s = stateWith([ev(0, 'form.requested', FORM('x')), ev(1, 'permission.requested', pendingReq('x')), ev(2, 'permission.resolved', {request_id: 'x', outcome: 'allow_once'}),
+    ev(3, 'permission.requested', pendingReq('y')), ev(4, 'form.resolved', {request_id: 'y', outcome: 'answered'}), ev(5, 'form.resolved', {request_id: 'zz', outcome: 'answered'})]);
+  assert.strictEqual(s.items.length, 2, '同じ ID の 2 つ目を足した');
+  assert.strictEqual(s.items[0].state, 'pending', 'permission.resolved が form を決着させた');
+  assert.strictEqual(s.items[1].state, 'pending', 'form.resolved が permission を決着させた');
+  assert.strictEqual(s.ignored, 4);
+  const many = core.createState();
+  core.applyHello(many, {generation: G1, first_seq: 0});
+  for (let i = 0; i < core.LIMITS.maxPending + 5; i++) core.applyEvent(many, ev(i, i % 2 ? 'form.requested' : 'permission.requested', i % 2 ? FORM('r' + i) : pendingReq('r' + i)));
+  assert.strictEqual(many.items.length, core.LIMITS.maxPending, '権限と form で、未決の上限を共有する');
+});
+
+test('form: 未決の form は、表示の上限で押し出されない。form.resolved の状態は許可リスト、answer は型を検査する', () => {
+  const s = core.createState();
+  core.applyHello(s, {generation: G1, first_seq: 0});
+  core.applyEvent(s, ev(0, 'form.requested', FORM('keep')));
+  for (let i = 1; i <= core.LIMITS.maxItems + 600; i++) core.applyEvent(s, ev(i, 'message.text', {text: 'x'}));
+  assert.ok(s.items.some((i) => i.kind === 'form' && i.requestId === 'keep'));
+  assert.ok(s.pending.has('keep'));
+  const t = stateWith([ev(0, 'form.requested', FORM('a')), ev(1, 'form.resolved', {request_id: 'a', outcome: 'pending', by: 'human'})]);
+  assert.strictEqual(t.items[0].state, 'unknown', '決着が、未決に見える');
+  const u = stateWith([ev(0, 'form.requested', FORM('a')), ev(1, 'form.resolved', {request_id: 'a', outcome: 'answered', answer: JSON.parse('{"color":5,"langs":["x",7],"note":["a","b"],"__proto__":"p"}')})]);
+  assert.deepStrictEqual(u.items[0].answer.map((x) => [x.key, x.text]), [['note', 'a, b'], ['__proto__', 'p']]);
+  const w = stateWith([ev(0, 'form.requested', FORM('a')), ev(1, 'form.resolved', {request_id: 'a', outcome: 'cancelled', answer: {color: 'x'}})]);
+  assert.strictEqual(w.items[0].answer, null);
+  for (const a of ['x', 5, [], null]) assert.strictEqual(stateWith([ev(0, 'form.requested', FORM('a')), ev(1, 'form.resolved', {request_id: 'a', outcome: 'answered', answer: a})]).items[0].answer, null);
+});
+
+test('敵対入力 (form・詳細): 文は textContent だけで出る。要素は増えず、不可視・双方向制御は印になる。巨大・深い入力でも固まらない', () => {
+  const evil = '<script>alert(1)</script><img src=x onerror=alert(2)>"onerror=' + cp(0x202e) + 'javascript:alert(3)';
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'form.requested', {request_id: 'e', kind: evil, title: evil, fields: [
+    {key: evil, title: evil, description: evil, type: 'select', options: [{label: evil, value: evil, description: evil}], custom: true}]}));
+  h.fire(ev(1, 'permission.requested', permWithDetails('p', {summary: evil, details: [{label: evil, text: evil, kind: evil}], title: evil})));
+  h.runTimers();
+  const text = h.doc.byId.log.textContent + h.doc.byId.dialogs.textContent;
+  assert.ok(text.includes('<script>alert(1)</script>'));
+  assert.ok(!text.includes(cp(0x202e)) && text.includes('<U+202E>'));
+  assert.deepStrictEqual(h.doc.created.filter((t) => !['div', 'span', 'button', 'pre', 'details', 'summary', 'label', 'input'].includes(t)), []);
+  const inputsMade = h.doc.created.filter((t) => t === 'input').length;
+  assert.strictEqual(inputsMade, 3, 'select の 1 つ + その他 (ラジオ・入力欄)');
+  // 巨大・深い入力
+  const t0 = Date.now();
+  let deep = 'x';
+  for (let i = 0; i < 3000; i++) deep = [deep];
+  const h2 = harness();
+  h2.hello();
+  h2.fire(ev(0, 'form.requested', {request_id: 'big', kind: 'question', title: 'あ'.repeat(1e6), fields: [{key: 'a', type: 'select', description: 'y'.repeat(1e7), options: Array.from({length: 1e5}, (_, i) => ({label: 'l', value: 'v' + i}))}, deep, {key: deep}]}));
+  h2.fire(ev(1, 'permission.requested', permWithDetails('bigp', {summary: 's'.repeat(1e6), details: Array.from({length: 1e6}, () => ({label: 'l', text: 't'.repeat(10)})).slice(0, 20000)})));
+  h2.fire(ev(2, 'permission.requested', permWithDetails('deepp', {details: [{label: 'l', text: deep}]})));
+  h2.runTimers();
+  assert.ok(Date.now() - t0 < 5000, '固まった');
+  const bigForm = h2.app.state.items.find((i) => i.requestId === 'big');
+  assert.strictEqual(bigForm.answerable, false);
+  assert.strictEqual(core.shownFully(h2.app.state.items.find((i) => i.requestId === 'bigp')), false);
+  assert.strictEqual(core.shownFully(h2.app.state.items.find((i) => i.requestId === 'deepp')), false, '深い入れ子の詳細を、許可できる');
+});
+
+test('form の部品 (input) は、form.requested の dialog からだけ。承認・エージェントの文からは作らない', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'message.text', {text: '<input type=password>'}));
+  h.fire(ev(1, 'permission.requested', permWithDetails('p', {title: '<input>'})));
+  h.fire(ev(2, 'tool.call', {call_id: 'c', name: 'input', kind: 'select', input: {form: 1}}));
+  h.runTimers();
+  for (const bad of ['form', 'input', 'select', 'textarea']) assert.ok(!h.doc.created.includes(bad), bad);
+  h.fire(ev(3, 'form.requested', FORM('f')));
+  h.runTimers();
+  assert.ok(h.doc.created.includes('input'));
+  assert.ok(!h.doc.created.some((t) => ['form', 'select', 'textarea'].includes(t)));
+});
+
+test('golden: ask-user-question は form の項目になり、全部の form を、答えられる形に読める', () => {
+  for (const n of ['ask-user-question-single', 'ask-user-question-multi', 'ask-user-question-custom']) {
+    const s = stateWith(fixture(n));
+    const f = s.items.filter((i) => i.kind === 'form');
+    assert.ok(f.length >= 1, n);
+    for (const it of f) {
+      assert.strictEqual(it.answerable, true, n);
+      assert.ok(/^sha256:[0-9a-f]{64}$/.test(it.contentHash), n + ': content_hash が無い');
+      assert.ok(it.fields.length >= 1 && it.fields.every((x) => x.key !== '' && x.options.every((o) => o.value !== '')));
+    }
+  }
+  const p = stateWith(fixture('permission-interactive-allow')).items.find((i) => i.kind === 'permission');
+  assert.ok(p.summary !== '' && p.details.has && core.shownFully(p), 'claude の承認に、要約・詳細が無い');
+  assert.ok(/^sha256:[0-9a-f]{64}$/.test(p.contentHash));
 });

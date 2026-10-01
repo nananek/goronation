@@ -133,7 +133,7 @@ func TestChatUIWriteTargetsAreFixed(t *testing.T) {
 		got[strings.TrimSpace(m[1])]++
 	}
 	delete(got, "path") // 定義 (async function post(path, body))
-	want := map[string]int{"'/message'": 1, "'/permission'": 1, "'/stop'": 1}
+	want := map[string]int{"'/message'": 1, "'/permission'": 1, "'/form'": 1, "'/stop'": 1}
 	for k, v := range got {
 		if want[k] != v {
 			t.Errorf("post の呼び先 %s が %d 回 (想定外)", k, v)
