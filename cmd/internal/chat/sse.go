@@ -56,9 +56,11 @@ func (s *Session) ReadSSE(sr *SSEReader, want string, onRoot func()) error {
 				return ErrRootMismatch
 			}
 			rooted = true
+			s.Conv.OnLine(data) // root の行を先に渡す: onRoot の後に会話を使う側が、アダプタの root 未確定に当たらないように
 			if onRoot != nil {
 				onRoot()
 			}
+			continue
 		}
 		s.Conv.OnLine(data) // 変換できない行は、何も配られずに、error が返る。捨てる
 	}

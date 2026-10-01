@@ -95,6 +95,16 @@ func TestReadSSEPassesOnlyAfterRootMatches(t *testing.T) {
 	}
 }
 
+// onRoot の時点で、root の session.created は会話へ渡し済み (onRoot の後に会話を使う側が、root 未確定に当たらない)。
+func TestReadSSEOnRootAfterRootDelivered(t *testing.T) {
+	s := openCodeSession(t)
+	var at []string
+	err := s.ReadSSE(NewSSEReader(strings.NewReader("data: "+sessionCreated("ses_a", "")+"\n\n")), "ses_a", func() { at = eventTypes(t, s) })
+	if err != io.EOF || strings.Join(at, ",") != "session.started" {
+		t.Fatalf("err=%v onRoot の時点の event = %v", err, at)
+	}
+}
+
 // 最初の root が違うなら、何も渡さず、ErrRootMismatch で止まる (ほかの利用者の session を、会話にしない)。
 func TestReadSSERootMismatchFailsClosed(t *testing.T) {
 	s := openCodeSession(t)
