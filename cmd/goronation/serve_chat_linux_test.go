@@ -18,7 +18,7 @@ func TestStartChatSessionRefusesRoot(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("root でだけ確かめる")
 	}
-	_, err := startChatSession(t.Context(), "id", cageConfig{}, nil, mustLaunch(t), nil, t.TempDir(), &bytes.Buffer{})
+	_, err := startChatSession(t.Context(), "id", cageConfig{}, nil, mustLaunch(t), nil, t.TempDir(), &bytes.Buffer{}, nil)
 	if err != errChatRoot {
 		t.Fatalf("err = %v", err)
 	}

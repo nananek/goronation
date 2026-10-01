@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,10 @@ cookie も WebAuthn も持たない。認証は goronation web が済ませて�
                   /permission・/stop) を、UDS chat.sock で出す。エージェントは claude か opencode (opencode は、--
                   の後ろの引数を受けない)。root では動かせない (非 root の利用者で動かす)。
                   最初の指示は、チャット (POST /message) から送る (起動しただけでは、エージェントに何も送らない)
+  --no-event-log  履歴を、ディスクに書かない (--chat のとき)。既定では、リングバッファを溢れた分も、画面の再接続で差分だけ届くよう、
+                  進行中の起動の間だけ、セッションのディレクトリ (0700) の events.db に残す。残る内容は、tool の入出力・本文・form の
+                  回答・承認の対象 (コマンド・path) で、0600・暗号化なし。正常な終了で消え、異常終了の残りは、次の serve の起動で消える。
+                  書かない場合、画面の再読み込みで、リングを溢れた古い分は欠ける
   --agent NAME    動かすエージェント (goronation run と同じ表。--session のときは、記録したものと違うと断る)
   --name N        clone の user.name (--repo のとき)
   --email E       clone の user.email (--repo のとき)
@@ -68,6 +73,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	emailFlag := flags.String("email", "", "")
 	socketFlag := flags.String("socket", "", "")
 	chatFlag := flags.Bool("chat", false, "")
+	noEventLogFlag := flags.Bool("no-event-log", false, "")
 	if err := flags.Parse(head); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -90,6 +96,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		if _, ok := agentByName(*agentFlag); !ok {
 			return fail("--agent は %s: %q", agentNames(), *agentFlag)
 		}
+	}
+	if *noEventLogFlag && !*chatFlag {
+		return fail("--no-event-log は、--chat のときだけ使える")
 	}
 	if *chatFlag && os.Geteuid() == 0 { // 何かを作る前に、分かりやすく断る (L3)
 		return fail("%v", errChatRoot)
@@ -122,18 +131,20 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 
 	// 端末ビュー (term) か、構造化チャット (--chat) のどちらか 1 つの檻を起こす。以降は、id・待ち・UDS の HTTP ハンドラだけが違う。
 	var (
-		id      string
-		wait    func()
-		handler http.Handler
-		what    = "端末ビュー"
-		sockOf  = termSocketPath
+		id       string
+		wait     func()
+		closeLog = func() {} // 耐久ログの削除 (--chat のとき)。HTTP の shutdown と、檻の終了・会話の終了のあとに呼ぶ
+		handler  http.Handler
+		what     = "端末ビュー"
+		sockOf   = termSocketPath
 	)
 	if *chatFlag {
-		chatS, err := startServeChatSession(ctx, stateDir, *sessionFlag, *agentFlag, *nameFlag, *emailFlag, *repoFlag, tail, stderr)
+		chatS, err := startServeChatSession(ctx, stateDir, *sessionFlag, *agentFlag, *nameFlag, *emailFlag, *repoFlag, tail, *noEventLogFlag, stderr)
 		if err != nil {
 			return fail("チャットのセッションを起動できない: %v", err)
 		}
 		id, wait, handler, what, sockOf = chatS.id, func() { chatS.Wait() }, newChatHandler(chatS), "チャット", chatSocketPath
+		closeLog = func() { chatS.log.Close(chatS.Chat.Hub) }
 	} else {
 		term, err := startServeTermSession(ctx, stateDir, *sessionFlag, *agentFlag, *nameFlag, *emailFlag, *repoFlag, tail, stderr)
 		if err != nil {
@@ -150,7 +161,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	// 実行され、wait が無期限にブロックする (攻撃者視点レビューで発見。net.Listen の失敗など、
 	// シグナルを経由しない異常系の return で起きる)。cancel を、ここで明示的に先に呼ぶ (cancel は
 	// 冪等なので、外側の defer cancel() と重複しても安全)。
-	defer func() { cancel(); wait() }()
+	// 耐久ログの削除は、その後 (S10): HTTP の shutdown (読んでいる接続) が済み、会話が終わって Hub が閉じてから、書き手を待って閉じる。
+	var shutdown sync.WaitGroup
+	defer func() { cancel(); wait(); shutdown.Wait(); closeLog() }()
 
 	sockPath := *socketFlag
 	if sockPath == "" {
@@ -184,7 +197,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 
 	srv := &http.Server{Handler: handler}
+	shutdown.Add(1)
 	go func() {
+		defer shutdown.Done()
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), serveShutdownTimeout)
 		defer cancel()

@@ -45,7 +45,7 @@ func startOpencodeFixture(t *testing.T, scene string) (*chatSession, *chatEvents
 	t.Setenv("GORONATION_OPENCODE", f.exe)
 	var stderr syncBuffer
 	ctx, cancel := context.WithCancel(t.Context())
-	s, err := startServeChatSession(ctx, f.stateDir(), "", "opencode", "t", "t@e.invalid", f.repo, nil, &stderr)
+	s, err := startServeChatSession(ctx, f.stateDir(), "", "opencode", "t", "t@e.invalid", f.repo, nil, false, &stderr)
 	if err != nil {
 		cancel()
 		t.Fatalf("%v\n%s", err, stderr.String())
@@ -300,7 +300,7 @@ func TestOpencodeChatRefusesExtraArgs(t *testing.T) {
 	t.Setenv("HOME", f.home)
 	t.Setenv("GORONATION_OPENCODE", f.exe)
 	var stderr syncBuffer
-	_, err := startServeChatSession(t.Context(), f.stateDir(), "", "opencode", "t", "t@e.invalid", f.repo, []string{"--port", "1"}, &stderr)
+	_, err := startServeChatSession(t.Context(), f.stateDir(), "", "opencode", "t", "t@e.invalid", f.repo, []string{"--port", "1"}, false, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "引数を受けない") {
 		t.Fatalf("err = %v", err)
 	}

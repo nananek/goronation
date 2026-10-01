@@ -38,7 +38,7 @@ func tryOpencodeChat(t *testing.T, scene, mode string) (*chatSession, *syncBuffe
 	var stderr syncBuffer
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
-	s, err := startServeChatSession(ctx, f.stateDir(), "", "opencode", "t", "t@e.invalid", f.repo, nil, &stderr)
+	s, err := startServeChatSession(ctx, f.stateDir(), "", "opencode", "t", "t@e.invalid", f.repo, nil, false, &stderr)
 	if err == nil {
 		t.Cleanup(func() { s.Chat.Conv.Stop(); s.cancel(); s.Wait() }) // 会話が先に終わっていても、檻を止める
 	}

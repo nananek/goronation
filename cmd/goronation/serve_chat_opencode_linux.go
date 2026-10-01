@@ -221,7 +221,7 @@ func freePort() (int, error) {
 // startOpencodeChatSession は、cfg の檻 (init --relay-control の下の opencode serve --stdio) を起動し、HTTP の transport で会話を始める。
 // cfg の RelayPort・RelayTokenEnv・RelayVersionPrefix は、ここで決める (profile の値と、空きポート)。init が {"error":…} を返したとき
 // (ポートが使われていた場合を含む) は、ポートを選び直して 1 回だけ再起動する。
-func startOpencodeChatSession(ctx context.Context, id string, cfg cageConfig, allow []string, launch chat.Launch, exeDir string, stderr io.Writer) (*chatSession, error) {
+func startOpencodeChatSession(ctx context.Context, id string, cfg cageConfig, allow []string, launch chat.Launch, exeDir string, stderr io.Writer, lg *chatLog) (*chatSession, error) {
 	if cfg.Agent.relayTokenEnv == "" {
 		return nil, fmt.Errorf("%s は、HTTP の transport で動かせない (profile に relayTokenEnv が無い)", cfg.Agent.name)
 	}
@@ -232,7 +232,7 @@ func startOpencodeChatSession(ctx context.Context, id string, cfg cageConfig, al
 			return nil, fmt.Errorf("空きポートを選べない: %w", err)
 		}
 		cfg.RelayPort, cfg.RelayTokenEnv, cfg.RelayVersionPrefix = port, cfg.Agent.relayTokenEnv, cfg.Agent.relayVersionPrefix
-		s, err := startOpencodeAttempt(ctx, id, cfg, allow, launch, exeDir, stderr, port)
+		s, err := startOpencodeAttempt(ctx, id, cfg, allow, launch, exeDir, stderr, lg, port)
 		if err == nil {
 			return s, nil
 		}
@@ -245,7 +245,7 @@ func startOpencodeChatSession(ctx context.Context, id string, cfg cageConfig, al
 	return nil, lastErr
 }
 
-func startOpencodeAttempt(ctx context.Context, id string, cfg cageConfig, allow []string, launch chat.Launch, exeDir string, stderr io.Writer, port int) (*chatSession, error) {
+func startOpencodeAttempt(ctx context.Context, id string, cfg cageConfig, allow []string, launch chat.Launch, exeDir string, stderr io.Writer, lg *chatLog, port int) (*chatSession, error) {
 	c, err := startCage(ctx, cfg, allow, append(launch.Args(), "--port", strconv.Itoa(port)), exeDir, stderr)
 	if err != nil {
 		return nil, err
@@ -272,9 +272,10 @@ func startOpencodeAttempt(ctx context.Context, id string, cfg cageConfig, allow 
 		return fail(err)
 	}
 
-	s := &chatSession{chatCage: *c, id: id, done: make(chan struct{})}
+	store, onDegrade := lg.config()
+	s := &chatSession{chatCage: *c, id: id, log: lg, done: make(chan struct{})}
 	s.Chat = chat.NewSession(chat.SessionConfig{
-		Launch: launch, ID: id, Input: &httpWriter{ctx: hctx, hc: hc, timeout: opencodeRequestTimeout},
+		Launch: launch, ID: id, Input: &httpWriter{ctx: hctx, hc: hc, timeout: opencodeRequestTimeout}, Store: store, OnDegrade: onDegrade,
 		// 手動の「終了」: control を閉じ (init が子を止める)、檻を止める。
 		OnStop: func() {
 			c.pair.In.CloseWrite()
