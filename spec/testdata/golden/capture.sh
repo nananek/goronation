@@ -9,7 +9,7 @@
 # 動かして採る。場面 (scenarios/*.json) の選び方は、各 JSON の description に書く。fixtures は、
 # framecapture --normalize で、実行ごとに変わる値 (ID・時刻・所要時間) を固定の記号に置き換えてある
 # (規則は cmd/framecapture の normalize.go)。同じ場面を何度採り直しても、--check は一致する。
-# 採取したバージョン: claude 2.1.284、opencode 1.18.32 (opencode-linux-x64 の tgz の中の ELF。
+# 採取したバージョン: claude 2.1.284 (ask-user-question-* の 5 場面だけ 2.1.286。PR⑤a)、opencode 1.18.32 (opencode-linux-x64 の tgz の中の ELF。
 # `npm pack opencode-linux-x64@1.18.32` で得る。lifecycle script は実行しない)。エージェントの版が
 # 変わると、フレームも変わりうる。その差が、追従すべき変更 (fixture の更新) か、壊れか (直す) かを見る。
 #

@@ -244,7 +244,15 @@ func driveClaudeConversation(turns []string, answers []claudePermissionAnswer, s
 					return err
 				}
 			default: // "allow" を含め、既定は allow
-				if err := writeLine(stdin, controlResponseAllow(f.RequestID)); err != nil {
+				resp := controlResponseAllow(f.RequestID)
+				if len(ans.Answers) > 0 {
+					updated, err := inputWithAnswers(f.Request.Input, ans.Answers)
+					if err != nil {
+						return err
+					}
+					resp["response"].(map[string]any)["response"].(map[string]any)["updatedInput"] = updated
+				}
+				if err := writeLine(stdin, resp); err != nil {
 					return err
 				}
 			}
@@ -287,6 +295,16 @@ func controlResponseAllow(requestID string) map[string]any {
 			"response":   map[string]any{"behavior": "allow"},
 		},
 	}
+}
+
+// inputWithAnswers は、tool の input (オブジェクト) に answers を足した値を返す (AskUserQuestion の回答。updatedInput に使う)。
+func inputWithAnswers(input json.RawMessage, answers map[string]any) (map[string]any, error) {
+	var m map[string]any
+	if err := json.Unmarshal(input, &m); err != nil || m == nil {
+		return nil, fmt.Errorf("can_use_tool の input がオブジェクトでない: %v", err)
+	}
+	m["answers"] = answers
+	return m, nil
 }
 
 // controlResponseDeny は、can_use_tool の control_request request_id への、拒否の control_response

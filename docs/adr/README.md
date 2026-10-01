@@ -45,6 +45,12 @@
 | [0037](0037-vault-process-layout.md) | Vault の本体鍵は、専用のデーモンだけが持ち、他のプロセスは UDS で引く (M2) | 採用 |
 | [0038](0038-vault-wrap-add-remove.md) | passkey の追加と削除は、既存の passkey の証明と、両方の画面での確認を要る (M2) | 採用 |
 | [0039](0039-webauthn-multi-passkey.md) | webauthn は、複数の passkey と、操作に束縛した再認証を持ち、ED は許可リストで受ける (M2) | 採用 |
+| [0040](0040-form-vocabulary.md) | 人間への入力の要求は、質問でなく form (フィールドの一覧) として表す (M2) | 採用 |
+| [0041](0041-permission-summary-details.md) | 権限の要求は、機械生成の要約と、tool に依らない詳細の 2 階層で見せる (M2) | 採用 |
+| [0042](0042-content-hash-binding.md) | 承認と回答は、利用者が見た内容の SHA-256 を写させて束縛する (M2) | 採用 |
+| [0043](0043-question-permission.md) | opencode の question の tool は、session の permissions で承認の段を省く (M2) | 採用 |
+| [0044](0044-claude-ask-user-question.md) | claude の AskUserQuestion は form にし、回答は updatedInput.answers で返す (M2) | 採用 |
+| [0045](0045-subagent-origin.md) | サブエージェントの出力には、帰属 (origin) を付ける (M2) | 採用 |
 
 ## 書き方
 

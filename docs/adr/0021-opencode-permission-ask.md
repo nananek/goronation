@@ -1,6 +1,6 @@
 # 0021. opencode の承認は、セッション作成時の permissions で固定する (M2)
 
-- 状態: 採用
+- 状態: 採用 (2026-10-01 に追記: 決定 5 の `question`・`form` の扱いは、ADR 0040・0043 が置き換える)
 - 日付: 2026-09-30
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、ADR 0011・0017・0018、[PR #68](https://github.com/nananek/goronation/pull/68)
 

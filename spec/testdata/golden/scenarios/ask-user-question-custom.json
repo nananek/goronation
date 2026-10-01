@@ -1,0 +1,46 @@
+{
+  "description": "PR⑤a (質問・権限承認の標準化): claude の AskUserQuestion を host モード (--permission-prompt-tool stdio) で採る。claude 専用の場面 (claude_only)。採取は claude 2.1.286 (既存の fixtures は 2.1.284。AskUserQuestion の can_use_tool は requires_user_interaction:true・display_name つきで来る)。 選択肢に無い自由記述 (Other) の回答を、そのまま文字列で返す。",
+  "claude_only": true,
+  "turns": [
+    "質問してください。"
+  ],
+  "claude": [
+    {
+      "text": "聞きます。",
+      "toolUse": {
+        "id": "toolu_fake_q1",
+        "name": "AskUserQuestion",
+        "input": {
+          "questions": [
+            {
+              "question": "好きな色は?",
+              "header": "色",
+              "multiSelect": false,
+              "options": [
+                {
+                  "label": "赤",
+                  "description": "暖色"
+                },
+                {
+                  "label": "青",
+                  "description": "寒色"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "text": "了解しました。"
+    }
+  ],
+  "claude_permissions": [
+    {
+      "outcome": "allow",
+      "answers": {
+        "好きな色は?": "紫 (自由記述)"
+      }
+    }
+  ]
+}

@@ -170,3 +170,21 @@ func TestRunClaudeUsesInteractivePathOnlyWithPermissions(t *testing.T) {
 		t.Fatal("ゼロ値の scenario が、ClaudePermissions を持ってしまっている")
 	}
 }
+
+// inputWithAnswers は、tool の input (オブジェクト) に answers を足す: 元の input の欄は残り、answers が入る。
+func TestInputWithAnswers(t *testing.T) {
+	got, err := inputWithAnswers(json.RawMessage(`{"questions":[{"question":"色は?"}]}`), map[string]any{"色は?": "赤", "複数": "Go, Rust"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(got)
+	want := `{"answers":{"色は?":"赤","複数":"Go, Rust"},"questions":[{"question":"色は?"}]}`
+	if string(b) != want {
+		t.Fatalf("got %s, want %s", b, want)
+	}
+	for _, bad := range []string{`[1]`, `"x"`, `null`, ``} {
+		if _, err := inputWithAnswers(json.RawMessage(bad), map[string]any{"a": "b"}); err == nil {
+			t.Errorf("%q: error になるべき", bad)
+		}
+	}
+}

@@ -1,0 +1,66 @@
+{
+  "description": "PR⑤a (質問・権限承認の標準化): claude の AskUserQuestion を host モード (--permission-prompt-tool stdio) で採る。claude 専用の場面 (claude_only)。採取は claude 2.1.286 (既存の fixtures は 2.1.284。AskUserQuestion の can_use_tool は requires_user_interaction:true・display_name つきで来る)。 複数選択 (multiSelect:true) の回答を、', ' で連結した 1 つの文字列で返す (SDK の型 Record<string,string> に合う形。配列も 2.1.286 は受けるが、頼らない)。2 つの質問を 1 つの tool 呼び出しで聞く。",
+  "claude_only": true,
+  "turns": [
+    "質問してください。"
+  ],
+  "claude": [
+    {
+      "text": "聞きます。",
+      "toolUse": {
+        "id": "toolu_fake_q1",
+        "name": "AskUserQuestion",
+        "input": {
+          "questions": [
+            {
+              "question": "好きな色は?",
+              "header": "色",
+              "multiSelect": false,
+              "options": [
+                {
+                  "label": "赤",
+                  "description": "暖色"
+                },
+                {
+                  "label": "青",
+                  "description": "寒色"
+                }
+              ]
+            },
+            {
+              "question": "使う言語は? (複数可)",
+              "header": "言語",
+              "multiSelect": true,
+              "options": [
+                {
+                  "label": "Go",
+                  "description": "静的型"
+                },
+                {
+                  "label": "Python",
+                  "description": "動的型"
+                },
+                {
+                  "label": "Rust",
+                  "description": "所有権"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "text": "了解しました。"
+    }
+  ],
+  "claude_permissions": [
+    {
+      "outcome": "allow",
+      "answers": {
+        "好きな色は?": "青",
+        "使う言語は? (複数可)": "Go, Rust"
+      }
+    }
+  ]
+}

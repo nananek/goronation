@@ -35,6 +35,8 @@ type serveScene struct {
 	wrap       func(main http.Handler) http.Handler // 会話の本体の provider を包む (遅延・壊れた応答)。nil なら、そのまま
 	drive      func(r *sceneRun)                    // ホストの動き
 	note       string                               // 採取の時に分かったこと (meta.json)
+	// permissions は、POST /api/session に渡す permissions (JSON の配列)。空なら、全て ask。
+	permissions string
 }
 
 // sceneRun は、1 つの場面の、ホスト側の状態。
@@ -44,6 +46,8 @@ type sceneRun struct {
 	sse *sseStream
 	sid string
 	cur int // 次に見る SSE イベントの位置
+	// permissions は、newSession が session に渡す permissions (JSON の配列)。空なら、全て ask。
+	permissions string
 }
 
 // executionEnded は、session.execution.* の終わり (started 以外) のイベントか。
@@ -54,7 +58,11 @@ func executionEnded(e sseEvent) bool {
 
 func (r *sceneRun) newSession() {
 	r.t.Helper()
-	st, body := r.c.call("POST", "/api/session", `{"permissions":[{"action":"*","resource":"*","effect":"ask"}]}`)
+	perms := r.permissions
+	if perms == "" {
+		perms = `[{"action":"*","resource":"*","effect":"ask"}]`
+	}
+	st, body := r.c.call("POST", "/api/session", `{"permissions":`+perms+`}`)
 	var s struct{ Data struct{ ID string } }
 	json.Unmarshal([]byte(body), &s)
 	if st != 200 || s.Data.ID == "" {
@@ -170,7 +178,7 @@ func captureScene(t *testing.T, src, out string, sc serveScene) {
 	if st != 200 || !strings.HasPrefix(inf.Version, "2.0.") {
 		t.Fatalf("GET /api/info = %d %s", st, info)
 	}
-	r := &sceneRun{t: t, c: c, sse: c.openSSE()}
+	r := &sceneRun{t: t, c: c, sse: c.openSSE(), permissions: sc.permissions}
 	if raw := os.Getenv("GORO_CAPTURE_RAW_DIR"); raw != "" { // 正規化の前の記録 (失敗したときも書く)
 		defer func() {
 			var b bytes.Buffer
@@ -382,6 +390,22 @@ func serveScenes() []serveScene {
 			toolStep("call_q", "question", map[string]any{"questions": []map[string]any{{"question": "Which color?", "header": "Color", "options": []map[string]any{{"label": "Red", "description": "warm"}, {"label": "Blue", "description": "cool"}}}}}),
 			text("You chose Red."),
 		}, drive: func(r *sceneRun) { questionTurn(r, map[string]any{"q0": "Red"}) }},
+		{name: "question-rule-allow", permissions: `[{"action":"*","resource":"*","effect":"ask"},{"action":"question","resource":"*","effect":"allow"}]`,
+			note: `session の permissions に、"*" の ask のあとに、question の allow を足すと (あとの規則が勝つ)、question の tool の permission.asked が出ず、form.created が直接出る。順序を逆 (question の allow のあとに "*" の ask) にすると、あとの "*" が勝ち、permission.asked が出る (採取で確認。2.0.20)。`,
+			desc: "question の tool: session の permissions で question を allow にした (承認の段が無い)", steps: []openai.Step{
+				toolStep("call_q", "question", map[string]any{"questions": []map[string]any{{"question": "Which color?", "header": "Color", "options": []map[string]any{{"label": "Red", "description": "warm"}, {"label": "Blue", "description": "cool"}}}}}),
+				text("You chose Red."),
+			}, drive: func(r *sceneRun) {
+				r.newSession()
+				r.prompt("Ask me.")
+				fid := r.formID()
+				r.c.call("GET", "/api/session/"+r.sid+"/form", "")
+				b, _ := json.Marshal(map[string]any{"answer": map[string]any{"q0": "Red"}})
+				if st, body := r.c.call("POST", "/api/session/"+r.sid+"/form/"+fid+"/reply", string(b)); st/100 != 2 {
+					r.t.Fatalf("form reply = %d %s", st, body)
+				}
+				r.approveAll("once")
+			}},
 		{name: "question-multiple", note: `multiple:true の質問は、field の type が multiselect (単一選択は string)。返答の値は配列 (["S","L"])。`, desc: "question の tool: 2 問 (単一選択・複数選択 multiple:true)。複数選択の返答は配列", steps: []openai.Step{
 			toolStep("call_q", "question", map[string]any{"questions": []map[string]any{
 				{"question": "Which color?", "header": "Color", "options": []map[string]any{{"label": "Red", "description": "warm"}, {"label": "Blue", "description": "cool"}}},

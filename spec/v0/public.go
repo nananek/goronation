@@ -11,6 +11,7 @@ type UIEnvelope struct {
 	Seq     uint64          `json:"seq"`
 	Type    string          `json:"type"`
 	Durable bool            `json:"durable"`
+	Origin  *Origin         `json:"origin,omitempty"`
 	Data    json.RawMessage `json:"data"`
 }
 
@@ -23,5 +24,5 @@ type UIEnvelope struct {
 // TestPublicCarriesEverythingButRaw の分だけ。golden fixtures を使う側は、新フィールド追加時に更新が要りうる。
 // 強制は、UI・API の層が Envelope を import しないことを、tools/archtest の規則で押さえる形になる (M2 の SSE API の前に足す)。
 func (e Envelope) Public() UIEnvelope {
-	return UIEnvelope{V: e.V, ID: e.ID, TS: e.TS, Session: e.Session, Seq: e.Seq, Type: e.Type, Durable: e.Durable, Data: e.Data}
+	return UIEnvelope{V: e.V, ID: e.ID, TS: e.TS, Session: e.Session, Seq: e.Seq, Type: e.Type, Durable: e.Durable, Origin: e.Origin, Data: e.Data}
 }

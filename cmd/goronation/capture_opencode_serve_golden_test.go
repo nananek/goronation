@@ -22,7 +22,7 @@ const serveGoldenDir = "../../spec/testdata/golden/opencode-serve"
 // serveSceneNames は、採取する場面の名前 (serveScenes と、fixtures のディレクトリが、これに一致する)。
 var serveSceneNames = []string{
 	"simple-text", "tool-call-shell-allow", "tool-call-shell-reject", "tool-call-shell-always", "pending-snapshot", "actions", "subagent", "multi-turn",
-	"question-single", "question-multiple", "question-custom", "question-cancel", "websearch-form",
+	"question-single", "question-rule-allow", "question-multiple", "question-custom", "question-cancel", "websearch-form",
 	"interrupt-streaming", "interrupt-pending-permission",
 	"error-provider-500", "error-provider-400", "error-provider-bad-stream", "error-provider-truncated",
 }
@@ -187,6 +187,10 @@ func TestOpencodeServeGolden(t *testing.T) {
 	}
 	if !has("subagent", func(e goldenEvent) bool { return e.Type == "session.created" && e.Data.ParentID != "" }) {
 		t.Error("subagent: parentID つきの session.created (子の session) が無い")
+	}
+	// question の allow の規則 (ADR 0043): permission.asked が出ず、form.created が直接出る。
+	if has("question-rule-allow", typ("permission.asked")) || !has("question-rule-allow", typ("form.created")) || !has("question-rule-allow", typ("form.replied")) {
+		t.Error("question-rule-allow: permission.asked が出ているか、form.created・form.replied が無い")
 	}
 	for _, name := range []string{"question-single", "question-multiple", "question-custom"} {
 		if !has(name, func(e goldenEvent) bool { return e.Type == "form.created" && e.Data.Form.Metadata.Kind == "question" }) || !has(name, typ("form.replied")) {
