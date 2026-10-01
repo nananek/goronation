@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -498,13 +499,24 @@ func storedEvent(r StoredEvent, after, before uint64) (Event, error) {
 	if bytes.ContainsAny(r.Payload, "\r\n") {
 		return Event{}, errors.New("payload に改行がある")
 	}
-	var f struct {
-		Seq     *uint64 `json:"seq"`
-		Type    string  `json:"type"`
-		Durable bool    `json:"durable"`
-	}
-	if err := json.Unmarshal(r.Payload, &f); err != nil {
+	var m map[string]json.RawMessage // キー名を区別して読む (構造体への読みは大文字小文字を区別せず、UI の JSON.parse と食い違う)
+	if err := json.Unmarshal(r.Payload, &m); err != nil {
 		return Event{}, errors.New("JSON として読めない")
+	}
+	for k := range m {
+		for _, want := range [...]string{"seq", "type", "durable"} {
+			if k != want && strings.EqualFold(k, want) {
+				return Event{}, errors.New("キー名の大文字小文字違いがある")
+			}
+		}
+	}
+	var f struct {
+		Seq     *uint64
+		Type    string
+		Durable bool
+	}
+	if json.Unmarshal(m["seq"], &f.Seq) != nil || json.Unmarshal(m["type"], &f.Type) != nil || json.Unmarshal(m["durable"], &f.Durable) != nil {
+		return Event{}, errors.New("seq・type・durable の型が不正")
 	}
 	if f.Seq == nil || *f.Seq != r.Seq || !f.Durable || !validEventType(f.Type) {
 		return Event{}, errors.New("JSON の seq・durable・type が行と合わない")
