@@ -366,7 +366,7 @@ func TestTrimReturnsFirstUnpinned(t *testing.T) {
 		t.Fatalf("Trim(全部) = %d %v", first, err)
 	}
 	got, _ := s.Range(0, 100, 100)
-	if !eq(seqs(got), []uint64{0, 1, 5}) {
+	if !eq(seqs(got), []uint64{1, 5}) { // Range は after (0) を含まない。0 は固定で残っている
 		t.Fatalf("残り: %v", seqs(got))
 	}
 }
