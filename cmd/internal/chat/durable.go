@@ -31,16 +31,15 @@ type StoreOp struct {
 }
 
 // EventStore は、耐久イベントログの Store (同期。cmd/internal/eventlog の *Store が満たす形。型の変換は cmd/goronation の配線が持つ)。
-// 並行に呼ばれる: Apply・Trim は書き手の goroutine 1 本から、Range・FirstUnpinned は購読ごとの goroutine から。
+// 並行に呼ばれる: Apply・Trim は書き手の goroutine 1 本から、Range は購読ごとの goroutine から。
 // Store から読んだ行は信用しない (同じ利用者の別プロセスが、DB を書き換えうる)。Hub が検査してから配る (Backfill)。
 type EventStore interface {
 	// Apply は、op を 1 トランザクションで適用する。error なら何も適用していない。
 	Apply(op StoreOp) error
 	// Range は、after < seq < before の行を、seq の昇順に、最大 limit 件返す (固定の行を含む)。limit 件に満たないのは、尽きたとき。
 	Range(after, before uint64, limit int) ([]StoredEvent, error)
-	// FirstUnpinned は、固定でない行のうち、最小の seq (無ければ ok=false)。Trim のあとの hello の first_seq に使う。
-	FirstUnpinned() (seq uint64, ok bool)
-	// Trim は、固定でない行を古い方から削り、payload の合計を budgetBytes に収め、残った固定でない行の最小の seq を返す。固定の行は消さない。
+	// Trim は、固定でない行を古い方から削り、payload の合計を budgetBytes に収め、残った固定でない行の最小の seq (無ければ 0) を返す。固定の行は消さない。
+	// 返す seq は、hello の first_seq (省略の印) の元になる: これより前の固定でない行は、削った。
 	Trim(budgetBytes int64) (firstSeq uint64, err error)
 }
 
@@ -81,7 +80,8 @@ type storeWriter struct {
 
 	written  atomic.Int64 // W: 書き込み済みの最大の seq (無ければ -1)
 	degraded atomic.Bool
-	trims    atomic.Int64 // Trim の前後で 1 ずつ増える (奇数は Trim の最中)。Backfill が、読んでいる最中の GC を検出する
+	trimmed  atomic.Uint64 // 最後の Trim が返した、残った固定でない行の最小の seq (0 は、Trim が無い・残らなかった)。first_seq の元 (固定を解いた古い行に引きずられない)
+	trims    atomic.Int64  // Trim の前後で 1 ずつ増える (奇数は Trim の最中)。Backfill が、読んでいる最中の GC を検出する
 
 	mu      sync.Mutex // 小さな Mutex (Hub.mu の中から取る。順序: Hub.mu → mu)。キューの出し入れだけ
 	pending []StoreOp
@@ -300,7 +300,10 @@ func (w *storeWriter) run() {
 			target := w.gcMax / gcTargetDen * gcTargetNum
 			start = time.Now()
 			w.trims.Add(1)
-			_, err := w.store.Trim(target)
+			first, err := w.store.Trim(target)
+			if err == nil {
+				w.trimmed.Store(first) // trims を偶数に戻す前に (SubscribeAfter が、偶数の trims と組みで読む)
+			}
 			w.trims.Add(1)
 			d = time.Since(start)
 			if err != nil {
@@ -359,13 +362,8 @@ func (h *Hub) WaitStore(ctx context.Context) error {
 // 終了した Hub でも動く。
 func (h *Hub) SubscribeAfter(after uint64) (*Subscription, error) {
 	var trims int64
-	var firstUnpinned uint64
-	var haveFirst bool
 	if h.w != nil {
 		trims = h.w.trims.Load() // この値が Backfill の最中に変わったら (GC が走った)、Backfill は失敗する (ErrBackfillStale)
-		if trims > 0 && !h.w.degraded.Load() {
-			firstUnpinned, haveFirst = h.w.store.FirstUnpinned() // Mutex の外 (Store の I/O を Mutex の中に置かない)
-		}
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -384,11 +382,12 @@ func (h *Hub) SubscribeAfter(after uint64) (*Subscription, error) {
 		ringFirst = ring[0].Seq
 	}
 	s := &Subscription{hub: h, notify: make(chan struct{}, 1), resumed: true, durable: true}
-	// 削った行があるときだけ、first_seq は DB の先頭 (固定でない行が無ければ、リングの先頭): UI が、after より前の省略を示せる。削っていなければ、省略は無い (0)。
+	// 削った行があるときだけ、first_seq は、最後の Trim が返した、残った固定でない行の最小の seq (無ければ、リングの先頭): UI が、after より前の省略を示せる。
+	// 削っていなければ、省略は無い (0)。Store の「今の固定でない行の最小」は使わない: 未決の要求の固定が解けた古い行が、削った範囲の前に現れ、省略を隠すため。
 	if trims > 0 {
 		s.FirstSeq = ringFirst
-		if haveFirst {
-			s.FirstSeq = min(firstUnpinned, ringFirst)
+		if t := h.w.trimmed.Load(); t != 0 {
+			s.FirstSeq = min(t, ringFirst)
 		}
 	}
 	i := sortSearchSeq(ring, after)

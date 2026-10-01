@@ -87,12 +87,6 @@ func (f *fakeStore) Range(after, before uint64, limit int) ([]StoredEvent, error
 	return out, nil
 }
 
-func (f *fakeStore) FirstUnpinned() (uint64, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.firstUnp, f.firstUnp != 0
-}
-
 func (f *fakeStore) Trim(budget int64) (uint64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -829,7 +823,7 @@ func TestBackfillStaleWhenTrimRunsDuringBackfill(t *testing.T) {
 	if !h.Durable() || p.n.Load() != 0 {
 		t.Fatal("GC で縮退してはいけない")
 	}
-	st.firstUnp = 12
+	h.w.trimmed.Store(12) // 最後の Trim が返した値
 	s2, err := h.SubscribeAfter(0)
 	if err != nil || !s2.Resumed() || s2.FirstSeq != 12 {
 		t.Fatalf("繋ぎ直し: %v first=%d", err, s2.FirstSeq)
@@ -847,7 +841,7 @@ func TestSubscribeAfterDuringTrimAndWithoutUnpinnedRows(t *testing.T) {
 	}
 	h.w.trims.Add(1)
 	s, _ := h.SubscribeAfter(0)
-	if !s.Resumed() || s.FirstSeq != s.Snapshot[0].Seq { // FirstUnpinned が無い: リングの先頭
+	if !s.Resumed() || s.FirstSeq != s.Snapshot[0].Seq { // Trim が行を残さなかった (trimmed=0): リングの先頭
 		t.Fatalf("resumed=%v first=%d", s.Resumed(), s.FirstSeq)
 	}
 }
