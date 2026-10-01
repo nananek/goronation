@@ -282,6 +282,8 @@ func startOpencodeAttempt(ctx context.Context, id string, cfg cageConfig, allow 
 		},
 	})
 	readDone := make(chan struct{})
+	rootedCh := make(chan struct{})
+	var readErr error
 	go func() {
 		defer close(readDone)
 		var rooted atomic.Bool
@@ -291,9 +293,9 @@ func startOpencodeAttempt(ctx context.Context, id string, cfg cageConfig, allow 
 			}
 		})
 		defer timer.Stop()
-		err := s.Chat.ReadSSE(sr, created, func() { rooted.Store(true) })
+		readErr = s.Chat.ReadSSE(sr, created, func() { rooted.Store(true); close(rootedCh) })
 		switch {
-		case errors.Is(err, chat.ErrRootMismatch):
+		case errors.Is(readErr, chat.ErrRootMismatch):
 			fmt.Fprintf(stderr, "goronation serve: opencode の root の session が、作成した session と一致しない。会話を終える\n")
 		case !rooted.Load():
 			fmt.Fprintf(stderr, "goronation serve: opencode の root の session.created が、%v 以内に来ない。会話を終える\n", opencodeConnectTimeout)
@@ -306,5 +308,16 @@ func startOpencodeAttempt(ctx context.Context, id string, cfg cageConfig, allow 
 		hcancel()
 	}()
 	go s.run(readDone)
-	return s, nil
+	// root の一致を確かめるまで、会話を渡さない (指示が root の session より先に届いて、失敗するのを避ける。不一致・時間切れは、起動の失敗)。
+	select {
+	case <-rootedCh:
+		return s, nil
+	case <-readDone:
+	}
+	hcancel()
+	<-s.done
+	if errors.Is(readErr, chat.ErrRootMismatch) {
+		return nil, chat.ErrRootMismatch
+	}
+	return nil, fmt.Errorf("opencode: root の session.created を、%v 以内に確かめられなかった", opencodeConnectTimeout)
 }
