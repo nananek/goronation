@@ -396,7 +396,7 @@
   // normalizeOrigin は、Event の origin (ADR 0045: サブエージェントの帰属。{id, parent}) を、表示用にする。無い (undefined・null) だけが、メインのエージェント (null を返す)。
   // 型が違う・id が文字列でない/空/長すぎる・parent が文字列でない/長すぎる、は「帰属が壊れている」(bad): 不明な origin を、メインのものに見せない
   // (サブエージェント扱いで、id・parent は出さない)。値はエージェントの申告で、検証されていない (帰属はセキュリティの境界でなく、表示の手がかり)。
-  // 値は short() を通す (制御文字・双方向制御は印)。id・parent は、比較の鍵 (key) にも使う (長さを限った生の値)。
+  // 値は short() を通す (制御文字・双方向制御は印)。id・parent は、比較の鍵 (key) にも使う (長さを限った生の値の JSON。区切りの文字を含む値でも、別の組と衝突しない)。
   function normalizeOrigin(v) {
     if (v === undefined || v === null) return null;
     const bad = {bad: true, id: '', parent: '', hasParent: false, key: '!'};
@@ -404,7 +404,7 @@
     if (typeof v.id !== 'string' || v.id === '' || v.id.length > LIMITS.maxShort) return bad;
     const hasParent = v.parent !== undefined && v.parent !== null && v.parent !== '';
     if (hasParent && (typeof v.parent !== 'string' || v.parent.length > LIMITS.maxShort)) return bad;
-    return {bad: false, id: short(v.id), parent: hasParent ? short(v.parent) : '', hasParent: hasParent, key: v.id + '\u0000' + (hasParent ? v.parent : '')};
+    return {bad: false, id: short(v.id), parent: hasParent ? short(v.parent) : '', hasParent: hasParent, key: JSON.stringify([v.id, hasParent ? v.parent : ''])};
   }
 
   // applyEvent は、Event 1 つを受ける。表示に反映したら true。

@@ -1887,3 +1887,20 @@ test('origin: 承認の関門は、帰属で変わらない (子の要求も、�
   readAll(h, pre);
   assert.strictEqual(findBtn(dlg, 'approve').disabled, false, '全部見たのに、許可できない (関門が、帰属で変わった)');
 });
+
+test('origin: 決着 (resolved) は request_id だけで照合する。サーバーが合成する決着 (origin なし) は、子の要求も決着させる', () => {
+  const st = stateWith([]);
+  const req = ev(1, 'permission.requested', pendingReq('r-kid'));
+  req.origin = {id: 'ses_2', parent: 'c'};
+  core.applyEvent(st, req);
+  core.applyEvent(st, ev(2, 'permission.resolved', {request_id: 'r-kid', by: 'human', outcome: 'allow_once'}));
+  const it = st.items.find((i) => i.kind === 'permission');
+  assert.strictEqual(it.state, 'allow_once');
+  assert.notStrictEqual(it.origin, null, '決着で、要求の帰属が消えた');
+});
+
+test('origin: key は、区切りの文字を含む id・parent でも、別の組と衝突しない', () => {
+  const a = core.normalizeOrigin({id: 'a', parent: '\u0000b'});
+  const b = core.normalizeOrigin({id: 'a\u0000', parent: 'b'});
+  assert.notStrictEqual(a.key, b.key);
+});
