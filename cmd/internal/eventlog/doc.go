@@ -1,4 +1,5 @@
 // Package eventlog は、chat の耐久イベントログ (ADR 0023・0026・0027・0053) の、同期の Store である。
+//
 // セッションごとの SQLite (modernc.org/sqlite。ADR 0026 の例外で、この package だけが import してよい) に、
 // 進行中の起動の durable な Event の JSON を残す。
 //
