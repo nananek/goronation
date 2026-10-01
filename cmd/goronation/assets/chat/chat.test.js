@@ -1830,7 +1830,7 @@ test('origin: 正しい形でも、id・parent の制御文字・双方向制御
   const st = core.createState();
   core.applyHello(st, {generation: G1, first_seq: 0});
   const e = ev(0, 'message.text', {text: 'hi'});
-  e.origin = {id: 'ses‮<script>\u0007', parent: 'c​x'};
+  e.origin = {id: 'ses\u202e<script>\u0007', parent: 'c\u200bx'};
   core.applyEvent(st, e);
   const o = st.items[0].origin;
   assert.strictEqual(o.bad, false);
@@ -1841,7 +1841,7 @@ test('origin: 正しい形でも、id・parent の制御文字・双方向制御
   h.fire(e);
   h.runTimers();
   assert.ok(!h.doc.created.includes('script'));
-  assert.ok(!h.doc.byId.log.textContent.includes('‮'));
+  assert.ok(!h.doc.byId.log.textContent.includes('\u202e'));
   assert.ok(hasClass(h.doc.byId.log.children[0], 'item-sub') && !hasClass(h.doc.byId.log.children[0], 'item-sub-bad'));
 });
 
