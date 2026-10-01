@@ -11,8 +11,8 @@ import (
 const maxSweepDirs = 10000
 
 // SweepStale は、異常終了 (SIGKILL・OOM・電源断) の残りを、sessionsDir (<state>/groups/default/sessions) の下から掃除する。
-// 各セッションのディレクトリの events.lock を、待たずに取れれば、持ち主は死んでいるので、ロックを持ったまま DB・-wal・-shm・
-// events.lock を消す (removed に数える)。取れなければ、生きているので、触らず、DB ファイルの大きさを totalBytes に足す。
+// 各セッションのディレクトリの ディレクトリの flock を、待たずに取れれば、持ち主は死んでいるので、ロックを持ったまま DB・-wal・-shm を
+// 消す (removed に数える)。取れなければ、生きているので、触らず、DB ファイルの大きさを totalBytes に足す。
 // events.* の無いディレクトリ・ディレクトリでないもの・symlink は、触らない。1 つの失敗は、ほかを止めず、error にまとめて返す。
 func SweepStale(sessionsDir string) (removed int, totalBytes int64, err error) {
 	top, err := os.OpenRoot(sessionsDir)
@@ -58,7 +58,7 @@ func sweepOne(top *os.Root, name string) (removed int, size int64, err error) {
 	}
 	defer root.Close()
 	has := false
-	for _, n := range append([]string{lockName}, dbFiles...) {
+	for _, n := range dbFiles {
 		if _, err := root.Lstat(n); err == nil {
 			has = true
 			break
@@ -78,7 +78,5 @@ func sweepOne(top *os.Root, name string) (removed int, size int64, err error) {
 		return 0, 0, err
 	}
 	defer lock.Close()
-	ferr := removeDBFiles(root)
-	lerr := removeLockFile(root)
-	return 1, 0, errors.Join(ferr, lerr)
+	return 1, 0, removeDBFiles(root)
 }

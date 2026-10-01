@@ -28,7 +28,7 @@ const (
 var (
 	// ErrClosed は、Close のあとの操作。
 	ErrClosed = errors.New("eventlog: 閉じている")
-	// ErrLocked は、events.lock を、他 (別の serve・掃除) が持っている。
+	// ErrLocked は、セッションのディレクトリの flock を、他 (別の serve・掃除) が持っている。
 	ErrLocked = errLocked
 	// ErrAfterNotIssued は、Range の after が、まだ書いていない seq (next 以上) を指す (不正。呼び手は、全再送に倒す。ADR 0024 決定 1)。
 	ErrAfterNotIssued = errors.New("eventlog: after が、まだ書いていない seq を指す")
@@ -79,7 +79,7 @@ type Store struct {
 	trimmed uint64 // Trim が消した範囲の上端 (これ以下の、固定されていない行は無い)
 }
 
-// Open は、dir (セッションのディレクトリ) に、events.lock を取って、前の DB を消し、新しい DB を作る。
+// Open は、dir (セッションのディレクトリ) の flock を取って、前の DB を消し、新しい DB を作る。
 // generation は、この起動の世代 (1〜64 バイト。表示できる ASCII)。ロックを他が持っていれば ErrLocked。
 func Open(dir, generation string, opts Options) (*Store, error) {
 	if !validGeneration(generation) {
@@ -117,7 +117,6 @@ func Open(dir, generation string, opts Options) (*Store, error) {
 		s.closeDBs()
 		removeDBFiles(root) // 自分のセッションのファイルだけ
 		if attempt >= 1 || !errors.Is(err, ErrCorrupt) {
-			removeLockFile(root)
 			lock.Close()
 			root.Close()
 			return nil, err
@@ -382,7 +381,7 @@ func (s *Store) Range(after, before uint64, limit int) ([]Row, error) {
 	if before > math.MaxInt64 {
 		before = math.MaxInt64
 	}
-	rows, err := s.r.Query(`SELECT seq, CASE WHEN length(payload) > ? THEN NULL ELSE payload END FROM events
+	rows, err := s.r.Query(`SELECT seq, CASE WHEN length(CAST(payload AS BLOB)) > ? THEN NULL ELSE payload END FROM events
 		WHERE generation = ? AND seq > ? AND seq < ? ORDER BY seq LIMIT ?`, s.maxPayload, s.gen, int64(after), int64(before), limit)
 	if err != nil {
 		return nil, err
@@ -462,7 +461,7 @@ func (s *Store) trim(budget int64) error {
 	}
 	need := s.total - budget
 	// 固定されていない行を、古い順に、必要な分に届くまで読む (全部は読まない)。その最後の行まで消す。
-	rows, err := s.w.Query(`SELECT seq, length(payload) FROM events WHERE generation = ? AND pinned = 0 ORDER BY seq`, s.gen)
+	rows, err := s.w.Query(`SELECT seq, length(CAST(payload AS BLOB)) FROM events WHERE generation = ? AND pinned = 0 ORDER BY seq`, s.gen)
 	if err != nil {
 		return err
 	}
@@ -523,7 +522,7 @@ func dirSize(root *os.Root) int64 {
 	return n
 }
 
-// Close は、DB を閉じる。remove なら、DB・-wal・-shm・events.lock を消す (ロックを持ったまま消し、最後にロックを手放す)。
+// Close は、DB を閉じる。remove なら、DB・-wal・-shm を消す (ロックを持ったまま消し、最後にロックを手放す)。
 // 2 回目以降は何もしない。
 func (s *Store) Close(remove bool) error {
 	s.writeMu.Lock()
@@ -544,7 +543,7 @@ func (s *Store) Close(remove bool) error {
 		errs = append(errs, s.w.Close())
 	}
 	if remove {
-		errs = append(errs, removeDBFiles(s.root), removeLockFile(s.root))
+		errs = append(errs, removeDBFiles(s.root))
 	}
 	errs = append(errs, s.lock.Close(), s.root.Close())
 	return errors.Join(errs...)

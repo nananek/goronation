@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -140,7 +141,7 @@ func TestFilesAreOwnerOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	names := []string{dbName, dbName + "-wal", dbName + "-shm", lockName}
+	names := []string{dbName, dbName + "-wal", dbName + "-shm"}
 	for _, n := range names {
 		fi, err := os.Lstat(filepath.Join(dir, n))
 		if err != nil {
@@ -190,14 +191,58 @@ func TestOpenReplacesPreviousAndLeavesSymlinkTargets(t *testing.T) {
 	}
 }
 
-func TestLockIsSymlinkSafe(t *testing.T) {
+// ロックはディレクトリ自身の flock: events.lock という名前のファイル (symlink でも) を置いても、使わない・辿らない・外せない。
+func TestLockIsOnDirNotOnAFile(t *testing.T) {
 	dir := session(t)
 	target := filepath.Join(t.TempDir(), "t")
-	os.WriteFile(target, nil, 0o600)
-	os.Symlink(target, filepath.Join(dir, lockName))
-	if s, err := Open(dir, gen, Options{}); err == nil {
-		s.Close(true)
-		t.Fatal("events.lock が symlink なのに、開けた")
+	os.WriteFile(target, []byte("secret"), 0o600)
+	os.Symlink(target, filepath.Join(dir, "events.lock"))
+	s := open(t, dir)
+	defer s.Close(true)
+	// 偽の events.lock を rename・削除しても、生きている DB のロックは外れない
+	os.Rename(filepath.Join(dir, "events.lock"), filepath.Join(dir, "x"))
+	os.Remove(filepath.Join(dir, "x"))
+	if _, err := Open(dir, gen, Options{}); !errors.Is(err, ErrLocked) {
+		t.Fatalf("2 つ目の Open: %v", err)
+	}
+	if b, _ := os.ReadFile(target); string(b) != "secret" {
+		t.Fatalf("symlink の先が書き換わった: %q", b)
+	}
+	// 掃除は、ロックが取れないので、生きている DB を消さない
+	if removed, _, err := SweepStale(filepath.Dir(dir)); err != nil || removed != 0 {
+		t.Fatalf("掃除が生きている DB を消した: %d %v", removed, err)
+	}
+	if err := s.Apply(Op{Append: rows(0, 2, 10)}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 改ざんされた DB の、TEXT 型の payload は、文字数でなくバイト数で上限を判定する。
+func TestRangeLimitsTextPayloadByBytes(t *testing.T) {
+	dir := session(t)
+	s, err := Open(dir, gen, Options{MaxPayload: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(true)
+	if err := s.Apply(Op{Append: rows(0, 2, 10)}); err != nil {
+		t.Fatal(err)
+	}
+	// 30 文字 (90 バイト) の日本語の TEXT は通り、40 文字 (120 バイト) は、文字数では 100 以下だが、バイトでは超える
+	w := s.w
+	for seq, n := range map[int]int{5: 30, 6: 40} {
+		if _, err := w.Exec(`INSERT INTO events (generation, seq, payload, pinned, created_at) VALUES (?, ?, ?, 0, 0)`, gen, seq, strings.Repeat("あ", n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.mu.Lock()
+	s.last = 6
+	s.mu.Unlock()
+	if _, err := s.Range(0, 100, 100); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("バイトで超える TEXT を、通した: %v", err)
+	}
+	if got, err := s.Range(4, 6, 100); err != nil || len(got) != 1 {
+		t.Fatalf("上限内の TEXT: %v %v", got, err)
 	}
 }
 
@@ -440,9 +485,8 @@ func TestSweepStale(t *testing.T) {
 		}
 		return d
 	}
-	stale := mk("stale", dbName, dbName+"-wal", dbName+"-shm", lockName) // 持ち主が死んだ残り
+	stale := mk("stale", dbName, dbName+"-wal", dbName+"-shm") // 持ち主が死んだ残り
 	staleNoLock := mk("stale-nolock", dbName)
-	onlyLock := mk("only-lock", lockName)
 	other := mk("other", "notes.txt") // events.* の無いディレクトリは、触らない
 	plain := filepath.Join(sessions, "file")
 	os.WriteFile(plain, []byte("x"), 0o600)
@@ -461,10 +505,10 @@ func TestSweepStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed != 3 {
+	if removed != 2 {
 		t.Errorf("removed = %d", removed)
 	}
-	for _, d := range []string{stale, staleNoLock, onlyLock} {
+	for _, d := range []string{stale, staleNoLock} {
 		if ents, _ := os.ReadDir(d); len(ents) != 0 {
 			t.Errorf("%s に残った: %v", d, ents)
 		}
@@ -487,9 +531,6 @@ func TestSweepStale(t *testing.T) {
 	}
 	if want, _ := s.Size(); total < 50*2000 || total > want {
 		t.Errorf("totalBytes = %d (Size %d)", total, want)
-	}
-	if _, err := os.Lstat(filepath.Join(live, lockName)); err != nil {
-		t.Error("生きている DB のロックが消えた")
 	}
 	// 閉じた (ロックを手放した) 後なら、掃除できる
 	s.Close(false)
