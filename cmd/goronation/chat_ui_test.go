@@ -144,8 +144,23 @@ func TestChatUIWriteTargetsAreFixed(t *testing.T) {
 			t.Errorf("post の呼び先 %s が %d 回 (1 回のはず)", k, got[k])
 		}
 	}
-	if n := len(regexp.MustCompile(`new env\.EventSource\(url\)`).FindAllString(src, -1)); n != 1 {
-		t.Errorf("EventSource の作り方が想定外 (%d)", n)
+	// EventSource の作り方は 1 か所 (eventsURL() の結果だけ)。eventsURL は、固定の url に、検査済みの 2 値 (世代・lastSeq) だけを付ける 1 つの関数
+	// (ほかの文字列の連結・別の引数は、許さない)。
+	if n := len(regexp.MustCompile(`new env\.EventSource\(`).FindAllString(src, -1)); n != 1 {
+		t.Errorf("EventSource の作り方が想定外 (%d 個)", n)
+	}
+	if n := len(regexp.MustCompile(`new env\.EventSource\(eventsURL\(\)\)`).FindAllString(src, -1)); n != 1 {
+		t.Error("EventSource の引数が、eventsURL() だけでない")
+	}
+	fn := regexp.MustCompile(`function eventsURL\(\) \{\n[\s\S]*?\n    \}\n`).FindString(src)
+	if n := len(regexp.MustCompile(`function eventsURL\(`).FindAllString(src, -1)); n != 1 || fn == "" {
+		t.Fatalf("eventsURL が 1 つの関数でない (%d)", n)
+	}
+	if !regexp.MustCompile(`if \(state\.generation !== null && core\.isGeneration\(state\.generation\) && Number\.isSafeInteger\(state\.lastSeq\) && state\.lastSeq >= 0\) \{\n\s*return url \+ '\?after=' \+ state\.lastSeq \+ '&generation=' \+ state\.generation;\n\s*\}`).MatchString(fn) {
+		t.Errorf("eventsURL の中身が、想定の形 (検査済みの 2 値だけ) でない:\n%s", fn)
+	}
+	if n := len(regexp.MustCompile(`\burl \+`).FindAllString(src, -1)); n != 1 {
+		t.Errorf("url に文字列を連結する場所が %d 個 (eventsURL の 1 個だけのはず)", n)
 	}
 	news := map[string]int{}
 	for _, m := range regexp.MustCompile(`new\s+([\w.]+)`).FindAllStringSubmatch(src, -1) {
