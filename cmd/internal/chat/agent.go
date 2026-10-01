@@ -76,6 +76,9 @@ type SessionConfig struct {
 	OnStop func()
 	// Hub は、リングバッファの設定 (ゼロ値なら既定)。
 	Hub HubConfig
+	// Store・OnDegrade は、耐久イベントログ (HubConfig の同名の項目に渡す。nil なら、リングだけ。ADR 0053)。
+	Store     EventStore
+	OnDegrade func(reason string)
 }
 
 // Session は、1 回のエージェントの起動の、読む側 (Hub) と書く側 (Conversation) をつなぐ。プロセス・ネットワークには触れない。
@@ -92,6 +95,9 @@ type Session struct {
 
 // NewSession は、Session を作る (エージェントの起動の前に。Input へは、Send・Resolve から書く)。
 func NewSession(cfg SessionConfig) *Session {
+	if cfg.Store != nil {
+		cfg.Hub.Store, cfg.Hub.OnDegrade = cfg.Store, cfg.OnDegrade
+	}
 	s := &Session{Hub: NewHub(cfg.Hub)}
 	s.Conv = NewConversation(ConversationConfig{
 		Feed:   NewFeed(cfg.Launch.newStream(), cfg.ID, nil),
