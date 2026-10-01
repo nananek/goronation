@@ -41,7 +41,7 @@ type HubConfig struct {
 	StoreQueueBytes int
 	StoreMaxBytes   int64
 
-	// 試験用に縮められる、縮退の閾値 (0 なら既定: 1 回の書き込み 1 秒・50 ms 超が 5 回続く)。
+	// 試験用に縮められる、縮退の閾値 (0 なら既定: 1 回の書き込み 5 秒・50 ms 超が 5 回続く)。
 	slowCommit, hardCommit time.Duration
 	slowRun                int
 }

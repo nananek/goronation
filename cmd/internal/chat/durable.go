@@ -52,7 +52,7 @@ const (
 	writeBatchEvents         = 256      // 1 回の Apply にまとめる Event の上限 (件数)
 	writeBatchBytes          = 1 << 20  // 同 (バイト)
 	defaultSlowCommit        = 50 * time.Millisecond
-	defaultHardCommit        = time.Second
+	defaultHardCommit        = 5 * time.Second // ADR 0027 決定 5 (一時的な停止 1 回で、残りの耐久化を失わない)
 	defaultSlowRun           = 5
 	gcTargetNum, gcTargetDen = 3, 4 // 上限を超えたら、上限の 3/4 まで削る (毎回の Trim を避ける)
 )
