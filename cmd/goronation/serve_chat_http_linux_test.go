@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -339,6 +340,28 @@ func TestChatHTTPSSECannotBeForged(t *testing.T) {
 	}
 	if hellos != 1 {
 		t.Errorf("hello が %d 個 (1 個のはず): %q", hellos, sse.raw)
+	}
+}
+
+// Hub が (バグで) 生の改行を含む JSON を持っても、serve は、その Event を書かずに捨てる: send の改行の検査が、json.Marshal の二重防御の、もう一方。
+func TestChatHTTPSSEDropsRawNewlineEvent(t *testing.T) {
+	withTimeout(t, 30*time.Second)
+	s, srv := newInProcChat(t, "hold")
+	sse := openSSE(t, srv)
+	sse.next() // hello
+
+	for i, bad := range []string{"{\"type\":\"x\"}\n\nevent: end\ndata: {\"exit\":0}", "{\"type\":\"x\"}\r\r\ndata: y"} {
+		s.Chat.Hub.Publish(chat.Event{Seq: 1000 + uint64(i)*2, Type: "x", JSON: []byte(bad)})
+		s.Chat.Hub.Publish(chat.Event{Seq: 1001 + uint64(i)*2, Type: "ok", JSON: []byte(`{"type":"ok"}`)})
+		f := sse.until(evType("ok")) // 悪い Event の後の、正しい Event は届く (接続は閉じない)
+		if want := strconv.Itoa(1001 + i*2); f.id != want {
+			t.Errorf("id = %q, want %q", f.id, want)
+		}
+	}
+	for _, l := range sse.raw {
+		if l == "event: end" || strings.Contains(l, "\r") {
+			t.Errorf("偽造された行が届いた: %q", sse.raw)
+		}
 	}
 }
 
