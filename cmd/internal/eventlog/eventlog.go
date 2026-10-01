@@ -77,6 +77,7 @@ type Store struct {
 	last    uint64 // 最後に書いた seq
 	hasTrim bool
 	trimmed uint64 // Trim が消した範囲の上端 (これ以下の、固定されていない行は無い)
+	floor   uint64 // Trim が返した first の最大 (first は、これより下がらない)
 }
 
 // Open は、dir (セッションのディレクトリ) の flock を取って、前の DB を消し、新しい DB を作る。
@@ -412,8 +413,9 @@ func (s *Store) Range(after, before uint64, limit int) ([]Row, error) {
 	return out, nil
 }
 
-// FirstUnpinned は、hello の first_seq 用: 連続して残っている先頭 (固定でない行の最小の seq)。Trim が消した範囲より後だけを見る
-// (消した範囲より前で、固定が解けた行は、連続の外のまま。次の Trim で消える)。固定の行は、先頭に数えない (Range は返す)。
+// FirstUnpinned は、hello の first_seq 用: 連続して残っている先頭。Trim が消した範囲より後の、固定でない行の最小の seq
+// (固定でない行を、単純に最小で返すのではない)。消した範囲より前で、固定が解けた行は、連続の外のまま (次の Trim で消える)。
+// 固定の行は、先頭に数えない (Range は返す)。Trim が返した最大より下がらない (固定が解けても、先頭は戻らない)。
 // 固定でない行が残っていなければ false (エラーも false)。
 func (s *Store) FirstUnpinned() (uint64, bool) {
 	_, _, closed := s.state()
@@ -421,7 +423,7 @@ func (s *Store) FirstUnpinned() (uint64, bool) {
 		return 0, false
 	}
 	s.mu.Lock()
-	hasTrim, trimmed := s.hasTrim, s.trimmed
+	hasTrim, trimmed, floor := s.hasTrim, s.trimmed, s.floor
 	s.mu.Unlock()
 	var min sql.NullInt64
 	var err error
@@ -433,20 +435,26 @@ func (s *Store) FirstUnpinned() (uint64, bool) {
 	if err != nil || !min.Valid || min.Int64 < 0 {
 		return 0, false
 	}
-	return uint64(min.Int64), true
+	return max(uint64(min.Int64), floor), true
 }
 
 // Trim は、payload の合計 (固定の行を含む) が budgetBytes に収まるまで、固定されていない行を、古い順に消す。固定の行は消さない:
 // 固定の行だけが残って予算を超えるときは、そこで止まる (無限に回らない)。返す firstSeq は、Trim のあとに残った、固定でない行の最小の seq
-// (FirstUnpinned と同じ。固定でない行が残らなければ 0)。消さなかったときも返す。書き込みを止めたまま (writeMu の中で) 数えるので、
-// 返す値は、この Trim の結果と一致する。
+// (FirstUnpinned と同じ: 削った範囲より後の、固定でない行の最小。無ければ 0)。消さなかったときも返す。書き込みを止めたまま
+// (writeMu の中で) 数えるので、返す値は、この Trim の結果と一致する。
+// 契約: 0 でない返り値は、単調に増える (何も消さない Trim が、前の返り値より低い値を返すことは無い。固定が解けても戻らない)。
 func (s *Store) Trim(budgetBytes int64) (uint64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := s.trim(budgetBytes); err != nil {
 		return 0, err
 	}
-	first, _ := s.FirstUnpinned()
+	first, ok := s.FirstUnpinned()
+	if ok {
+		s.mu.Lock()
+		s.floor = first // FirstUnpinned が floor 以上にしてあるので、下がらない
+		s.mu.Unlock()
+	}
 	return first, nil
 }
 

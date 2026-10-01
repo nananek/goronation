@@ -371,6 +371,43 @@ func TestTrimReturnsFirstUnpinned(t *testing.T) {
 	}
 }
 
+// Trim の返り値は単調に増える: 固定が解けて、固定でない行の最小が下がっても、何も消さない Trim は、前の値を返す。
+func TestTrimReturnIsMonotonic(t *testing.T) {
+	s := open(t, session(t))
+	if err := s.Apply(Op{Append: rows(0, 12, 100)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(Op{Pin: []uint64{0, 1, 6, 7}}); err != nil {
+		t.Fatal(err)
+	}
+	// 消す前: 先頭は、固定でない 2
+	if first, err := s.Trim(10000); err != nil || first != 2 {
+		t.Fatalf("Trim = %d %v", first, err)
+	}
+	// 0 の固定が解けても、先頭は、2 から戻らない
+	if err := s.Apply(Op{Unpin: []uint64{0}}); err != nil {
+		t.Fatal(err)
+	}
+	if first, err := s.Trim(10000); err != nil || first != 2 {
+		t.Fatalf("Trim(固定が解けた後) = %d %v (先頭が戻った)", first, err)
+	}
+	// 固定が解けた 0 と、2〜5 を消す (500 バイト)。先頭は 8 (6・7 は固定)
+	if first, err := s.Trim(700); err != nil || first != 8 {
+		t.Fatalf("Trim = %d %v", first, err)
+	}
+	if err := s.Apply(Op{Unpin: []uint64{6}}); err != nil {
+		t.Fatal(err)
+	}
+	prev := uint64(8)
+	for _, budget := range []int64{10000, 800, 10000} {
+		first, err := s.Trim(budget)
+		if err != nil || first < prev {
+			t.Fatalf("Trim(%d) = %d %v (前は %d)", budget, first, err, prev)
+		}
+		prev = first
+	}
+}
+
 func TestTrim(t *testing.T) {
 	s := open(t, session(t))
 	if err := s.Apply(Op{Append: rows(0, 20, 100)}); err != nil { // 20 行 × 100 バイト
