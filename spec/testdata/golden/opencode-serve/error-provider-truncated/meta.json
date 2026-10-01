@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "provider の応答が、途中で切れる ([DONE] が無い)",
+  "events": 106,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "[DONE]・finish_reason が無いまま切れた応答は、provider.invalid-output として再試行される (session.synthetic の \"The previous response was interrupted…\" を足して続きを求める)。10 回ほど繰り返して execution.failed。",
+  "opencodeVersion": "2.0.20",
+  "requests": 3,
+  "scene": "error-provider-truncated"
+}

@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "承認待ちの間の GET (一覧・個別・session)。承認したあとの message の一覧",
+  "events": 39,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "",
+  "opencodeVersion": "2.0.20",
+  "requests": 12,
+  "scene": "pending-snapshot"
+}

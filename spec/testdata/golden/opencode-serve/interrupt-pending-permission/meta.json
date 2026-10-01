@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "承認待ちの間に POST …/interrupt: 承認の要求の行方",
+  "events": 28,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "承認待ちの間の interrupt: permission.replied は出ず、tool は \"Tool execution interrupted\" で失敗し、未解決の承認は消える (GET /api/permission/request は空)。",
+  "opencodeVersion": "2.0.20",
+  "requests": 5,
+  "scene": "interrupt-pending-permission"
+}

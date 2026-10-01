@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "provider の応答が、壊れた SSE (JSON でない data 行)",
+  "events": 21,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "JSON でない data 行は、再試行せず session.execution.failed (provider.invalid-output)。",
+  "opencodeVersion": "2.0.20",
+  "requests": 3,
+  "scene": "error-provider-bad-stream"
+}

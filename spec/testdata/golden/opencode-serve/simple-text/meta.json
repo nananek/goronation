@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "1 ターン。本文だけ (tool 無し)",
+  "events": 26,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "",
+  "opencodeVersion": "2.0.20",
+  "requests": 3,
+  "scene": "simple-text"
+}

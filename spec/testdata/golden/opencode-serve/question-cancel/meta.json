@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "question の tool: form を取り消す (DELETE)",
+  "events": 31,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "DELETE /api/session/{sid}/form/{formID} (204) で form.cancelled → tool が aborted (\"The user dismissed this question\") → execution は interrupted (reason: shutdown)。",
+  "opencodeVersion": "2.0.20",
+  "requests": 5,
+  "scene": "question-cancel"
+}

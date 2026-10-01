@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-09-30",
+  "description": "question の tool (2.x): 承認 (action question) → form.created (kind question) → form の返答 (単一選択)",
+  "events": 38,
+  "kernel": "6.12.107+deb13-amd64",
+  "note": "question の tool は、先に permission (action question, resources [\"*\"]) を要求し、承認のあとに form.created (metadata.kind: question。質問ごとの field: key q0, q1…) が出る。返答は POST /api/session/{sid}/form/{formID}/reply {\"answer\":{\"q0\":…}} (204)。2.0.20 に question.asked の系統は無い。",
+  "opencodeVersion": "2.0.20",
+  "requests": 6,
+  "scene": "question-single"
+}

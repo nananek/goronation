@@ -1,6 +1,4 @@
-//go:build linux
-
-package main
+package framenorm
 
 import (
 	"strings"
@@ -11,9 +9,9 @@ func TestNormalizeFramesIDsAreNumberedByFirstAppearance(t *testing.T) {
 	in := `{"session_id":"11111111-1111-1111-1111-111111111111","uuid":"22222222-2222-2222-2222-222222222222"}
 {"session_id":"11111111-1111-1111-1111-111111111111","uuid":"33333333-3333-3333-3333-333333333333"}
 `
-	got, err := normalizeFrames([]byte(in))
+	got, err := NormalizeFrames([]byte(in))
 	if err != nil {
-		t.Fatalf("normalizeFrames: %v", err)
+		t.Fatalf("NormalizeFrames: %v", err)
 	}
 	want := `{"session_id":"<uuid:1>","uuid":"<uuid:2>"}
 {"session_id":"<uuid:1>","uuid":"<uuid:3>"}
@@ -29,11 +27,11 @@ func TestNormalizeFramesSameShapeDifferentRunsAreEqual(t *testing.T) {
 		`{"type":"result","duration_ms":123,"total_cost_usd":0.0005,"ttft_ms":7,"session_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","timestamp":"2026-09-29T01:18:29.671Z"}` + "\n"
 	b := `{"type":"text","timestamp":1790644999999,"sessionID":"ses_bbb","part":{"id":"prt_x2","messageID":"msg_y2","time":{"start":1,"end":2}}}` + "\n" +
 		`{"type":"result","duration_ms":999,"total_cost_usd":0.0009,"ttft_ms":1,"session_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","timestamp":"2026-09-30T05:00:00.000Z"}` + "\n"
-	na, err := normalizeFrames([]byte(a))
+	na, err := NormalizeFrames([]byte(a))
 	if err != nil {
 		t.Fatal(err)
 	}
-	nb, err := normalizeFrames([]byte(b))
+	nb, err := NormalizeFrames([]byte(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +47,7 @@ func TestNormalizeFramesSameShapeDifferentRunsAreEqual(t *testing.T) {
 
 func TestNormalizeFramesKeepsStableValues(t *testing.T) {
 	in := `{"type":"assistant","text":"こんにちは <b>&</b>","n":12,"nested":{"id":"toolu_fake_1","input_tokens":10},"list":[1,"a",null,true]}` + "\n"
-	got, err := normalizeFrames([]byte(in))
+	got, err := NormalizeFrames([]byte(in))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,11 +60,11 @@ func TestNormalizeFramesKeepsStableValues(t *testing.T) {
 
 func TestNormalizeFramesIsIdempotent(t *testing.T) {
 	in := `{"a":"ses_abc","b":{"time":{"start":5}},"duration_ms":9}` + "\n"
-	once, err := normalizeFrames([]byte(in))
+	once, err := NormalizeFrames([]byte(in))
 	if err != nil {
 		t.Fatal(err)
 	}
-	twice, err := normalizeFrames(once)
+	twice, err := NormalizeFrames(once)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +78,7 @@ func TestNormalizeFramesIDNumberingDoesNotDependOnMapOrder(t *testing.T) {
 	in := `{"z":"11111111-1111-1111-1111-111111111111","a":"22222222-2222-2222-2222-222222222222","m":"33333333-3333-3333-3333-333333333333"}` + "\n"
 	want := `{"a":"<uuid:1>","m":"<uuid:2>","z":"<uuid:3>"}` + "\n"
 	for i := 0; i < 50; i++ {
-		got, err := normalizeFrames([]byte(in))
+		got, err := NormalizeFrames([]byte(in))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,17 +89,48 @@ func TestNormalizeFramesIDNumberingDoesNotDependOnMapOrder(t *testing.T) {
 }
 
 func TestNormalizeFramesRejectsNonJSON(t *testing.T) {
-	if _, err := normalizeFrames([]byte("{\"a\":1}\nnot json\n")); err == nil {
+	if _, err := NormalizeFrames([]byte("{\"a\":1}\nnot json\n")); err == nil {
 		t.Fatal("JSON でない行があるのに、error にならない")
 	}
 }
 
 func TestNormalizeFramesSkipsBlankLines(t *testing.T) {
-	got, err := normalizeFrames([]byte("\n{\"a\":1}\n\n"))
+	got, err := NormalizeFrames([]byte("\n{\"a\":1}\n\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != "{\"a\":1}\n" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestServeRules(t *testing.T) {
+	in := `{"id":"evt_0f3f15f12001LYpY6p6VTDPjRR","created":1790799077149,"type":"session.created","data":{"sessionID":"ses_f0c0ea0e7ffeNCc8TFDbgXqBVs","slug":"curious-cabin","projectID":"bc7447dce6aa45fd13129230dddc6abeb62cb974","started":1790799077150}}
+{"id":"evt_0f3f15f12002ZZZZ6p6VTDPjRR","data":{"info":{"id":"sh_0f3f40383001hye6skj1oz7uY4","file":"/home/u/.local/share/shell/sh_0f3f40383001hye6skj1oz7uY4.out"},"text":"<subagent sessionID=\"ses_f0c0ea0e7ffeNCc8TFDbgXqBVs\">","urls":["http://127.0.0.1:42529"],"at":1790799680936}}
+{"data":{"ses_f0c0ea0e7ffeNCc8TFDbgXqBVs":{"type":"running"}},"cursor":{"next":"eyJpZCI6Im1zZ18wZjNmZGQ5MTAwMDFGSFA1cXpMdzRwa1RKZiIsIm9yZGVyIjoiZGVzYyJ9"}}
+`
+	want := `{"created":0,"data":{"projectID":"<hash:1>","sessionID":"<ses:1>","slug":"<slug>","started":0},"id":"<evt:1>","type":"session.created"}
+{"data":{"at":0,"info":{"file":"/home/u/.local/share/shell/<sh:1>.out","id":"<sh:1>"},"text":"<subagent sessionID=\"<ses:1>\">","urls":["http://127.0.0.1:<port>"]},"id":"<evt:2>"}
+{"cursor":{"next":"<cursor>"},"data":{"<ses:1>":{"type":"running"}}}
+`
+	got, err := New(Serve).Frames([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	again, err := New(Serve).Frames(got)
+	if err != nil || string(again) != want {
+		t.Errorf("冪等でない: %v\n%s", err, again)
+	}
+}
+
+// 既定の規則 (cmd/framecapture) は、Serve の規則を使わない: created・at・evt_ の ID は、そのまま。
+func TestDefaultRulesDoNotApplyServeRules(t *testing.T) {
+	in := `{"at":5,"created":1790799077149,"id":"evt_0f3f15f12001LYpY6p6VTDPjRR"}` + "\n"
+	got, err := NormalizeFrames([]byte(in))
+	if err != nil || string(got) != in {
+		t.Errorf("既定の規則が変わった: %v %s", err, got)
 	}
 }
