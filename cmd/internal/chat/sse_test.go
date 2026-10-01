@@ -180,6 +180,9 @@ func TestParentlessSessionCreatedMatchesAdapter(t *testing.T) {
 		`{"type":"session.created","data":{"sessionID":"ses_a","parentID":null}}`:    false,
 		`{"type":"session.created","data":{"sessionID":"ses_a","parentID":7}}`:       false,
 		`{"type":"session.created","data":{"sessionID":"ses_a","parentID":"ses_b"}}`: false,
+		`{"type":"session.created","data":{}}`:                                       false,
+		`{"type":"session.created","data":{"sessionID":null}}`:                       false,
+		`{"type":"session.created","data":{"sessionID":"a.b"}}`:                      false,
 		`{"type":"session.updated","data":{"sessionID":"ses_a"}}`:                    false,
 	} {
 		if got, _ := parentlessSessionCreated([]byte(in)); got != want {

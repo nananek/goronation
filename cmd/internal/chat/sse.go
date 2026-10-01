@@ -82,6 +82,9 @@ func parentlessSessionCreated(data []byte) (ok bool, sessionID string) {
 	if p := bytes.TrimSpace(f.Data.ParentID); len(p) != 0 && string(p) != `""` {
 		return false, ""
 	}
+	if !ValidSessionID(f.Data.SessionID) { // sessionID が空・欠け・不正なイベントは、アダプタも無視する。ここで root にすると、本物の root の前に来て会話を殺せる
+		return false, ""
+	}
 	return true, f.Data.SessionID
 }
 
