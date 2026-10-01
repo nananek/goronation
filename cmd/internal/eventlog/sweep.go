@@ -2,6 +2,7 @@ package eventlog
 
 import (
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 )
@@ -28,7 +29,7 @@ func SweepStale(sessionsDir string) (removed int, totalBytes int64, err error) {
 	}
 	defer d.Close()
 	entries, err := d.ReadDir(maxSweepDirs + 1)
-	if err != nil {
+	if err != nil && !errors.Is(err, io.EOF) { // n > 0 の ReadDir は、空のディレクトリで io.EOF を返す
 		return 0, 0, err
 	}
 	var errs []error
