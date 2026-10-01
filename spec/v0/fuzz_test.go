@@ -13,6 +13,9 @@ func FuzzFormResolve(f *testing.F) {
 		`{"request_id":"r1","outcome":"cancelled"}`,
 		`{"request_id":"r1","outcome":"answered","answer":{"q0":["Red"]}}`,
 		`{"request_id":"r1","outcome":"answered","answer":{"q0":null}}`,
+		`{"request_id":"r1","outcome":"answered","answer":{"q0":"Red","q1":["S",null]}}`,
+		`{"request_id":"r1","outcome":"answered","answer":{"q0":"Red","q1":[1]}}`,
+		`{"request_id":"r1","outcome":"answered","answer":{"q0":"Red","q1":[""]}}`,
 		`{"request_id":"r1","outcome":"answered","answer":{"zz":"x"},"content_hash":"sha256:00"}`,
 		`{"request_id":"r1","outcome":"answered","answer":{"q0":"Red","q0":"Blue"}}`,
 		`[]`, `null`, `{"answer":1}`,
@@ -35,6 +38,13 @@ func FuzzFormResolve(f *testing.F) {
 		for k := range r.Answer {
 			if !fields[k] {
 				t.Fatalf("検査を通った回答に、要求に無いキー %q がある", k)
+			}
+		}
+		for k, v := range r.Answer { // 配列の中の null などが、空文字列に化けて、検査を通っていない
+			for _, x := range v.Values {
+				if v.Multi && x == "" {
+					t.Fatalf("multiselect %q に、空文字列が通った", k)
+				}
 			}
 		}
 		again, err := json.Marshal(r)

@@ -17,7 +17,7 @@ type Envelope struct {
 	Seq     uint64 `json:"seq"`
 	Type    string `json:"type"`
 	Durable bool   `json:"durable"`
-	// Origin は、サブエージェントの出力のとき、その帰属 (ADR 0044)。メインのエージェント自身の出力は nil。
+	// Origin は、サブエージェントの出力のとき、その帰属 (ADR 0045)。メインのエージェント自身の出力は nil。
 	Origin *Origin         `json:"origin,omitempty"`
 	Data   json.RawMessage `json:"data"`
 	Raw    json.RawMessage `json:"raw,omitempty"`

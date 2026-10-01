@@ -21,6 +21,7 @@ claude の AskUserQuestion は、`--permission-prompt-tool stdio` で、`can_use
 - 質問が機能する。claude と opencode で、同じ UI・同じ検査になる。
 - claude の版が上がったら、`ask-user-question-*` を採り直して確かめる (採取は 2.1.286。既存の fixtures は 2.1.284)。
 - サブエージェントの AskUserQuestion の扱いは、未採取 (ADR 0045)。
+- **限界**: 複数選択の `, ` 連結は、値に `, ` を含む選択肢や、自由記述 (Other) の値では、claude から見て曖昧になる (回答の文字列が、どの選択に分かれるか、claude は区別しない)。回答の検査 (`FormResolve.Validate`) は、値の配列を持つので、goronation 側の記録は曖昧にならない。
 
 ## 代替案
 

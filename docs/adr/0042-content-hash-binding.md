@@ -10,11 +10,11 @@ M1.5 の束縛は、要求 ID・1 回限り・世代で、許可する内容は 
 
 ## 決定
 
-1. **内容ハッシュ** = `sha256:` + SHA-256 (`goronation/v0/<type>` の接頭辞・正規形の JSON)。正規形は、キーを辞書順・空白と HTML のエスケープなし・数は元の文字列のまま。対象は、`content_hash` 以外の全ての欄 (permission は request_id・call_id・tool_name・kind・input・title・summary・details・details_truncated。form は request_id・call_id・kind・title・fields)。
+1. **内容ハッシュ** = `sha256:` + SHA-256 (`goronation/v0/<type>` の接頭辞・正規形の JSON)。正規形は、キーを辞書順・空白と HTML のエスケープなし・数は元の文字列のまま。対象は、`content_hash` 以外の全ての欄 (permission は request_id・call_id・tool_name・kind・input・title・summary・details・details_truncated。form は request_id・call_id・kind・title・fields)。 Envelope の `origin` (ADR 0045) は含めない: request_id が一意で、goronation が要求を保持するので、帰属の取り違えは、request_id で防がれる (origin は表示のための欄)。
 2. **ハッシュは、共通の層が付ける**: `chat.Conversation` (または Feed) が、アダプタの出したイベントに `content_hash` を付けて配り、保持する。アダプタは付けない (付け忘れ・誤りを作らない)。
 3. **応答は、`content_hash` を写す** (`permission.resolve`・`form.resolve`)。保持した値と一致しなければ拒否 (error・何も書かない)。無いときの扱いは、導入の間は許し (旧い UI との互換)、M2 の本実装で必須にする (`VerifyHash` の require)。比較は時間が一定。
 4. **守るもの**: 古い画面・別の要求の取り違え・通知 (Web Push の承認ボタン) など、見た内容と承認する内容の食い違い。承認の記録 (監査) に、承認した内容を残せる。自動承認のポリシー (M2) が、内容で一致を取れる。
-5. **守らないもの (正直に)**: セッションを乗っ取った者は、同じ SSE でハッシュを読めるので、ハッシュを写して承認できる。それを防ぐのは、承認の操作の認証 (WebAuthn。ADR 0035・0038) で、ハッシュではない。
+5. **守らないもの (正直に)**: **セッションを乗っ取った者には、ハッシュは効かない**。同じ SSE でハッシュを読めるので、写して承認できる。承認の操作に再認証 (WebAuthn など) を要求するかは、**未決**で、別の ADR (M2) で決める。WebAuthn の認証 (ADR 0035・0038・0039) の対象は、Vault の解錠と passkey の追加・削除で、`permission.resolve`・`form.resolve` には、まだ要求していない。**決まるまで、乗っ取りに対する守りは無い**。この決定が守るのは、事故 (古い画面・別の要求の取り違え・通知の食い違い) と、承認の記録・自動承認の一致に限る。
 6. 要約・詳細の作り方が変わる (アダプタの更新) と、同じ入力でもハッシュは変わる。保持した要求のハッシュは、要求の間だけ有効 (永続しない)。
 
 ## 帰結

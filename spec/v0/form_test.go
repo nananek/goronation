@@ -73,7 +73,8 @@ func TestFormValueJSON(t *testing.T) {
 	if m["a"].Multi || m["a"].Values[0] != "x" || !m["b"].Multi || len(m["b"].Values) != 2 {
 		t.Fatalf("Unmarshal = %+v", m)
 	}
-	for _, bad := range []string{`{"a":1}`, `{"a":null}`, `{"a":{"x":1}}`, `{"a":[1]}`, `{"a":true}`} {
+	for _, bad := range []string{`{"a":1}`, `{"a":null}`, `{"a":{"x":1}}`, `{"a":[1]}`, `{"a":true}`,
+		`{"a":["x",null]}`, `{"a":[null]}`, `{"a":["x",1]}`, `{"a":["x",true]}`, `{"a":["x",["y"]]}`, `{"a":["x",{"k":"v"}]}`} {
 		var m map[string]FormValue
 		if err := json.Unmarshal([]byte(bad), &m); err == nil {
 			t.Errorf("%s: 通ってはいけない", bad)
@@ -104,6 +105,7 @@ func TestFormResolveValidate(t *testing.T) {
 		"custom でない select":  {RequestID: "r1", Outcome: FormAnswered, Answer: map[string]FormValue{"q0": Text("Green")}},
 		"必須が無い":              {RequestID: "r1", Outcome: FormAnswered, Answer: map[string]FormValue{"q1": Many("S")}},
 		"必須が空文字":             {RequestID: "r1", Outcome: FormAnswered, Answer: map[string]FormValue{"q0": Text("")}},
+		"multiselect に空文字列":  {RequestID: "r1", Outcome: FormAnswered, Answer: map[string]FormValue{"q0": Text("Red"), "q1": Many("S", "")}},
 		"multiselect の重複":    {RequestID: "r1", Outcome: FormAnswered, Answer: map[string]FormValue{"q0": Text("Red"), "q1": Many("S", "S")}},
 		"値が長い":               {RequestID: "r1", Outcome: FormAnswered, Answer: map[string]FormValue{"q0": Text("Red"), "q2": Text(strings.Repeat("あ", MaxFormAnswerText+1))}},
 		"値が多い": {RequestID: "r1", Outcome: FormAnswered, Answer: map[string]FormValue{"q0": Text("Red"),
@@ -133,5 +135,42 @@ func TestFormResolveIsCheckedAgainstTheRetainedRequestOnly(t *testing.T) {
 	r := FormResolve{RequestID: "r1", Outcome: FormAnswered, Answer: map[string]FormValue{"q0": Text("Red"), "q1": Many("S", "XL")}}
 	if err := r.Validate(req); err == nil {
 		t.Fatal("options に無い値が、custom でないフィールドに通った")
+	}
+}
+
+// 必須のフィールドは、「空でない値が 1 つ以上」: custom の multiselect が、空文字列 1 つで必須を満たさない。
+func TestRequiredMeansAtLeastOneNonEmptyValue(t *testing.T) {
+	req := FormRequested{RequestID: "r", Kind: "k", Fields: []FormField{
+		{Key: "m", Type: FieldMultiselect, Custom: true, Required: true, Options: []FormOption{{Label: "a", Value: "a"}}},
+		{Key: "s", Type: FieldSelect, Custom: true, Required: true, Options: []FormOption{{Label: "a", Value: "a"}}},
+	}}
+	if err := req.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, ans := range map[string]map[string]FormValue{
+		"multiselect が空配列":     {"m": Many(), "s": Text("a")},
+		"multiselect が [\"\"]": {"m": Many(""), "s": Text("a")},
+		"select が空文字列":         {"m": Many("a"), "s": Text("")},
+		"キーが無い":                {"s": Text("a")},
+	} {
+		if err := (FormResolve{RequestID: "r", Outcome: FormAnswered, Answer: ans}).Validate(req); err == nil {
+			t.Errorf("%s: 必須を満たしたことになった", name)
+		}
+	}
+	ok := FormResolve{RequestID: "r", Outcome: FormAnswered, Answer: map[string]FormValue{"m": Many("自由記述"), "s": Text("a")}}
+	if err := ok.Validate(req); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ContentHash は、この検査の対象でない (呼び手が、別に VerifyHash で照合する)。
+func TestFormResolveValidateIgnoresContentHash(t *testing.T) {
+	req := sampleForm()
+	r := FormResolve{RequestID: "r1", Outcome: FormCancelled, ContentHash: "sha256:00"}
+	if err := r.Validate(req); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyHash(req.Hash(), r.ContentHash, false); err == nil {
+		t.Fatal("VerifyHash が、違うハッシュを通した")
 	}
 }

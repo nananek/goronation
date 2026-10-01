@@ -49,7 +49,7 @@ const (
 	MaxFormAnswerValues = MaxFormOptions + 8 // multiselect の回答の個数 (options + 自由記述の追加)
 )
 
-// FormOption は、select・multiselect の選択肢。Value は、回答で返す値 (無ければ Label と同じ)。
+// FormOption は、select・multiselect の選択肢。Value は、回答で返す値で、アダプタが埋める (空は不正。エージェントが値を出さないときは、Label を入れる)。
 type FormOption struct {
 	Label       string `json:"label"`
 	Value       string `json:"value"`
@@ -123,9 +123,21 @@ func (v *FormValue) UnmarshalJSON(b []byte) error {
 		}
 		*v = Text(s)
 	case '[':
-		var a []string
-		if err := json.Unmarshal(b, &a); err != nil {
+		var elems []json.RawMessage
+		if err := json.Unmarshal(b, &elems); err != nil {
 			return err
+		}
+		a := make([]string, 0, len(elems))
+		for _, e := range elems {
+			e = bytes.TrimSpace(e)
+			if len(e) == 0 || e[0] != '"' { // null・数・真偽・入れ子は、空文字列に化けさせず、error にする
+				return errors.New("v0: 配列の要素は、文字列だけ")
+			}
+			var s string
+			if err := json.Unmarshal(e, &s); err != nil {
+				return err
+			}
+			a = append(a, s)
 		}
 		*v = FormValue{Multi: true, Values: a}
 	default:
@@ -207,8 +219,10 @@ func (f FormRequested) Validate() error {
 
 // Validate は、回答を、要求 req に対して検査する。Outcome が FormCancelled なら、Answer は無い。FormAnswered なら:
 // 全てのキーが req のフィールドの key で、型が合い (select・text は 1 つ、multiselect は配列)、options だけのフィールド (Custom が false)
-// は、値が options の Value のどれかで、Required のフィールドは空でなく、文字数が上限内であること。
+// は、値が options の Value のどれかで、文字数が上限内であること。multiselect の要素は、空文字列でない。Required のフィールドは、
+// **空でない値が 1 つ以上** (select・text は空文字列でない 1 つ、multiselect は 1 要素以上)。
 // 回答の値は、クライアントが送るので、敵対入力として扱う: 要求の内容 (保持した req) に対してだけ検査し、通らなければ何も返さない。
+// **ContentHash は見ない**: 内容ハッシュの照合 (ADR 0042) は、呼び手が、別に VerifyHash で行う (この検査は、形・値の検査だけ)。
 func (r FormResolve) Validate(req FormRequested) error {
 	if r.RequestID != req.RequestID {
 		return invalidForm("request_id が一致しない")
@@ -239,7 +253,7 @@ func (r FormResolve) Validate(req FormRequested) error {
 	for _, fd := range req.Fields {
 		if fd.Required {
 			v, ok := r.Answer[fd.Key]
-			if !ok || len(v.Values) == 0 || (!v.Multi && v.Values[0] == "") {
+			if !ok || !slices.ContainsFunc(v.Values, func(s string) bool { return s != "" }) {
 				return invalidForm("必須のフィールド %q が空", fd.Key)
 			}
 		}
@@ -268,6 +282,9 @@ func checkValue(fd FormField, v FormValue) error {
 	for _, s := range v.Values {
 		if utf8.RuneCountInString(s) > MaxFormAnswerText {
 			return invalidForm("値が長い")
+		}
+		if fd.Type == FieldMultiselect && s == "" {
+			return invalidForm("multiselect の要素が空文字列")
 		}
 		if fd.Type != FieldText && !fd.Custom && !options[s] {
 			return invalidForm("選択肢に無い値 %q (custom でない)", s)

@@ -15,7 +15,7 @@ opencode 2.0.20 の question の tool は、先に permission (action `question`
 3. **採らない**: アダプタ・transport が `permission.asked` に自動で `once` を返す案。承認の返答を、人間の操作なしに作ることになり、「by=policy」の記録も要る。設定で済むものを、実行時の自動応答にしない。
 4. **順序が効かない版でも、安全側に倒れる**: 最初に一致した規則が勝つ版なら、`*` の ask が勝って、`permission.asked` が出る (承認の段が戻るだけ。承認を省く方向には、誤らない)。adapter は、`action: question` の `permission.asked` が来たら、通常の承認として扱う (`permission.requested`。ADR 0041 の対応表)。
 5. **form は、ほかの tool からも出る** (web 検索の provider の選択)。その tool は、別の permission (action `websearch`) を持ち、承認の画面に出る。form の許可は、question だけにしか、与えない。
-6. PR⑥ は、本番の session 作成の本文に、この permissions を入れ、`question-rule-allow` の fixtures と同じ事象 (permission.asked が出ない) を、E2E で確かめる。
+6. PR⑥ は、本番の session 作成の本文に、この permissions を入れ、`question-rule-allow` の fixtures と同じ事象 (permission.asked が出ない) を、E2E で確かめる。 あわせて、同じ ruleset で、別の action (shell など) が `permission.asked` になることも確かめる (question だけが省かれ、ほかは承認を要求したまま)。
 
 ## 帰結
 
