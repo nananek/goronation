@@ -84,6 +84,8 @@ func TestPublicCarriesEverythingButRaw(t *testing.T) {
 			f.SetUint(uint64(n))
 		case f.Kind() == reflect.Bool:
 			f.SetBool(true)
+		case f.Type() == reflect.TypeOf((*Origin)(nil)):
+			f.Set(reflect.ValueOf(&Origin{ID: "origin_" + strconv.Itoa(n), Parent: "parent_" + strconv.Itoa(n)}))
 		default:
 			t.Fatalf("%s (%s): 値を注入できない型。このテストの fill を直す", et.Field(i).Name, f.Type())
 		}

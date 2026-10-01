@@ -10,15 +10,27 @@ const Version = 0
 // Session は goronation のセッション ID で、エージェント自身の ID (claude の session_id・opencode の
 // sessionID) は、TypeSessionStarted の data に載せる。TS は RFC 3339 (UTC・ミリ秒) の、goronation が受け取った時刻。
 type Envelope struct {
-	V       int             `json:"v"`
-	ID      string          `json:"id"`
-	TS      string          `json:"ts"`
-	Session string          `json:"session"`
-	Seq     uint64          `json:"seq"`
-	Type    string          `json:"type"`
-	Durable bool            `json:"durable"`
-	Data    json.RawMessage `json:"data"`
-	Raw     json.RawMessage `json:"raw,omitempty"`
+	V       int    `json:"v"`
+	ID      string `json:"id"`
+	TS      string `json:"ts"`
+	Session string `json:"session"`
+	Seq     uint64 `json:"seq"`
+	Type    string `json:"type"`
+	Durable bool   `json:"durable"`
+	// Origin は、サブエージェントの出力のとき、その帰属 (ADR 0044)。メインのエージェント自身の出力は nil。
+	Origin *Origin         `json:"origin,omitempty"`
+	Data   json.RawMessage `json:"data"`
+	Raw    json.RawMessage `json:"raw,omitempty"`
+}
+
+// Origin は、サブエージェントの出力の帰属。サブエージェントの発言・tool 呼び出し・権限要求が、メインのエージェント自身のものとして
+// 表示されないようにする (見えないものを、承認させない)。claude は、parent_tool_use_id が null でないフレーム。opencode は、子の session
+// (session.created の parentID) のイベント。
+type Origin struct {
+	// ID は、サブエージェントの識別子 (claude: parent_tool_use_id か task の ID。opencode: 子の session の ID)。
+	ID string `json:"id"`
+	// Parent は、サブエージェントを起動した tool 呼び出しの call_id (分かれば)。
+	Parent string `json:"parent,omitempty"`
 }
 
 // Command は、goronation からエージェントへの指示の封筒。イベントと違い、seq と durable は無い。
@@ -59,7 +71,9 @@ const (
 	// --permission-prompt-tool stdio で起動したときの、can_use_tool の control_request (ADR 0010)。それ以外の subtype と、応答できない形
 	// (request_id・tool_name が無い、input がオブジェクトでない) の要求は TypeAgentFrame にする。同じ request_id の再要求は、先の要求を
 	// 上書きせず TypeAgentFrame にする。permission_suggestions は載せない。非対話の実行 (claude -p・opencode run) は、要求のフレームを出さず、
-	// 拒否の結果だけが出る。opencode の対話での要求は、serve の側にあり、未採取。
+	// 拒否の結果だけが出る。opencode の対話での要求は、serve の permission.asked (data の id が request_id・source.id が call_id・action が
+	// tool_name・input は {action, resources, metadata})。ADR 0041 の追加の欄: summary (機械生成の 1 行)・details (ラベルつきの項目)・
+	// details_truncated・content_hash (ADR 0042。共通の層が付ける)。型は PermissionRequested。
 	TypePermissionRequested = "permission.requested"
 	// TypePermissionResolved は、権限の決着 (durable)。data は by・outcome (PermissionOptionKind か、cancelled)。
 	//   - by=policy: 非対話の拒否 (data は by・outcome=reject_once・call_id・tool_name)。claude は system/permission_denied で、
@@ -71,6 +85,13 @@ const (
 	//     未決のまま result (ターンの終わり) が来たとき。
 	// 要求 (request_id) には、決着がちょうど 1 つ付く。
 	TypePermissionResolved = "permission.resolved"
+	// TypeFormRequested は、エージェントが人間にフィールドの一覧を入力させる要求 (durable。ADR 0040)。data は FormRequested。claude は
+	// AskUserQuestion の can_use_tool (requires_user_interaction:true。permission.requested にはしない)。opencode は form.created
+	// (question の tool・web 検索の provider の選択など。metadata.kind が kind)。応答は CommandFormResolve。
+	TypeFormRequested = "form.requested"
+	// TypeFormResolved は、form の決着 (durable)。data は request_id・by (human・agent・policy)・outcome (FormAnswered・FormCancelled)・
+	// answer (answered のとき)。要求 (request_id) には、決着がちょうど 1 つ付く。
+	TypeFormResolved = "form.resolved"
 	// TypeUsage は、使用量 (durable)。data は scope (turn か step)・トークン数・費用・context_window (拡張)。claude は
 	// result の usage・modelUsage (contextWindow・maxOutputTokens を含む。ターンごと)。opencode は step_finish の
 	// tokens・cost (ステップごと。窓の上限は出ない)。
@@ -100,6 +121,10 @@ const (
 	// claude は control_response の 1 行 (許可する input は、要求時に保持した値だけから作る。reject の message は固定文)。
 	// 未決でない request_id (未知・応答済み・撤回済み) への応答は error で、何も書かない。合成する TypePermissionResolved (by=human) を返す。
 	CommandPermissionResolve = "permission.resolve"
+	// CommandFormResolve は、form への応答 (ADR 0040)。data は FormResolve (request_id・outcome・answer・content_hash)。回答は、保持した要求のフィールド
+	// に対して検査し (FormResolve.Validate)、通らなければ error で、何も書かない。claude は control_response の allow で、保持した input に answers
+	// (質問の文 → 回答の文字列。複数選択は ", " で連結) を足した updatedInput を返す (ADR 0044)。取り消しは deny。opencode は POST …/form/{id}/reply と DELETE。
+	CommandFormResolve = "form.resolve"
 )
 
 // StopReason は、TypeTurnCompleted の stop_reason。ACP の StopReason (end_turn・max_tokens・max_turn_requests・
