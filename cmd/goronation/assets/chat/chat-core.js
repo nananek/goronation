@@ -297,6 +297,7 @@
     return {
       generation: null,   // 最後の hello の世代 (変わったら、表示を作り直す)
       firstSeq: 0,
+      durable: null,      // 最後の hello の durable (true・false。欠落・不正なら null)。false のときだけ、画面が注意を出す
       lastSeq: -1,
       items: [],          // 表示する項目 (古い順)
       byCall: new Map(),  // call_id → tool の項目
@@ -381,6 +382,8 @@
     }
     state.generation = gen;
     state.firstSeq = first;
+    state.durable = d.durable === true ? true : d.durable === false ? false : null; // boolean だけ (文字列・オブジェクトは、欠落と同じ)
+    // 省略の検出は、resumed に依らない (ADR 0024 決定 7): first_seq > lastSeq + 1 は、まだ見ていない範囲が GC で消えた欠落。
     if (first > state.lastSeq + 1 && first > 0) state.omitted = true; // 溢れて捨てた分がある (繋ぎ直しの間の欠けも含む)
     return {ok: true, reset: state.reset};
   }

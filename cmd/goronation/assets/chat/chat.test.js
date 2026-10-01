@@ -1578,3 +1578,152 @@ test('許可の関門: 収まる詳細の枠も、画面に出ていないうち
   refresh();
   assert.strictEqual(findBtn(dlg, 'approve').disabled, false, '枠を出して待っても、許可できない');
 });
+
+// ---- SSE 耐久化 ④b: 再接続の URL・省略の検出・durable の注意 (ADR 0024 決定 7・ADR 0025 決定 2) ----
+
+const reconnect = (h) => { h.es().fire('error', {}); h.runTimers(); }; // 切断 → 間隔を空けて、繋ぎ直す
+
+test('再接続の URL: 初回はクエリなし。hello と Event のあとは after と世代だけ。世代が変われば新しい世代', () => {
+  const h = harness();
+  assert.strictEqual(FakeES.all[0].url, BASE + '/events');
+  h.hello(); // hello だけ (まだ Event が無い: lastSeq = -1)
+  reconnect(h);
+  assert.strictEqual(h.es().url, BASE + '/events', 'Event を受けていないのに、after を付けた');
+  h.hello();
+  h.fire(ev(0, 'message.text', {text: 'a'}));
+  h.fire(ev(7, 'message.text', {text: 'b'}));
+  reconnect(h);
+  assert.strictEqual(h.es().url, BASE + '/events?after=7&generation=' + G1);
+  h.es().fire('hello', {first_seq: 0, generation: G2}); // serve が再起動した: 表示を作り直す (lastSeq = -1)
+  reconnect(h);
+  assert.strictEqual(h.es().url, BASE + '/events', '世代が変わった直後 (Event 前) に、古い after を付けた');
+  h.es().fire('hello', {first_seq: 0, generation: G2});
+  h.fire(ev(3, 'message.text', {text: 'c'}));
+  reconnect(h);
+  assert.strictEqual(h.es().url, BASE + '/events?after=3&generation=' + G2);
+});
+
+test('再接続の URL: 壊れた世代の hello の接続は使わず、URL に入らない。敵対的な hello・Event の値でも URL は壊れない', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(5, 'message.text', {text: 'x'}));
+  for (const bad of ['&after=0', G1 + '&x=1', G1.toUpperCase(), '../x', G1 + '\n', '', null, 7, {toString() { return 'a&b'; }}]) {
+    h.es().fire('hello', {first_seq: 0, generation: bad}); // 世代が壊れた: 使わない
+    reconnect(h);
+    assert.strictEqual(h.es().url, BASE + '/events?after=5&generation=' + G1, JSON.stringify(bad));
+  }
+  // 巨大・不正な first_seq・seq は、state に入らない (URL に出ない)
+  h.es().fire('hello', {first_seq: 1e300, generation: G1});
+  for (const bad of [1e300, -1, 1.5, '9', '1&generation=x', NaN, null]) h.es().fire('message', {seq: bad, type: 'message.text', data: {text: 'z'}});
+  reconnect(h);
+  assert.strictEqual(h.es().url, BASE + '/events?after=5&generation=' + G1);
+  for (const f of FakeES.all) assert.match(f.url, /^\/s\/20260101-000000-abcdef\/events(\?after=\d{1,16}&generation=[0-9a-f]{32})?$/);
+});
+
+test('省略の検出 (S7): resumed では消さない。first_seq = 0 → 印なし。first_seq > lastSeq + 1 → 印 (resumed でも)。first_seq <= lastSeq + 1 → 印なし。非 resumed の全再送 → 印', () => {
+  const mk = (hello, lastSeq) => {
+    const s = core.createState();
+    core.applyHello(s, {generation: G1, first_seq: 0});
+    if (lastSeq >= 0) core.applyEvent(s, ev(lastSeq, 'message.text', {text: 'x'}));
+    core.applyHello(s, Object.assign({generation: G1}, hello));
+    return s;
+  };
+  assert.strictEqual(mk({first_seq: 0, resumed: true}, 10).omitted, false, '(a) GC が無い: first_seq = 0');
+  assert.strictEqual(mk({first_seq: 30, resumed: true}, 10).omitted, true, '(b) 未読の範囲が GC で消えた: resumed でも印');
+  assert.strictEqual(mk({first_seq: 11, resumed: true}, 10).omitted, false, '(c) 連続 (first = lastSeq + 1)');
+  assert.strictEqual(mk({first_seq: 5, resumed: true}, 10).omitted, false, '(c) すでに見た範囲より前');
+  assert.strictEqual(mk({first_seq: 40, resumed: false}, -1).omitted, true, '(d) 非 resumed の全再送 (リングの先頭 > 0)');
+  assert.strictEqual(mk({first_seq: 0, resumed: false}, -1).omitted, false);
+});
+
+test('省略の印は、画面に出る (resumed の hello でも)', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(10, 'message.text', {text: 'x'}));
+  reconnect(h);
+  h.es().fire('hello', {first_seq: 30, generation: G1, resumed: true});
+  h.runTimers();
+  assert.ok(h.doc.byId.notices.textContent.includes('古い分は省略している'));
+});
+
+test('durable: 明示の false だけ、固定の文の注意を出す。true・欠落・不正な型では出さない。値は文に入らない', () => {
+  const NOTE = '履歴は、ディスクに残らない。再読み込みで、古い分が欠けることがある';
+  const noteOf = (hello) => {
+    const h = harness();
+    h.es().fire('hello', Object.assign({first_seq: 0, generation: G1}, hello));
+    h.runTimers();
+    return h.doc.byId.notices.textContent;
+  };
+  assert.ok(noteOf({durable: false}).includes(NOTE));
+  assert.ok(!noteOf({durable: true}).includes('ディスクに残らない'));
+  assert.ok(!noteOf({}).includes('ディスクに残らない'), '欠落 (古い serve) で出した');
+  const canary = '<img src=x onerror=alert(1)>CANARY';
+  for (const bad of [canary, {a: canary}, [canary], 0, null, 'false', 'true', 1]) {
+    const t = noteOf({durable: bad});
+    assert.ok(!t.includes('ディスクに残らない'), JSON.stringify(bad) + ' で注意が出た');
+    assert.ok(!t.includes('CANARY'));
+  }
+  const t = noteOf({durable: false, resumed: canary, first_seq: 0});
+  assert.ok(!t.includes('CANARY'));
+  // 繋ぎ直しで durable が true に戻れば、注意は消える (縮退した起動の hello)
+  const h = harness();
+  h.es().fire('hello', {first_seq: 0, generation: G1, durable: false});
+  h.runTimers();
+  assert.strictEqual(h.doc.byId.notices.textContent.split(NOTE).length - 1, 1);
+  reconnect(h);
+  h.es().fire('hello', {first_seq: 0, generation: G1, durable: true});
+  h.runTimers();
+  assert.ok(!h.doc.byId.notices.textContent.includes('ディスクに残らない'));
+});
+
+test('繋ぎ直し (after 付き): 未決のダイアログは、消えず・二重にならず、サーバーが送らない after 以前の行が無くても保たれる', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'permission.requested', pendingReq('r1')));
+  h.fire(ev(1, 'message.text', {text: 'x'}));
+  h.runTimers();
+  const dlg = dialogEls(h)[0];
+  reconnect(h);
+  assert.strictEqual(h.es().url, BASE + '/events?after=1&generation=' + G1);
+  h.es().fire('hello', {first_seq: 0, generation: G1, resumed: true, durable: true}); // seq > 1 だけが届く: 今回は、新しい Event 2 つ
+  h.fire(ev(2, 'message.text', {text: 'y'}));
+  h.fire(ev(3, 'permission.requested', pendingReq('r2')));
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 2);
+  assert.strictEqual(dialogEls(h)[0], dlg, '前のダイアログが作り直された');
+  assert.strictEqual(findBtn(dlg, 'deny').disabled, false);
+});
+
+test('繋ぎ直し: 決着済みの要求は、Backfill で古い permission.requested が再び届いても、未決に戻らない・ダイアログが出ない', () => {
+  const h = harness();
+  h.hello();
+  h.fire(ev(0, 'permission.requested', pendingReq('r1')));
+  h.fire(ev(1, 'permission.resolved', {request_id: 'r1', outcome: 'allow_once', by: 'human'}));
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 0);
+  reconnect(h);
+  h.es().fire('hello', {first_seq: 0, generation: G1, resumed: true});
+  h.fire(ev(0, 'permission.requested', pendingReq('r1'))); // 重複 (seq <= lastSeq): 捨てる
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 0);
+  // 世代が変わったあとの同じ request_id は、別の要求として未決になる (表示は作り直し)
+  h.es().fire('hello', {first_seq: 0, generation: G2});
+  h.fire(ev(0, 'permission.requested', pendingReq('r1')));
+  h.runTimers();
+  assert.strictEqual(dialogEls(h).length, 1);
+});
+
+// 省略の検出の境界: first_seq = lastSeq + 2 (seq が 1 つだけ飛ぶ) も、省略の印。first_seq = lastSeq + 1 (連続) は印なし。
+test('省略の検出 (S7): 1 つだけ飛ぶ (first_seq = lastSeq + 2) も印。連続 (lastSeq + 1) は印なし', () => {
+  const mk = (first, lastSeq) => {
+    const s = core.createState();
+    core.applyHello(s, {generation: G1, first_seq: 0});
+    core.applyEvent(s, ev(lastSeq, 'message.text', {text: 'x'}));
+    core.applyHello(s, {generation: G1, first_seq: first, resumed: true});
+    return s;
+  };
+  assert.strictEqual(mk(12, 10).omitted, true, 'seq 11 が無い (first_seq = lastSeq + 2): 印');
+  assert.strictEqual(mk(11, 10).omitted, false, '連続 (first_seq = lastSeq + 1): 印なし');
+  assert.strictEqual(mk(12, 11).omitted, false, '連続 (lastSeq = 11): 印なし');
+  assert.strictEqual(mk(13, 11).omitted, true, 'seq 12 が無い: 印');
+});
