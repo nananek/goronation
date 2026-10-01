@@ -412,8 +412,9 @@ func (s *Store) Range(after, before uint64, limit int) ([]Row, error) {
 	return out, nil
 }
 
-// FirstUnpinned は、hello の first_seq 用: 連続して残っている先頭の seq。Trim が消した範囲より後で、最小の seq (まだ Trim していなければ、
-// 最小の seq)。それ以前に残る固定の行は、固定が解けるまで、連続の外 (Range は返す)。行が無ければ false (エラーも false)。
+// FirstUnpinned は、hello の first_seq 用: 連続して残っている先頭 (固定でない行の最小の seq)。Trim が消した範囲より後だけを見る
+// (消した範囲より前で、固定が解けた行は、連続の外のまま。次の Trim で消える)。固定の行は、先頭に数えない (Range は返す)。
+// 固定でない行が残っていなければ false (エラーも false)。
 func (s *Store) FirstUnpinned() (uint64, bool) {
 	_, _, closed := s.state()
 	if closed {
@@ -425,9 +426,9 @@ func (s *Store) FirstUnpinned() (uint64, bool) {
 	var min sql.NullInt64
 	var err error
 	if hasTrim {
-		err = s.r.QueryRow(`SELECT min(seq) FROM events WHERE generation = ? AND seq > ?`, s.gen, int64(trimmed)).Scan(&min)
+		err = s.r.QueryRow(`SELECT min(seq) FROM events WHERE generation = ? AND pinned = 0 AND seq > ?`, s.gen, int64(trimmed)).Scan(&min)
 	} else {
-		err = s.r.QueryRow(`SELECT min(seq) FROM events WHERE generation = ?`, s.gen).Scan(&min)
+		err = s.r.QueryRow(`SELECT min(seq) FROM events WHERE generation = ? AND pinned = 0`, s.gen).Scan(&min)
 	}
 	if err != nil || !min.Valid || min.Int64 < 0 {
 		return 0, false
@@ -436,12 +437,13 @@ func (s *Store) FirstUnpinned() (uint64, bool) {
 }
 
 // Trim は、payload の合計 (固定の行を含む) が budgetBytes に収まるまで、固定されていない行を、古い順に消す。固定の行は消さない:
-// 固定の行だけが残って予算を超えるときは、そこで止まる (無限に回らない)。返す firstSeq は、FirstUnpinned と同じ。
+// 固定の行だけが残って予算を超えるときは、そこで止まる (無限に回らない)。返す firstSeq は、Trim のあとに残った、固定でない行の最小の seq
+// (FirstUnpinned と同じ。固定でない行が残らなければ 0)。消さなかったときも返す。書き込みを止めたまま (writeMu の中で) 数えるので、
+// 返す値は、この Trim の結果と一致する。
 func (s *Store) Trim(budgetBytes int64) (uint64, error) {
 	s.writeMu.Lock()
-	err := s.trim(budgetBytes)
-	s.writeMu.Unlock()
-	if err != nil {
+	defer s.writeMu.Unlock()
+	if err := s.trim(budgetBytes); err != nil {
 		return 0, err
 	}
 	first, _ := s.FirstUnpinned()

@@ -344,6 +344,33 @@ func TestDSNEscapes(t *testing.T) {
 	}
 }
 
+// Trim の契約: 返す値は、残った固定でない行の最小の seq (固定の行は数えない)。残らなければ 0。
+func TestTrimReturnsFirstUnpinned(t *testing.T) {
+	s := open(t, session(t))
+	if err := s.Apply(Op{Append: rows(0, 10, 100)}); err != nil {
+		t.Fatal(err)
+	}
+	// 0・1 を固定: 予算内で消さなくても、先頭は固定でない 2
+	if err := s.Apply(Op{Pin: []uint64{0, 1, 5}}); err != nil {
+		t.Fatal(err)
+	}
+	if first, err := s.Trim(10000); err != nil || first != 2 {
+		t.Fatalf("Trim(予算内) = %d %v (固定の 0 を、先頭にした)", first, err)
+	}
+	// 2〜4 を消す (300 バイト)。5 は固定で残り、先頭は 6
+	if first, err := s.Trim(700); err != nil || first != 6 {
+		t.Fatalf("Trim = %d %v", first, err)
+	}
+	// 固定でない行を全部消す: 固定 (0・1・5) だけが残る → 0
+	if first, err := s.Trim(0); err != nil || first != 0 {
+		t.Fatalf("Trim(全部) = %d %v", first, err)
+	}
+	got, _ := s.Range(0, 100, 100)
+	if !eq(seqs(got), []uint64{0, 1, 5}) {
+		t.Fatalf("残り: %v", seqs(got))
+	}
+}
+
 func TestTrim(t *testing.T) {
 	s := open(t, session(t))
 	if err := s.Apply(Op{Append: rows(0, 20, 100)}); err != nil { // 20 行 × 100 バイト
