@@ -14,7 +14,18 @@ type Launch struct {
 	name      string
 	args      []string
 	newStream func() agent.Stream
+	transport Transport
 }
+
+// Transport は、エージェントの標準入出力の使い道 (cmd/goronation が、檻の標準入出力をどう繋ぐかを決める)。
+type Transport int
+
+const (
+	// TransportStdio は、標準入力に命令の行を書き、標準出力から出力の行を読む (claude の stream-json)。
+	TransportStdio Transport = iota
+	// TransportHTTP は、標準入力が control (HTTP の中継)・標準出力が起動の状態の 1 行で、行は SSE から読み、命令は HTTP で送る (opencode)。
+	TransportHTTP
+)
 
 // Agent は、エージェント名 (--agent の値) の Launch を返す。M1.5 は claude だけ (opencode は M2)。未知の名前は error。
 func Agent(name string) (Launch, error) {
@@ -29,6 +40,7 @@ func Agent(name string) (Launch, error) {
 			// --setting-sources user は、repo の .claude/settings.local.json の allow・.claude/settings.json の hooks (どちらも承認なしで tool を実行させる) を切る (ADR 0017)。HOME の設定と、managed settings (host の root だけが書ける) は切れない。
 			args:      []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio", "--permission-mode", "default", "--setting-sources", "user"},
 			newStream: claude.Adapter{}.NewStream,
+			transport: TransportStdio,
 		}, nil
 	}
 	return Launch{}, fmt.Errorf("chat: --chat で動かせないエージェント %q (対応は claude だけ)", name)
@@ -36,6 +48,9 @@ func Agent(name string) (Launch, error) {
 
 // Name は、エージェント名。
 func (l Launch) Name() string { return l.name }
+
+// Transport は、標準入出力の使い道。
+func (l Launch) Transport() Transport { return l.transport }
 
 // Args は、檻の中でエージェントに渡す引数 (呼び手の引数は、この後ろ)。
 func (l Launch) Args() []string { return append([]string(nil), l.args...) }
