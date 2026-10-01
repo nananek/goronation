@@ -123,9 +123,9 @@ func buildPermission(d permissionAsked) (v0.PermissionRequested, bool) {
 			truncated = true
 			return
 		}
-		l, _ = v0.ClampText(l, v0.MaxDetailLabelLen)
+		l, labelCut := v0.ClampText(l, v0.MaxDetailLabelLen) // label も値 (patch: <file>) を含む。切れたら、見せていない部分がある
 		t, cut := v0.ClampText(text, v0.MaxDetailTextLen)
-		truncated = truncated || cut
+		truncated = truncated || cut || labelCut
 		req.Details = append(req.Details, v0.Detail{Label: l, Text: t, Kind: k})
 	}
 	for _, r := range resources {
