@@ -236,6 +236,38 @@ func TestWebChatFlow(t *testing.T) {
 	}
 }
 
+// form: web 経由の回答は、本文を変えず serve に届き (content_hash・answer も)、回答が claude に届く。
+func TestWebChatFormFlow(t *testing.T) {
+	withTimeout(t, 60*time.Second)
+	cw := newChatWeb(t, defaultChatRelay, webReadTimeout, webWriteTimeout)
+	s := newInProcChatSession(t, "ask")
+	cw.listen(chatTestID, newChatHandler(s))
+	sse := cw.mustEvents(chatTestID)
+	hello, _ := sse.next()
+	var h struct{ Generation string }
+	json.Unmarshal([]byte(hello.data), &h)
+	if code, b := cw.req("POST", evPath(chatTestID, "message"), `{"text":"ask"}`, nil); code != 200 {
+		t.Fatalf("message: %d %s", code, b)
+	}
+	id, hash := formEvent(t, sse)
+	form := func(extra string) (int, string) {
+		return cw.req("POST", evPath(chatTestID, "form"), `{"generation":"`+h.Generation+`","request_id":"`+id+`",`+extra+`}`, nil)
+	}
+	if code, b := form(`"outcome":"answered","answer":{"q0":"赤"},"content_hash":"sha256:00"`); code != 409 || errCode(b) != "content_changed" {
+		t.Errorf("違う hash: %d %s", code, b)
+	}
+	if code, b := form(`"outcome":"answered","answer":{"q9":"x"},"content_hash":"` + hash + `"`); code != 400 || errCode(b) != "bad_answer" {
+		t.Errorf("不正な回答: %d %s", code, b)
+	}
+	if code, b := form(`"outcome":"answered","answer":{"q0":"赤"},"content_hash":"` + hash + `"`); code != 200 {
+		t.Fatalf("回答: %d %s", code, b)
+	}
+	msg := sse.until(func(f sseFrame) bool { return evType("message.text")(f) && strings.Contains(f.data, "request=") })
+	if !strings.Contains(msg.data, "赤") || !strings.Contains(msg.data, "answers") {
+		t.Fatalf("claude が受けた応答: %s", msg.data)
+	}
+}
+
 // 認証・関門・不正な要求は、serve に触れない (UDS への接続が 0 のまま)。
 func TestWebChatGatesNeverReachServe(t *testing.T) {
 	withTimeout(t, 60*time.Second)
@@ -246,7 +278,7 @@ func TestWebChatGatesNeverReachServe(t *testing.T) {
 
 	// 無認証は 401 (SSE も書き込みも)。
 	for _, tc := range []struct{ method, path string }{
-		{"GET", evPath(chatTestID, "events")}, {"POST", evPath(chatTestID, "message")}, {"POST", evPath(chatTestID, "permission")}, {"POST", evPath(chatTestID, "stop")},
+		{"GET", evPath(chatTestID, "events")}, {"POST", evPath(chatTestID, "message")}, {"POST", evPath(chatTestID, "permission")}, {"POST", evPath(chatTestID, "form")}, {"POST", evPath(chatTestID, "stop")},
 	} {
 		if code, _ := cw.reqWith(anon, tc.method, tc.path, `{}`, nil); code != 401 {
 			t.Errorf("無認証 %s %s = %d (401 のはず)", tc.method, tc.path, code)
@@ -318,7 +350,7 @@ func TestWebChatNoSocketIs404AndNeverSpawns(t *testing.T) {
 	if _, code := cw.events(chatTestID); code != 404 {
 		t.Errorf("events (chat.sock なし) = %d (404 のはず)", code)
 	}
-	for _, op := range []string{"message", "permission", "stop"} {
+	for _, op := range []string{"message", "permission", "form", "stop"} {
 		if code, _ := cw.req("POST", evPath(chatTestID, op), `{}`, nil); code != 404 {
 			t.Errorf("%s (chat.sock なし) = %d (404 のはず)", op, code)
 		}
@@ -567,6 +599,12 @@ func TestWebChatBodyParsingMatchesServe(t *testing.T) {
 			{"キーの大文字小文字 (世代が別)", "permission", `{"GENERATION":"bad","Request_ID":"r","OUTCOME":"allow_once"}`},
 			{"outcome の重複", "permission", `{"generation":"` + g + `","request_id":"r","outcome":"allow_always","outcome":"allow_once"}`},
 			{"stop の未知のフィールド", "stop", `{"x":1}`},
+			{"form の answer の重複", "form", `{"generation":"` + g + `","request_id":"r","outcome":"answered","answer":{"q0":"a","q0":"b"}}`},
+			{"form の最上位の大文字小文字", "form", `{"GENERATION":"` + g + `","Request_ID":"r","OUTCOME":"cancelled"}`},
+			{"form の世代が別", "form", `{"generation":"bad","request_id":"r","outcome":"cancelled"}`},
+			{"form の answer が数値", "form", `{"generation":"` + g + `","request_id":"r","outcome":"answered","answer":{"q0":1}}`},
+			{"form の未知のフィールド", "form", `{"generation":"` + g + `","request_id":"r","outcome":"cancelled","x":1}`},
+			{"permission の content_hash", "permission", `{"generation":"` + g + `","request_id":"r","outcome":"allow_once","content_hash":"sha256:00"}`},
 		}
 	}
 	web, dir := cases(viaWeb), cases(direct)

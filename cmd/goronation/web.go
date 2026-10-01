@@ -333,7 +333,7 @@ func newWebMuxChat(cfg iwebauthn.Config, store *iwebauthn.Store, origin string, 
 	mux.HandleFunc("GET /static/chat.css", serveEmbedded(chatAssets, "assets/chat/chat.css", "text/css; charset=utf-8"))
 	// 構造化チャット (goronation serve --chat の UDS への中継。serve は起こさない)。書き込みは、requireSession の後に、Origin・Content-Type の関門。
 	mux.HandleFunc("GET /s/{id}/events", s.requireSession(s.handleChatEvents))
-	for _, op := range []string{"message", "permission", "stop"} {
+	for _, op := range []string{"message", "permission", "form", "stop"} {
 		mux.HandleFunc("POST /s/{id}/"+op, s.requireSession(s.handleChatWrite(op)))
 	}
 	return securityHeaders(mux)

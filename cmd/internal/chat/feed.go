@@ -112,6 +112,7 @@ func (f *Feed) events(envs []v0.Envelope) ([]Event, error) {
 	ts := f.now().UTC().Format("2006-01-02T15:04:05.000Z")
 	seq := f.seq
 	for _, e := range envs {
+		e = sealRequest(e)
 		e.V, e.ID, e.TS, e.Session, e.Seq = v0.Version, "e"+strconv.FormatUint(seq, 10), ts, f.session, seq
 		if len(e.Data) == 0 {
 			e.Data = json.RawMessage(`{}`)
@@ -125,6 +126,43 @@ func (f *Feed) events(envs []v0.Envelope) ([]Event, error) {
 	}
 	f.seq = seq
 	return out, nil
+}
+
+// sealRequest は、permission.requested・form.requested を、共通の層の規則に通す (ADR 0042・0047): data を v0 の型に読み、Validate を通らなければ、
+// agent.frame (data 空。承認も回答もできない形) にする。通れば、content_hash を、この層が計算した値で入れる (アダプタが付けた値は、上書きする)。
+// 型に無い欄は、ここで落ちる (アダプタの出す data は、語彙の欄だけが UI・API に出る)。それ以外の type は、そのまま。
+func sealRequest(e v0.Envelope) v0.Envelope {
+	var data any
+	switch e.Type {
+	case v0.TypePermissionRequested:
+		var p v0.PermissionRequested
+		if json.Unmarshal(e.Data, &p) != nil || p.Validate() != nil {
+			return asFrame(e)
+		}
+		p.ContentHash = p.Hash()
+		data = p
+	case v0.TypeFormRequested:
+		var f v0.FormRequested
+		if json.Unmarshal(e.Data, &f) != nil || f.Validate() != nil {
+			return asFrame(e)
+		}
+		f.ContentHash = f.Hash()
+		data = f
+	default:
+		return e
+	}
+	b, err := marshalLine(data)
+	if err != nil { // 大きすぎる (DefaultMaxEvent を超える data)。承認できない形にして落とす (Event の上限の検査は、封筒を書いた後にもある)
+		return asFrame(e)
+	}
+	e.Data = b
+	return e
+}
+
+// asFrame は、e を、対応する語彙が無いフレーム (agent.frame。data 空・durable でない) にする。
+func asFrame(e v0.Envelope) v0.Envelope {
+	e.Type, e.Durable, e.Data = v0.TypeAgentFrame, false, json.RawMessage(`{}`)
+	return e
 }
 
 // marshalLine は、v を改行を含まない 1 行の JSON にする。RawMessage は圧縮される (生の改行は JSON の文字列に入れられない)。

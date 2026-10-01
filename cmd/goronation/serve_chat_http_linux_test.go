@@ -394,3 +394,181 @@ func TestChatHTTPSSELimit(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// 書き込みの本文の上限 (chatMaxBody) は、form の回答 (フィールド数 × 回答 1 つの上限 × エスケープの 6 倍) を収める。
+func TestChatMaxBodyFitsFormAnswers(t *testing.T) {
+	if need := 6*chat.MaxFormFields*chat.MaxFormAnswerText + 1024; chatMaxBody < need {
+		t.Fatalf("chatMaxBody = %d < %d (form の回答が収まらない)", chatMaxBody, need)
+	}
+}
+
+func TestHasDuplicateKeys(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"a":1,"b":2}`:                                  false,
+		`{"a":1,"a":2}`:                                  true,
+		`{"generation":"x","Generation":"y"}`:            true, // 構造体への読みは、大文字小文字を区別しない (最上位だけ)
+		`{"answer":{"q0":"a","q0":"b"}}`:                 true,
+		`{"answer":{"q0":"a","Q0":"b"}}`:                 false, // 回答のキーは、区別する
+		`{"a":[{"k":1,"k":2}]}`:                          true,
+		`{"a":[{"k":1},{"k":2}]}`:                        false,
+		`{"a":{"b":1},"c":{"b":2}}`:                      false,
+		"{\"answer\":{},\"anſwer\":{}}":                  true, // U+017F (ſ) は、Go の構造体への読みで s と同一視される
+		"{\"content_hash\":\"x\",\"content_haſh\":\"\"}": true,
+		`not json`: false,
+		``:         false,
+	} {
+		if got := hasDuplicateKeys([]byte(body)); got != want {
+			t.Errorf("%q = %v, want %v", body, got, want)
+		}
+	}
+}
+
+// formEvent は、SSE から、form.requested の (request_id・content_hash) を取る。
+func formEvent(t *testing.T, sse *sseReader) (id, hash string) {
+	t.Helper()
+	f := sse.until(evType("form.requested"))
+	var v struct {
+		Data struct {
+			RequestID   string `json:"request_id"`
+			ContentHash string `json:"content_hash"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(f.data), &v); err != nil || v.Data.RequestID == "" || !strings.HasPrefix(v.Data.ContentHash, "sha256:") {
+		t.Fatalf("form.requested = %s", f.data)
+	}
+	return v.Data.RequestID, v.Data.ContentHash
+}
+
+func errCode(body string) string {
+	var v struct {
+		Error string `json:"error"`
+	}
+	json.Unmarshal([]byte(body), &v)
+	return v.Error
+}
+
+// AskUserQuestion: form.requested (content_hash つき・permission.requested でない) → POST /form (検査の拒否は何も動かさない) → 回答が claude に届く (updatedInput.answers)。
+func TestChatHTTPFormFlow(t *testing.T) {
+	withTimeout(t, 60*time.Second)
+	s, srv := newInProcChat(t, "ask")
+	sse := openSSE(t, srv)
+	hello, _ := sse.next()
+	var h struct{ Generation string }
+	json.Unmarshal([]byte(hello.data), &h)
+	if code, b := postJSON(t, srv, "/message", `{"text":"ask me"}`); code != 200 {
+		t.Fatalf("message: %d %s", code, b)
+	}
+	id, hash := formEvent(t, sse)
+	if s.Chat.Conv.Pending() != 1 {
+		t.Fatalf("pending = %d", s.Chat.Conv.Pending())
+	}
+	body := func(extra string) string {
+		return `{"generation":"` + h.Generation + `","request_id":"` + id + `",` + extra + `}`
+	}
+	good := `"outcome":"answered","answer":{"q0":"青"},"content_hash":"` + hash + `"`
+	for _, tc := range []struct {
+		name, path, ctype, body string
+		code                    int
+		errc                    string
+	}{
+		{"世代なし", "/form", "application/json", `{"request_id":"` + id + `","outcome":"cancelled"}`, 400, "generation_request_id_outcome_required"},
+		{"別の起動の世代", "/form", "application/json", `{"generation":"00000000000000000000000000000000","request_id":"` + id + `","outcome":"cancelled"}`, 409, "stale_generation"},
+		{"未知の request_id", "/form", "application/json", `{"generation":"` + h.Generation + `","request_id":"nope","outcome":"cancelled"}`, 404, "unknown_request"},
+		{"保持した form に無いキー", "/form", "application/json", body(`"outcome":"answered","answer":{"q9":"x"},"content_hash":"` + hash + `"`), 400, "bad_answer"},
+		{"回答が配列 (単一の質問)", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":["青"]},"content_hash":"` + hash + `"`), 400, "bad_answer"},
+		{"回答が数値", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":1}`), 400, "bad_json"},
+		{"回答が null", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":null}`), 400, "bad_json"},
+		{"配列の要素が数値", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":[1]}`), 400, "bad_json"},
+		{"cancelled に answer", "/form", "application/json", body(`"outcome":"cancelled","answer":{"q0":"青"}`), 400, "bad_answer"},
+		{"知らない outcome", "/form", "application/json", body(`"outcome":"allow_once"`), 400, "bad_request"},
+		{"content_hash が違う", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":"青"},"content_hash":"sha256:00"`), 409, "content_changed"},
+		{"重複したキー (answer)", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":"赤","q0":"青"}`), 400, "bad_json"},
+		{"重複したキー (最上位・大文字小文字違い)", "/form", "application/json", body(`"outcome":"cancelled","Outcome":"answered"`), 400, "bad_json"},
+		{"未知のフィールド", "/form", "application/json", body(`"outcome":"cancelled","x":1`), 400, "bad_json"},
+		{"空の本文", "/form", "application/json", ``, 400, "bad_json"},
+		{"Content-Type が違う", "/form", "text/plain", body(good), 415, "content_type"},
+		{"本文が大きい", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":"` + strings.Repeat("a", chatMaxBody) + `"}`), 413, "too_large"},
+		{"長い回答 (本文は上限内)", "/form", "application/json", body(`"outcome":"answered","answer":{"q0":"` + strings.Repeat("あ", chat.MaxFormAnswerText+1) + `"},"content_hash":"` + hash + `"`), 400, "bad_answer"},
+		{"form に permission の応答", "/permission", "application/json", body(`"outcome":"allow_once"`), 404, "unknown_request"},
+	} {
+		code, b := post(t, srv, tc.path, tc.ctype, tc.body)
+		if code != tc.code || errCode(b) != tc.errc {
+			t.Errorf("%s: %d %.100s (%d %s のはず)", tc.name, code, b, tc.code, tc.errc)
+		}
+	}
+	if s.Chat.Conv.Pending() != 1 {
+		t.Fatalf("拒否された応答で、未決が動いた: pending=%d", s.Chat.Conv.Pending())
+	}
+	if code, b := postJSON(t, srv, "/form", body(good)); code != 200 {
+		t.Fatalf("回答: %d %s", code, b)
+	}
+	if code, b := postJSON(t, srv, "/form", body(good)); code != 409 || errCode(b) != "already_resolved" {
+		t.Errorf("二重の回答: %d %s", code, b)
+	}
+	resolved := sse.until(evType("form.resolved"))
+	if !strings.Contains(resolved.data, `"by":"human"`) || !strings.Contains(resolved.data, `"outcome":"answered"`) {
+		t.Errorf("form.resolved = %s", resolved.data)
+	}
+	// 回答が claude に届いた: 保持した質問の文をキーにした answers。
+	msg := sse.until(func(f sseFrame) bool { return evType("message.text")(f) && strings.Contains(f.data, "request=") })
+	if !strings.Contains(msg.data, `answers`) || !strings.Contains(msg.data, `好きな色は?`) || !strings.Contains(msg.data, `青`) || !strings.Contains(msg.data, `allow`) {
+		t.Fatalf("claude が受けた応答: %s", msg.data)
+	}
+	sse.until(evType("turn.completed"))
+}
+
+// 取り消し (cancelled) は deny。permission の応答 (content_hash つき) も、保持した値と照合する。
+func TestChatHTTPFormCancelAndPermissionHash(t *testing.T) {
+	withTimeout(t, 60*time.Second)
+	_, srv := newInProcChat(t, "ask")
+	sse := openSSE(t, srv)
+	hello, _ := sse.next()
+	var h struct{ Generation string }
+	json.Unmarshal([]byte(hello.data), &h)
+	postJSON(t, srv, "/message", `{"text":"ask"}`)
+	id, _ := formEvent(t, sse)
+	if code, b := postJSON(t, srv, "/form", `{"generation":"`+h.Generation+`","request_id":"`+id+`","outcome":"cancelled"}`); code != 200 {
+		t.Fatalf("取り消し: %d %s", code, b)
+	}
+	msg := sse.until(func(f sseFrame) bool { return evType("message.text")(f) && strings.Contains(f.data, "request=") })
+	if !strings.Contains(msg.data, `deny`) {
+		t.Fatalf("取り消しが deny で届かない: %s", msg.data)
+	}
+
+	_, srv2 := newInProcChat(t, "flow")
+	sse2 := openSSE(t, srv2)
+	hello, _ = sse2.next()
+	json.Unmarshal([]byte(hello.data), &h)
+	postJSON(t, srv2, "/message", `{"text":"hi"}`)
+	req := sse2.until(evType("permission.requested"))
+	var rv struct {
+		Data struct {
+			RequestID, ContentHash, Summary string
+			Details                         []struct{ Label, Text string }
+		} `json:"data"`
+	}
+	json.Unmarshal([]byte(req.data), &rv)
+	// 汎用の JSON のキー名 (request_id) は、構造体のタグ無しでも大文字小文字を区別せず読める。
+	var rv2 struct {
+		Data struct {
+			RequestID   string `json:"request_id"`
+			ContentHash string `json:"content_hash"`
+			Summary     string `json:"summary"`
+			Details     []struct{ Label, Text string }
+		} `json:"data"`
+	}
+	json.Unmarshal([]byte(req.data), &rv2)
+	d := rv2.Data
+	if !strings.HasPrefix(d.ContentHash, "sha256:") || d.Summary != "Write: /work/new.txt" || len(d.Details) != 2 {
+		t.Fatalf("permission.requested = %s", req.data)
+	}
+	pbody := func(extra string) string {
+		return `{"generation":"` + h.Generation + `","request_id":"` + d.RequestID + `","outcome":"allow_once"` + extra + `}`
+	}
+	if code, b := postJSON(t, srv2, "/permission", pbody(`,"content_hash":"sha256:00"`)); code != 409 || errCode(b) != "content_changed" {
+		t.Errorf("違う hash: %d %s", code, b)
+	}
+	if code, b := postJSON(t, srv2, "/permission", pbody(`,"content_hash":"`+d.ContentHash+`"`)); code != 200 {
+		t.Errorf("正しい hash: %d %s", code, b)
+	}
+}

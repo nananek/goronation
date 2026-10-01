@@ -1,6 +1,6 @@
 # 0044. claude の AskUserQuestion は form にし、回答は updatedInput.answers で返す (M2)
 
-- 状態: 採用
+- 状態: 採用 (2026-10-01 に追記: 決定 1〜4 のうち、アダプタ・Conversation・API は PR⑤b-1 で実装した (ADR 0046・0047)。画面の form は PR⑤b-2)
 - 日付: 2026-10-01
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、ADR 0010・0040・0042、`spec/testdata/golden/claude/ask-user-question-*.jsonl`
 

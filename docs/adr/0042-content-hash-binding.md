@@ -1,6 +1,6 @@
 # 0042. 承認と回答は、利用者が見た内容の SHA-256 を写させて束縛する (M2)
 
-- 状態: 採用
+- 状態: 採用 (2026-10-01 に追記: 付ける層は `Feed`、照合は `Conversation` (ADR 0047))
 - 日付: 2026-10-01
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1) (M2 の未決 (4))、ADR 0011・0016・0040・0041、`spec/v0/hash.go`
 

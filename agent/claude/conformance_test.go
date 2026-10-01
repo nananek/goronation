@@ -43,10 +43,12 @@ var allowedPaths = map[string][]string{
 	"control_request":        {".request_id", ".request.tool_use_id", ".request.tool_name", ".request.input", ".request.description"},
 	"control_cancel_request": {".request_id"},
 	"control_response":       {}, // initialize の応答 (account・memory の path などを含む)。data は空
+	"system/informational":   {}, // 通知の文。data は空 (agent.frame)
 }
 
 var conformanceFixtures = []string{"simple-text", "tool-call", "multi-turn", "permission-request", "error-response",
-	"permission-interactive-allow", "permission-interactive-deny", "permission-interactive-interrupt"}
+	"permission-interactive-allow", "permission-interactive-deny", "permission-interactive-interrupt",
+	"ask-user-question-single", "ask-user-question-multi", "ask-user-question-custom", "ask-user-question-deny", "ask-user-question-unanswered"}
 
 func allowed(kind, path string) bool {
 	for _, p := range allowedPaths[kind] {
@@ -127,7 +129,9 @@ func TestDataKeysAreFixed(t *testing.T) {
 		v0.TypeMessageText:         {"message_id", "text"},
 		v0.TypeToolCall:            {"call_id", "input", "kind", "name", "status"},
 		v0.TypeToolUpdate:          {"call_id", "output", "status"},
-		v0.TypePermissionRequested: {"call_id", "input", "kind", "request_id", "title", "tool_name"},
+		v0.TypePermissionRequested: {"call_id", "details", "input", "kind", "request_id", "summary", "title", "tool_name"},
+		v0.TypeFormRequested:       {"call_id", "fields", "kind", "request_id"},
+		v0.TypeFormResolved:        {"by", "outcome", "request_id"},           // fixture から出るのは by=agent (ターンの終わりで閉じた分)。answered は form_test.go
 		v0.TypePermissionResolved:  {"by", "call_id", "outcome", "tool_name"}, // by=policy。by=human・agent は下で
 		v0.TypeUsage: {"cache_creation_input_tokens", "cache_read_input_tokens", "context_window", "cost_usd", "input_tokens",
 			"max_output_tokens", "output_tokens", "scope"},

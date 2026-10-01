@@ -38,6 +38,12 @@ var (
 	ErrStaleGeneration = errors.New("chat: 別の起動 (世代) の画面からの応答")                    // ResolveIn: 409
 	ErrAlreadyResolved = errors.New("chat: その request_id は、もう決着している")              // Resolve: 409
 	ErrWriteFailed     = errors.New("chat: エージェントの入力に書けなかった (会話を終了した)")            // Send・Resolve: 500
+	// ErrBadAnswer は、form の回答が、保持した要求に対して不正 (キー・型・選択肢・必須・長さ。FormResolve.Validate)。何も書かない。ResolveFormIn: 400。
+	ErrBadAnswer = errors.New("chat: form の回答が、保持した要求に合わない")
+	// ErrContentChanged は、応答の content_hash が、保持した要求の値と違う (利用者が見た内容と、保持した内容が違う。ADR 0042)。何も書かない。409。
+	ErrContentChanged = errors.New("chat: 内容が、利用者が見たものと違う (content_hash が合わない)")
+	// ErrContentHashRequired は、content_hash が必須 (ConversationConfig.RequireContentHash) なのに、応答に無い。400。
+	ErrContentHashRequired = errors.New("chat: content_hash が要る")
 )
 
 // State は、会話の状態。
@@ -48,7 +54,7 @@ const (
 	StateIdle State = iota
 	// StateTurn は、ターンの途中 (エージェントが動いている)。
 	StateTurn
-	// StateAwaitingPermission は、ターンの途中で、人間の応答を待つ権限要求がある。
+	// StateAwaitingPermission は、ターンの途中で、人間の応答を待つ権限要求または form がある (名前は、UI・API の互換のため、変えない)。
 	StateAwaitingPermission
 	// StateClosed は、終了した (または Stop / 書き込みの失敗で、もう指示を受けない)。
 	StateClosed
@@ -67,6 +73,9 @@ type ConversationConfig struct {
 	// 長く待たない (呼び手が、有界のキューに積むだけにする。詰まったら error を返す)。Conversation を呼び返してはいけない。
 	// error は、ErrWriteFailed として扱い、会話を終了する。
 	Write func(line []byte) error
+	// RequireContentHash が true なら、応答 (permission.resolve・form.resolve) に content_hash が無いものを拒否する (ADR 0042 決定 3)。false (既定) は、
+	// 導入の間の互換: 無ければ照合しない (あれば、必ず保持した値と照合する)。必須にする時期は、UI が content_hash を写すようになったあとの、別の判断。
+	RequireContentHash bool
 	// OnStop は、Stop (または書き込みの失敗) の最初の 1 回だけ、Mutex の外で呼ぶ (エージェントの入力を閉じ、檻を止める)。nil でもよい。
 	OnStop func()
 }
@@ -77,13 +86,14 @@ type ConversationConfig struct {
 //
 // 出力の側 (OnLine) と、書く側 (Send・Resolve・Stop) を、Mutex で直列にする。並行に呼んでよい。
 //
-// 権限の承認の束縛 (M1.5 の簡易版。内容ハッシュは M2。ADR 0009):
-//   - 要求 ID に束縛し、1 回だけ有効。クライアントが送れるのは request_id と outcome (allow_once・reject_once) だけ。
+// 権限の承認・form の回答の束縛 (ADR 0009・0040・0042・0047):
+//   - 要求 ID に束縛し、1 回だけ有効。クライアントが送れるのは request_id と outcome (allow_once・reject_once) だけ。form は outcome (answered・cancelled) と回答 (保持した form の
+//     フィールドに対して検査する) で、種類の違う要求の ID には通らない。応答の content_hash は、保持した値と照合する (RequireContentHash でなければ、無いのは許す)。
 //   - claude に返す許可の input は、要求時に Stream が保持した値だけから作る (ここでは input を持たず、触らない)。
 //   - この会話 (1 回の起動) の未決の要求だけが有効。起動をまたぐ ID・失効した ID は、404。
 //   - 終了・Stop で、未決の要求は全部失効する (by=policy・outcome=cancelled)。タイマーによる失効・自動停止は持たない。
-//   - 同時に待つ要求は MaxPendingRequests まで。超えた要求と、ターンの外に来た要求は、claude に拒否を返して by=policy で決着させる。
-//   - 未決の permission.requested は Hub に固定し、リングから溢れても、新しい購読者の Snapshot に含める。
+//   - 同時に待つ要求 (権限・form) は MaxPendingRequests まで。超えた要求と、ターンの外に来た要求は、claude に拒否 (form は取り消し) を返して by=policy で決着させる。
+//   - 未決の permission.requested・form.requested は Hub に固定し、リングから溢れても、新しい購読者の Snapshot に含める。
 //
 // 順序外れのフレーム: 未決でない ID の cancel は Stream が agent.frame にする。ターンの外の result (turn.completed) は、
 // そのまま配るが、状態は変えない。未決を残した turn.completed・EOF (Close) は、未決を全部失効させる。
@@ -94,7 +104,7 @@ type Conversation struct {
 
 	mu       sync.Mutex
 	state    State // Idle・Turn・Closed (AwaitingPermission は、Turn と、未決の有無から導く)
-	pending  map[string]Event
+	pending  map[string]pendingItem
 	settled  map[[sha256.Size]byte]struct{}
 	settledQ [][sha256.Size]byte
 	// orphans は、会話が先に決着させたが、Stream がまだ未決として持つ request_id (Stop・書き込みの失敗・終了で失効させた分と、
@@ -107,11 +117,42 @@ type Conversation struct {
 	stopOnce sync.Once
 }
 
+// pendingItem は、人間の応答を待つ要求 (権限か form)。ev は配った Event (Seq で Hub の固定を外す)。hash は、Feed が付けた content_hash (応答の照合用)。
+// form が nil でなければ form (回答の検査用に、保持した要求)。
+type pendingItem struct {
+	ev   Event
+	hash string
+	form *v0.FormRequested
+}
+
+// holdRequest は、permission.requested・form.requested の Event から、保持する値を読む。Feed が検査した形なので、読めなければ false (保持しない)。
+func holdRequest(e Event) (pendingItem, bool) {
+	switch e.Type {
+	case v0.TypePermissionRequested:
+		var v struct {
+			Data v0.PermissionRequested `json:"data"`
+		}
+		if json.Unmarshal(e.JSON, &v) != nil {
+			return pendingItem{}, false
+		}
+		return pendingItem{ev: e, hash: v.Data.ContentHash}, true
+	case v0.TypeFormRequested:
+		var v struct {
+			Data v0.FormRequested `json:"data"`
+		}
+		if json.Unmarshal(e.JSON, &v) != nil {
+			return pendingItem{}, false
+		}
+		return pendingItem{ev: e, hash: v.Data.ContentHash, form: &v.Data}, true
+	}
+	return pendingItem{}, false
+}
+
 // NewConversation は、idle の会話を作る。
 func NewConversation(cfg ConversationConfig) *Conversation {
 	var g [16]byte
 	rand.Read(g[:])
-	return &Conversation{cfg: cfg, generation: hex.EncodeToString(g[:]), pending: map[string]Event{}, settled: map[[sha256.Size]byte]struct{}{}, orphans: map[[sha256.Size]byte]struct{}{}}
+	return &Conversation{cfg: cfg, generation: hex.EncodeToString(g[:]), pending: map[string]pendingItem{}, settled: map[[sha256.Size]byte]struct{}{}, orphans: map[[sha256.Size]byte]struct{}{}}
 }
 
 // State は、今の状態。
@@ -175,52 +216,122 @@ func (c *Conversation) Send(text string) error {
 // 起動をまたぐ承認の誤適用 (起動 1 の古い画面の allow が、起動 2 の同じ request_id の別の input に通る。L12) を断てる。
 func (c *Conversation) Generation() string { return c.generation }
 
-// ResolveIn は、未決の権限要求に、人間の応答 (allow_once・reject_once) を返す。generation がこの会話のものと一致するときだけ通す
+// ResolveIn は、未決の権限要求に、人間の応答 (allow_once・reject_once) を返す (content_hash なし。ResolvePermissionIn の、hash を持たない形)。generation がこの会話のものと一致するときだけ通す
 // (空なら ErrNoGeneration、違えば ErrStaleGeneration。どちらも未決の表には触れない)。世代なしの経路は、型で無い (resolve は非公開。L2)。
 func (c *Conversation) ResolveIn(generation, requestID, outcome string) error {
+	return c.ResolvePermissionIn(generation, v0.PermissionResolve{RequestID: requestID, Outcome: outcome})
+}
+
+// ResolvePermissionIn は、ResolveIn に、content_hash の照合 (ADR 0042) を足したもの: r.ContentHash が、保持した要求の値と違えば ErrContentChanged、
+// 無くて RequireContentHash なら ErrContentHashRequired。どちらも、何も書かず、未決のまま。form の request_id には通らない (ErrUnknownRequest)。
+func (c *Conversation) ResolvePermissionIn(generation string, r v0.PermissionResolve) error {
 	if generation == "" {
 		return ErrNoGeneration
 	}
 	if generation != c.generation {
 		return ErrStaleGeneration
 	}
-	return c.resolve(requestID, outcome)
+	return c.resolve(r.RequestID, r.Outcome, r.ContentHash)
 }
 
-// resolve は、ResolveIn の、世代を確かめた後の本体。
+// ResolveFormIn は、未決の form に、人間の回答 (answered・cancelled) を返す。世代の検査は ResolveIn と同じ。そのあと、未決の form でなければ ErrUnknownRequest /
+// ErrAlreadyResolved、content_hash が合わなければ ErrContentChanged / ErrContentHashRequired、回答が、保持した要求に対して不正 (FormResolve.Validate) なら ErrBadAnswer。
+// どれも、何も書かず、未決のまま。通れば、エージェントには {request_id, outcome, answer} だけを渡す (hash は渡さない)。権限の request_id には通らない。
+func (c *Conversation) ResolveFormIn(generation, requestID string, r v0.FormResolve) error {
+	if generation == "" {
+		return ErrNoGeneration
+	}
+	if generation != c.generation {
+		return ErrStaleGeneration
+	}
+	if r.RequestID != requestID {
+		return ErrBadAnswer
+	}
+	if r.Outcome != v0.FormAnswered && r.Outcome != v0.FormCancelled {
+		return ErrBadOutcome
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	item, err := c.heldLocked(requestID, true)
+	if err != nil {
+		return err
+	}
+	if err := c.verifyHash(item, r.ContentHash); err != nil {
+		return err
+	}
+	if err := r.Validate(*item.form); err != nil {
+		return ErrBadAnswer
+	}
+	data, err := json.Marshal(v0.FormResolve{RequestID: requestID, Outcome: r.Outcome, Answer: r.Answer}) // content_hash は、アダプタに渡さない
+	if err != nil {
+		return err
+	}
+	return c.writeResolveLocked(requestID, item, v0.Command{V: v0.Version, Type: v0.CommandFormResolve, Data: data})
+}
+
+// heldLocked は、未決の要求 requestID を返す。未決でなければ ErrUnknownRequest (決着済みなら ErrAlreadyResolved)。form が true なら form だけ、false なら権限だけ
+// (種類の違う要求の ID は、未決でないものとして扱う: form に permission.resolve の allow を返すと、回答なしの許可になる)。
+func (c *Conversation) heldLocked(requestID string, form bool) (pendingItem, error) {
+	item, ok := c.pending[requestID]
+	if !ok || (item.form != nil) != form {
+		if _, done := c.settled[sha256.Sum256([]byte(requestID))]; !ok && done && c.state != StateClosed && !c.stopped {
+			return pendingItem{}, ErrAlreadyResolved
+		}
+		return pendingItem{}, ErrUnknownRequest
+	}
+	return item, nil
+}
+
+// verifyHash は、応答の content_hash (got) を、保持した値と照合する (v0.VerifyHash)。
+func (c *Conversation) verifyHash(item pendingItem, got string) error {
+	switch err := v0.VerifyHash(item.hash, got, c.cfg.RequireContentHash); {
+	case errors.Is(err, v0.ErrHashRequired):
+		return ErrContentHashRequired
+	case err != nil:
+		return ErrContentChanged
+	}
+	return nil
+}
+
+// resolve は、ResolvePermissionIn の、世代を確かめた後の本体。
 // 未決でない ID は ErrUnknownRequest、応答済みの ID は ErrAlreadyResolved (別タブの後追いなど)。並行に呼ばれても、1 つだけが通る。
-func (c *Conversation) resolve(requestID, outcome string) error {
+func (c *Conversation) resolve(requestID, outcome, contentHash string) error {
 	if outcome != v0.AllowOnce && outcome != v0.RejectOnce {
 		return ErrBadOutcome
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	req, ok := c.pending[requestID]
-	if !ok {
-		if _, done := c.settled[sha256.Sum256([]byte(requestID))]; done && c.state != StateClosed && !c.stopped {
-			return ErrAlreadyResolved
-		}
-		return ErrUnknownRequest
+	item, err := c.heldLocked(requestID, false)
+	if err != nil {
+		return err
+	}
+	if err := c.verifyHash(item, contentHash); err != nil {
+		return err
 	}
 	data, err := json.Marshal(map[string]string{"request_id": requestID, "outcome": outcome})
 	if err != nil {
 		return err
 	}
-	raw, events, err := c.cfg.Feed.Encode(v0.Command{V: v0.Version, Type: v0.CommandPermissionResolve, Data: data})
+	return c.writeResolveLocked(requestID, item, v0.Command{V: v0.Version, Type: v0.CommandPermissionResolve, Data: data})
+}
+
+// writeResolveLocked は、検査を通った応答 (cmd) を、エージェントの入力に書き、要求を決着させる。
+func (c *Conversation) writeResolveLocked(requestID string, item pendingItem, cmd v0.Command) error {
+	raw, events, err := c.cfg.Feed.Encode(cmd)
 	if err != nil {
-		// Stream が、未決でないと言った (表と食い違った)。表から外し、失効として扱う。
+		// Stream が、未決でない (または答えられない) と言った (表と食い違った)。表から外し、失効として扱う。
 		c.settleLocked(requestID)
-		c.cfg.Hub.Update(nil, nil, []uint64{req.Seq})
+		c.cfg.Hub.Update(nil, nil, []uint64{item.ev.Seq})
 		return ErrUnknownRequest
 	}
 	c.settleLocked(requestID)
 	if err := c.cfg.Write(raw); err != nil {
-		c.cfg.Hub.Update(nil, nil, []uint64{req.Seq})
-		c.emitResolvedLocked(requestID, "cancelled")
+		c.cfg.Hub.Update(nil, nil, []uint64{item.ev.Seq})
+		c.emitResolvedLocked(requestID, item.form != nil, "cancelled")
 		c.failLocked(err)
 		return ErrWriteFailed
 	}
-	c.cfg.Hub.Update(events, nil, []uint64{req.Seq})
+	c.cfg.Hub.Update(events, nil, []uint64{item.ev.Seq})
 	return nil
 }
 
@@ -258,7 +369,7 @@ func (c *Conversation) OnLine(line []byte) error {
 	}
 	var publish, pin []Event
 	var unpin []uint64
-	var rejects []string
+	var rejects []heldID
 	completed := false
 	for _, e := range events {
 		switch e.Type {
@@ -269,23 +380,24 @@ func (c *Conversation) OnLine(line []byte) error {
 			} else {
 				c.lastErr = key
 			}
-		case v0.TypePermissionRequested:
+		case v0.TypePermissionRequested, v0.TypeFormRequested:
 			id, ok := requestID(e)
-			if !ok {
-				continue // Stream が作る形ではない。捨てる
+			item, held := holdRequest(e)
+			if !ok || !held {
+				continue // Feed が作る形ではない。捨てる
 			}
 			if c.state != StateTurn || c.stopped || len(c.pending) >= MaxPendingRequests {
-				rejects = append(rejects, id) // 承認できない要求 (ターンの外・上限超過・終了の途中) は、見せたうえで、by=policy で拒否する
+				rejects = append(rejects, heldID{id, item.form != nil}) // 承認できない要求 (ターンの外・上限超過・終了の途中) は、見せたうえで、by=policy で拒否する (form は取り消す)
 			} else {
-				c.pending[id] = e
+				c.pending[id] = item
 				pin = append(pin, e)
 			}
-		case v0.TypePermissionResolved:
+		case v0.TypePermissionResolved, v0.TypeFormResolved:
 			// claude の撤回・ターンの終了で、Stream が閉じた要求 (by=agent)。表から外す。
 			if id, ok := requestID(e); ok {
 				if req, held := c.pending[id]; held {
 					c.settleLocked(id)
-					unpin = append(unpin, req.Seq)
+					unpin = append(unpin, req.ev.Seq)
 				} else if _, orphan := c.orphans[sha256.Sum256([]byte(id))]; orphan {
 					delete(c.orphans, sha256.Sum256([]byte(id)))
 					continue // 会話が先に決着させた (Stop・書き込みの失敗・自動拒否)。決着は、要求ごとにちょうど 1 つ (spec/v0)
@@ -304,38 +416,55 @@ func (c *Conversation) OnLine(line []byte) error {
 		c.state = StateIdle
 		c.expireAllLocked() // 未決を残したターンの終わり。Stream が閉じたはずだが、表に残ったものは失効させる
 	}
-	for _, id := range rejects {
-		c.autoRejectLocked(id)
+	for _, r := range rejects {
+		c.autoRejectLocked(r)
 	}
 	return nil
 }
 
-// autoRejectLocked は、承認できない要求 id を、claude に拒否 (書けるなら) して、by=policy で決着させる。
-func (c *Conversation) autoRejectLocked(id string) {
+// heldID は、承認・回答できない要求の ID と、form か。
+type heldID struct {
+	id   string
+	form bool
+}
+
+// autoRejectLocked は、承認・回答できない要求を、エージェントに拒否 (権限は reject_once・form は cancelled。書けるなら) して、by=policy で決着させる。
+func (c *Conversation) autoRejectLocked(r heldID) {
+	id := r.id
 	c.settleLocked(id)     // 画面に出た要求への、後追いの応答は、404 でなく 409
-	outcome := "cancelled" // 入力を閉じた後は、claude に返せない
+	outcome := "cancelled" // 入力を閉じた後は、エージェントに返せない
 	if c.state == StateClosed || c.stopped {
 		c.orphans[sha256.Sum256([]byte(id))] = struct{}{} // Stream は、まだ未決として持つ
 	} else {
-		data, err := json.Marshal(map[string]string{"request_id": id, "outcome": v0.RejectOnce})
+		cmd := v0.Command{V: v0.Version, Type: v0.CommandPermissionResolve}
+		want := v0.RejectOnce
+		if r.form {
+			cmd.Type, want = v0.CommandFormResolve, v0.FormCancelled
+		}
+		data, err := json.Marshal(map[string]string{"request_id": id, "outcome": want})
 		if err == nil {
-			raw, err := c.cfg.Feed.EncodeQuiet(v0.Command{V: v0.Version, Type: v0.CommandPermissionResolve, Data: data})
+			cmd.Data = data
+			raw, err := c.cfg.Feed.EncodeQuiet(cmd)
 			if err == nil {
 				if werr := c.cfg.Write(raw); werr != nil {
-					c.emitResolvedLocked(id, "cancelled") // 画面に出した要求には、書けなくても、決着を 1 つ付ける
+					c.emitResolvedLocked(id, r.form, "cancelled") // 画面に出した要求には、書けなくても、決着を 1 つ付ける
 					c.failLocked(werr)
 					return
 				}
-				outcome = v0.RejectOnce
+				outcome = want
 			}
 		}
 	}
-	c.emitResolvedLocked(id, outcome)
+	c.emitResolvedLocked(id, r.form, outcome)
 }
 
-// emitResolvedLocked は、by=policy の permission.resolved を配る。
-func (c *Conversation) emitResolvedLocked(id, outcome string) {
-	e, err := c.cfg.Feed.Emit(v0.TypePermissionResolved, true, map[string]string{"by": "policy", "outcome": outcome, "request_id": id})
+// emitResolvedLocked は、by=policy の permission.resolved (form なら form.resolved) を配る。
+func (c *Conversation) emitResolvedLocked(id string, form bool, outcome string) {
+	typ := v0.TypePermissionResolved
+	if form {
+		typ = v0.TypeFormResolved
+	}
+	e, err := c.cfg.Feed.Emit(typ, true, map[string]string{"by": "policy", "outcome": outcome, "request_id": id})
 	if err == nil {
 		c.cfg.Hub.Update([]Event{e}, nil, nil)
 	}
@@ -350,14 +479,19 @@ func (c *Conversation) expireAllLocked() {
 	for id := range c.pending {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return c.pending[ids[i]].Seq < c.pending[ids[j]].Seq })
+	sort.Slice(ids, func(i, j int) bool { return c.pending[ids[i]].ev.Seq < c.pending[ids[j]].ev.Seq })
 	var out []Event
 	var unpin []uint64
 	for _, id := range ids {
-		unpin = append(unpin, c.pending[id].Seq)
+		item := c.pending[id]
+		unpin = append(unpin, item.ev.Seq)
 		c.settleLocked(id)
 		c.orphans[sha256.Sum256([]byte(id))] = struct{}{}
-		if e, err := c.cfg.Feed.Emit(v0.TypePermissionResolved, true, map[string]string{"by": "policy", "outcome": "cancelled", "request_id": id}); err == nil {
+		typ := v0.TypePermissionResolved
+		if item.form != nil {
+			typ = v0.TypeFormResolved
+		}
+		if e, err := c.cfg.Feed.Emit(typ, true, map[string]string{"by": "policy", "outcome": "cancelled", "request_id": id}); err == nil {
 			out = append(out, e)
 		}
 	}
@@ -393,7 +527,7 @@ func (c *Conversation) settleLocked(id string) {
 	c.settledQ = append(c.settledQ, k)
 }
 
-// requestID は、permission.requested・permission.resolved の Event から、data.request_id を読む。
+// requestID は、permission・form の requested・resolved の Event から、data.request_id を読む。
 func requestID(e Event) (string, bool) {
 	var v struct {
 		Data struct {
