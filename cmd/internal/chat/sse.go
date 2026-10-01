@@ -66,16 +66,20 @@ func (s *Session) ReadSSE(sr *SSEReader, want string, onRoot func()) error {
 	}
 }
 
-// parentlessSessionCreated は、data が、parentID の無い session.created ならその sessionID を返す。
+// parentlessSessionCreated は、data が、parentID の無い (欠ける・"" の) session.created ならその sessionID を返す。アダプタ (agent/opencode) の
+// root の判定と合わせる: parentID が null・文字列でない・空でない値は、アダプタは root にしない (子か不正)。ここでも root にしない。
 func parentlessSessionCreated(data []byte) (ok bool, sessionID string) {
 	var f struct {
 		Type string `json:"type"`
 		Data struct {
-			SessionID string `json:"sessionID"`
-			ParentID  string `json:"parentID"`
+			SessionID string          `json:"sessionID"`
+			ParentID  json.RawMessage `json:"parentID"`
 		} `json:"data"`
 	}
-	if json.Unmarshal(data, &f) != nil || f.Type != "session.created" || f.Data.ParentID != "" {
+	if json.Unmarshal(data, &f) != nil || f.Type != "session.created" {
+		return false, ""
+	}
+	if p := bytes.TrimSpace(f.Data.ParentID); len(p) != 0 && string(p) != `""` {
 		return false, ""
 	}
 	return true, f.Data.SessionID

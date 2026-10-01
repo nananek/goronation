@@ -171,3 +171,19 @@ func FuzzSSEReader(f *testing.F) {
 		}
 	})
 }
+
+// parentID が null・文字列でない・空でない session.created は、root にしない (アダプタの判定と合わせる)。
+func TestParentlessSessionCreatedMatchesAdapter(t *testing.T) {
+	for in, want := range map[string]bool{
+		`{"type":"session.created","data":{"sessionID":"ses_a"}}`:                    true,
+		`{"type":"session.created","data":{"sessionID":"ses_a","parentID":""}}`:      true,
+		`{"type":"session.created","data":{"sessionID":"ses_a","parentID":null}}`:    false,
+		`{"type":"session.created","data":{"sessionID":"ses_a","parentID":7}}`:       false,
+		`{"type":"session.created","data":{"sessionID":"ses_a","parentID":"ses_b"}}`: false,
+		`{"type":"session.updated","data":{"sessionID":"ses_a"}}`:                    false,
+	} {
+		if got, _ := parentlessSessionCreated([]byte(in)); got != want {
+			t.Errorf("%s: root=%v want %v", in, got, want)
+		}
+	}
+}
