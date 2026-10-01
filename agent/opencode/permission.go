@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -143,8 +144,50 @@ func buildPermission(d permissionAsked) (v0.PermissionRequested, bool) {
 			add(kv.k, kv.v.V, v0.DetailText)
 		}
 	}
+	// 詳細に出していない欄は、承認する対象の一部を見せていないことになる (ADR 0041 決定 3)。見えない欄に束縛された承認はさせない
+	// (拒否はできる)。未観測の action・版の更新で増える欄も、ここで fail closed になる。見せるものが何も無い要求も、同じ。
+	if len(resources) == 0 || hiddenMetadata(d.Metadata) {
+		truncated = true
+	}
 	req.DetailsTruncated = truncated
 	return req, truncated
+}
+
+// hiddenMetadata は、metadata に、buildPermission が詳細に出さない欄 (または読めない形) があるか。
+func hiddenMetadata(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return true
+	}
+	for k, v := range m {
+		switch k {
+		case "url", "query", "root", "format":
+			var str string
+			if json.Unmarshal(v, &str) != nil {
+				return true
+			}
+		case "files":
+			var fs []map[string]json.RawMessage
+			if json.Unmarshal(v, &fs) != nil {
+				return true
+			}
+			for _, f := range fs {
+				for fk := range f {
+					// additions・deletions・status は、patch の集計で、patch (詳細に出す) から分かる (採取した edit の files は全てこの形)
+					if fk != "file" && fk != "patch" && fk != "additions" && fk != "deletions" && fk != "status" {
+						return true
+					}
+				}
+			}
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func contains(ss []string, s string) bool {
