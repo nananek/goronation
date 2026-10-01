@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -29,7 +31,7 @@ const chatSSEWriteTimeout = 30 * time.Second
 
 // chatHandler は、goronation serve --chat の UDS の HTTP API (認証なし。UDS に繋がれること自体が信頼境界):
 //
-//	GET  /events      SSE。event: hello (first_seq・generation) → バッファ → ライブ (data: は Event の JSON 1 行) → event: end (exit)
+//	GET  /events      SSE。event: hello (first_seq・generation・resumed・durable) → (after・generation が正しければ、耐久ログの続き) → バッファ → ライブ (id: <seq>・data: は Event の JSON 1 行) → event: end (exit)。クエリ after・generation (ADR 0024・0054)
 //	POST /message     {"text"}
 //	POST /permission  {"generation","request_id","outcome","content_hash"?}  (generation は必須。欠落 400・別の起動 409。content_hash は、見た要求の値の写し)
 //	POST /form        {"generation","request_id","outcome":"answered"|"cancelled","answer"?:{"<key>":"<文字列>"|["<文字列>",…]},"content_hash"?}  (ADR 0046)
@@ -38,12 +40,15 @@ const chatSSEWriteTimeout = 30 * time.Second
 // 書き込みの本文は、上限つき・厳格な JSON (未知のフィールド・後ろの余分な値・重複したキーは 400)。エラーは {"error":"<コード>"}。
 // 世代なしの承認の経路は無い (chat.Conversation の resolve は非公開)。
 type chatHandler struct {
-	s   *chatSession
-	sse atomic.Int32
+	s           *chatSession
+	sse         atomic.Int32
+	backfillMax int // 1 つの接続で、Backfill から送るバイト数の上限
 }
 
-func newChatHandler(s *chatSession) http.Handler {
-	h := &chatHandler{s: s}
+func newChatHandler(s *chatSession) http.Handler { return newChatHandlerWith(s, chatBackfillMaxBytes) }
+
+func newChatHandlerWith(s *chatSession, backfillMax int) http.Handler {
+	h := &chatHandler{s: s, backfillMax: backfillMax}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /events", h.events)
 	mux.HandleFunc("POST /message", h.message)
@@ -246,7 +251,46 @@ func chatResult(w http.ResponseWriter, err error) {
 	}
 }
 
-// events は、SSE。data: は、Event の JSON (改行を含まない) の 1 行。
+// chatMaxAfter は、after の上限 (JS の Number.isSafeInteger の範囲: 2^53 - 1)。
+const chatMaxAfter = 1<<53 - 1
+
+// chatBackfillMaxBytes は、1 つの接続で、耐久ログ (Backfill) から送るバイト数 (Event の JSON の合計) の上限。超えたら閉じる: 画面は、進んだ after で繋ぎ直す
+// (1 回ごとに前進する。ADR 0024 決定 8・ADR 0054)。
+const chatBackfillMaxBytes = 16 << 20
+
+// resumeAfter は、クエリの after・generation が、どちらも正しいときだけ、after を返す (ADR 0024 決定 1): after は 10 進数の非負整数 (16 桁まで・2^53 未満)・
+// generation は、現在の世代と完全に一致・どちらもキーが 1 つだけ。そうでなければ、エラーにせず、全再送 (Subscribe) に倒す。Last-Event-ID は、見ない (ADR 0054)。
+func resumeAfter(q url.Values, generation string) (uint64, bool) {
+	a, g := q["after"], q["generation"]
+	if len(a) != 1 || len(g) != 1 || g[0] != generation || len(a[0]) == 0 || len(a[0]) > 16 {
+		return 0, false
+	}
+	for i := 0; i < len(a[0]); i++ {
+		if a[0][i] < '0' || a[0][i] > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.ParseUint(a[0], 10, 64)
+	if err != nil || n > chatMaxAfter {
+		return 0, false
+	}
+	return n, true
+}
+
+// subscribe は、events の購読を始める: after・generation が正しければ SubscribeAfter (ErrBadAfter は全再送に倒す)・そうでなければ Subscribe。
+func (h *chatHandler) subscribe(r *http.Request) (*chat.Subscription, error) {
+	hub := h.s.Chat.Hub
+	if after, ok := resumeAfter(r.URL.Query(), h.s.Chat.Conv.Generation()); ok {
+		sub, err := hub.SubscribeAfter(after)
+		if !errors.Is(err, chat.ErrBadAfter) {
+			return sub, err
+		}
+	}
+	return hub.Subscribe()
+}
+
+// events は、SSE。data: は、Event の JSON (改行を含まない) の 1 行。Event には、id: <seq> の行が付く (hello・end には付けない)。送る順は、hello → Backfill (耐久ログ。after が効いたときだけ)
+// → Snapshot → ライブ。Backfill の失敗・上限は、何も足さずに閉じる (error の文字列を、出さない)。
 func (h *chatHandler) events(w http.ResponseWriter, r *http.Request) {
 	if h.sse.Add(1) > chatMaxSSE {
 		h.sse.Add(-1)
@@ -254,7 +298,7 @@ func (h *chatHandler) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.sse.Add(-1)
-	sub, err := h.s.Chat.Hub.Subscribe()
+	sub, err := h.subscribe(r)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "too_many_subscribers")
 		return
@@ -265,7 +309,7 @@ func (h *chatHandler) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	send := func(event string, data []byte) bool {
+	send := func(event string, seq *uint64, data []byte) bool {
 		// SSE の行の区切りは \n・\r・\r\n だけ。JSON (json.Marshal) は、これらを必ずエスケープするが、届いた値を信じずに確かめる
 		// (含む Event を、そのまま書くと、別のイベントを偽造されうる)。
 		if bytes.ContainsAny(data, "\r\n") {
@@ -276,6 +320,11 @@ func (h *chatHandler) events(w http.ResponseWriter, r *http.Request) {
 		if event != "" {
 			fmt.Fprintf(&buf, "event: %s\n", event)
 		}
+		if seq != nil {
+			buf.WriteString("id: ")
+			buf.WriteString(strconv.FormatUint(*seq, 10))
+			buf.WriteByte('\n')
+		}
 		buf.WriteString("data: ")
 		buf.Write(data)
 		buf.WriteString("\n\n")
@@ -284,12 +333,36 @@ func (h *chatHandler) events(w http.ResponseWriter, r *http.Request) {
 		}
 		return rc.Flush() == nil
 	}
-	hello, _ := json.Marshal(map[string]any{"first_seq": sub.FirstSeq, "generation": h.s.Chat.Conv.Generation()})
-	if !send("hello", hello) {
+	sendEvent := func(e chat.Event) bool { return send("", &e.Seq, e.JSON) }
+	hello, _ := json.Marshal(map[string]any{
+		"first_seq": sub.FirstSeq, "generation": h.s.Chat.Conv.Generation(),
+		"resumed": sub.Resumed(), "durable": sub.Durable(),
+	})
+	if !send("hello", nil, hello) {
 		return
 	}
+	if sub.Backfill != nil {
+		sent := 0
+		for {
+			evs, err := sub.Backfill.Next()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil || r.Context().Err() != nil { // 古い・読めない・不正な行: 何も足さずに閉じる (画面は、繋ぎ直す)
+				return
+			}
+			for _, e := range evs {
+				if sent += len(e.JSON); sent > h.backfillMax {
+					return
+				}
+				if !sendEvent(e) {
+					return
+				}
+			}
+		}
+	}
 	for _, e := range sub.Snapshot {
-		if !send("", e.JSON) {
+		if !sendEvent(e) {
 			return
 		}
 	}
@@ -297,12 +370,12 @@ func (h *chatHandler) events(w http.ResponseWriter, r *http.Request) {
 		e, err := sub.Next(r.Context())
 		switch {
 		case err == nil:
-			if !send("", e.JSON) {
+			if !sendEvent(e) {
 				return
 			}
 		case errors.Is(err, io.EOF):
 			end, _ := json.Marshal(map[string]int{"exit": sub.Exit()})
-			send("end", end)
+			send("end", nil, end)
 			return
 		default: // 切断・遅い購読者として外された: 何も足さずに閉じる (読み直すなら、繋ぎ直す)
 			return

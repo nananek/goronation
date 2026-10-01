@@ -50,7 +50,7 @@ func newInProcChatSession(t *testing.T, mode string) *chatSession {
 }
 
 // sse は、GET /events を読む: 行ごとに、event 名と data を返す。
-type sseFrame struct{ event, data string }
+type sseFrame struct{ event, id, data string }
 
 type sseReader struct {
 	t     *testing.T
@@ -94,6 +94,11 @@ func (r *sseReader) next() (f sseFrame, ok bool) {
 				r.t.Fatalf("data 行が %d 本のイベント (1 本のはず): %q", dataLines, r.raw)
 			}
 			return f, true
+		case strings.HasPrefix(line, "id: "): // 10 進数だけ・1 イベントに 1 行 (ADR 0054)
+			if f.id != "" || !chatIDLineRE.MatchString(line) {
+				r.t.Fatalf("id 行が不正: %q (全体 %q)", line, r.raw)
+			}
+			f.id = strings.TrimPrefix(line, "id: ")
 		case strings.HasPrefix(line, "event: "):
 			f.event = strings.TrimPrefix(line, "event: ")
 		case strings.HasPrefix(line, "data: "):

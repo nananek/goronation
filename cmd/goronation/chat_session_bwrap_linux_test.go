@@ -190,7 +190,7 @@ func startChatFixture(t *testing.T, scene string) (*chatSession, *chatEvents, *b
 	t.Setenv("GORONATION_CLAUDE", f.exe)
 	var stderr bytes.Buffer
 	ctx, cancel := context.WithCancel(t.Context())
-	s, err := startServeChatSession(ctx, f.stateDir(), "", "", "t", "t@e.invalid", f.repo, []string{scene}, &stderr)
+	s, err := startServeChatSession(ctx, f.stateDir(), "", "", "t", "t@e.invalid", f.repo, []string{scene}, false, &stderr)
 	if err != nil {
 		cancel()
 		t.Fatal(err)

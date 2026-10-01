@@ -44,6 +44,9 @@ type chatSession struct {
 	chatCage
 	id string
 
+	// log は、耐久ログ (nil なら無い)。DB の削除は、serve の終了の経路 (runServe) で行う: エージェントが終わっても、画面は再接続できる (ADR 0054)。
+	log *chatLog
+
 	// Chat は、会話 (Send・Resolve・Stop) と Hub (Subscribe)。
 	Chat *chat.Session
 
@@ -105,14 +108,15 @@ func (c *chatCage) teardown() {
 }
 
 // startChatSession は、cfg の檻を起動し (startCage)、会話を始める。cfg の Args は、launch の引数 + args にする。
-func startChatSession(ctx context.Context, id string, cfg cageConfig, allow []string, launch chat.Launch, args []string, exeDir string, stderr io.Writer) (*chatSession, error) {
+func startChatSession(ctx context.Context, id string, cfg cageConfig, allow []string, launch chat.Launch, args []string, exeDir string, stderr io.Writer, lg *chatLog) (*chatSession, error) {
 	c, err := startCage(ctx, cfg, allow, append(launch.Args(), args...), exeDir, stderr)
 	if err != nil {
 		return nil, err
 	}
-	s := &chatSession{chatCage: *c, id: id, done: make(chan struct{})}
+	store, onDegrade := lg.config()
+	s := &chatSession{chatCage: *c, id: id, log: lg, done: make(chan struct{})}
 	s.Chat = chat.NewSession(chat.SessionConfig{
-		Launch: launch, ID: id, Input: c.pair.In,
+		Launch: launch, ID: id, Input: c.pair.In, Store: store, OnDegrade: onDegrade,
 		// 手動の「終了」: エージェントの入力を閉じ、檻を止める。
 		OnStop: func() {
 			c.pair.In.CloseWrite()
@@ -201,7 +205,7 @@ func (c *cappedWriter) Write(p []byte) (int, error) {
 
 // startServeChatSession は、--repo (新しいセッションを作る) か --session (既存のセッションを再開する) から、goronation run と同じ組み立てで
 // cageConfig を作り、startChatSession を呼ぶ (startServeTermSession の兄弟)。TERM は dumb (端末は無い)。
-func startServeChatSession(ctx context.Context, stateDir, sessionID, agentFlag, name, email, repo string, agentArgs []string, stderr io.Writer) (*chatSession, error) {
+func startServeChatSession(ctx context.Context, stateDir, sessionID, agentFlag, name, email, repo string, agentArgs []string, noEventLog bool, stderr io.Writer) (cs *chatSession, err error) {
 	host, sessStore, agent, existing, agentExe, self, dirs, err := prepareAgentLaunch(stateDir, sessionID, agentFlag, "")
 	if err != nil {
 		return nil, err
@@ -223,15 +227,25 @@ func startServeChatSession(ctx context.Context, stateDir, sessionID, agentFlag, 
 	} else {
 		fmt.Fprintf(stderr, "goronation serve: セッション %s を再開した\n", tgt.id)
 	}
+	// 耐久ログは、セッションの ID が決まった直後・檻を起こす前に開く。別の serve が持っていれば、起動の失敗 (ADR 0054)。
+	lg, err := openChatLog(stateDir, tgt.id, noEventLog, stderr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			lg.abort() // 起動の失敗: DB を残さない (会話が始まっていれば、run が Hub を閉じている)
+		}
+	}()
 	cfg := cageConfig{
 		Host: host, Agent: agent, AgentExe: agentExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
 		RunDir: tgt.runDir, AgentHome: home, AuthDir: dirs.auth, Work: tgt.work, Term: "dumb", TZ: hostTZ(),
 	}
 	exeDir := filepath.Join(filepath.Dir(dirs.auth), "exe")
 	if launch.Transport() == chat.TransportHTTP {
-		return startOpencodeChatSession(ctx, tgt.id, cfg, allowList(agent, nil), launch, exeDir, stderr)
+		return startOpencodeChatSession(ctx, tgt.id, cfg, allowList(agent, nil), launch, exeDir, stderr, lg)
 	}
-	return startChatSession(ctx, tgt.id, cfg, allowList(agent, nil), launch, agentArgs, exeDir, stderr)
+	return startChatSession(ctx, tgt.id, cfg, allowList(agent, nil), launch, agentArgs, exeDir, stderr, lg)
 }
 
 // checkAgentArgs は、-- の後ろの引数 (agentArgs) を、HTTP の transport のエージェントでは断る: --hostname・--port・--password などの上書きで、

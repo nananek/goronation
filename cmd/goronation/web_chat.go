@@ -12,7 +12,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -144,7 +146,7 @@ func (s *webServer) handleChatEvents(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel() // 戻ったら、serve への接続も閉じる
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://chat.sock/events", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://chat.sock/events"+chatEventsQuery(r.URL.Query()), nil)
 	resp, err := s.chatClient(id).Do(req)
 	if err != nil {
 		chatUpstreamError(w, r.Context(), err)
@@ -211,15 +213,38 @@ func (s *webServer) handleChatEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+var (
+	chatAfterRE      = regexp.MustCompile(`^[0-9]{1,16}$`)
+	chatGenerationRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	chatIDLineRE     = regexp.MustCompile(`^id: [0-9]{1,16}$`)
+)
+
+// chatEventsQuery は、クライアントの GET /events のクエリから、serve に渡すクエリを作る (ADR 0024 決定 1・ADR 0054): after (10 進数 16 桁まで)・generation (小文字の 16 進 32 桁) が、
+// どちらも 1 つだけで、形が正しいときだけ、url.Values で作り直して渡す。RawQuery は、そのまま渡さない (余分なキー・重複キー・制御文字は、serve に届かない)。
+// 不正・欠けは、クエリなし (= 全再送。エラーにしない)。値の意味 (世代の一致・after の範囲) は、serve が確かめる。
+func chatEventsQuery(q url.Values) string {
+	a, g := q["after"], q["generation"]
+	if len(a) != 1 || len(g) != 1 || !chatAfterRE.MatchString(a[0]) || !chatGenerationRE.MatchString(g[0]) {
+		return ""
+	}
+	return "?" + url.Values{"after": {a[0]}, "generation": {g[0]}}.Encode()
+}
+
 // readSSEEvents は、serve の SSE を、1 イベント (空行までの行。末尾の空行を含む) ずつ、out に送る。フレーミングを確かめる: 行は、`event: `・`data: `・
-// 空行だけ。ほかの行・大きすぎるイベントは、そこで止める (serve は信頼するが、上流のバグが、クライアントへの別のイベントの偽造にならないように)。
+// 空行と、`id: <10 進数>` (16 桁まで。1 イベントに 1 行だけ。ADR 0054)。ほかの行・大きすぎるイベントは、そこで止める (serve は信頼するが、上流のバグが、クライアントへの別のイベントの偽造にならないように)。
 func readSSEEvents(ctx context.Context, r io.Reader, out chan<- []byte) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(nil, chatMaxEvent)
 	var ev bytes.Buffer
+	idSeen := false
 	for sc.Scan() {
 		line := sc.Bytes()
-		if len(line) > 0 && !bytes.HasPrefix(line, []byte("event: ")) && !bytes.HasPrefix(line, []byte("data: ")) {
+		if chatIDLineRE.Match(line) {
+			if idSeen {
+				return
+			}
+			idSeen = true
+		} else if len(line) > 0 && !bytes.HasPrefix(line, []byte("event: ")) && !bytes.HasPrefix(line, []byte("data: ")) {
 			return
 		}
 		if ev.Len()+len(line)+1 > chatMaxEvent {
@@ -228,6 +253,7 @@ func readSSEEvents(ctx context.Context, r io.Reader, out chan<- []byte) {
 		ev.Write(line)
 		ev.WriteByte('\n')
 		if len(line) == 0 {
+			idSeen = false
 			b := append([]byte(nil), ev.Bytes()...)
 			ev.Reset()
 			select {

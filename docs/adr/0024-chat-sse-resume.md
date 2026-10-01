@@ -1,6 +1,6 @@
 # 0024. chat の SSE 再接続: `after=seq`・`generation`・Hub の境目 (M2)
 
-- 状態: 採用 (2026-10-01 に追記: 決定 5 の `Last-Event-ID` は実装しない。決定 1 の `after` は発行済みの seq だけ。決定 4 に、終了後の Hub でも動くことを足した)
+- 状態: 採用 (2026-10-01 に追記: 決定 5 の `Last-Event-ID` は実装しない。決定 1 の `after` は発行済みの seq だけ。決定 4 に、終了後の Hub でも動くことを足した。配線は ADR 0054)
 - 日付: 2026-09-30
 - 関連: [Issue #1](https://github.com/nananek/goronation/issues/1)、ADR 0008・0013・0015・0023・0025
 
