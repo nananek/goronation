@@ -39,3 +39,16 @@ header { position: sticky; top: 0; display: flex; gap: 1em; align-items: baselin
 #msg { width: 100%; box-sizing: border-box; font: inherit; resize: vertical; }
 .composer-row { display: flex; gap: 12px; align-items: center; margin-top: 4px; }
 #write-status { opacity: 0.8; }
+
+/* form (質問): エージェントの文は、textContent で出す。選択肢は 1 行ずつ */
+.item-form { border-left-color: #48c; background: #48c2; }
+.form-q { font-weight: bold; }
+.form-a { margin-left: 1em; }
+.dialog-form { border-left-color: #48c; background: #48c2; }
+.form-field { margin: 8px 0; }
+.form-option { display: block; margin: 2px 0; }
+.dialog-form input[type=text] { width: 100%; box-sizing: border-box; font: inherit; }
+.form-option input[type=text] { width: 60%; margin-left: 0.5em; }
+
+/* エージェントが決める行は、長くても枠 (詳細) を領域の外へ押し出さない: 3 行までで、あとはスクロール */
+.dialog > .label, .dialog-tool, .dialog-title { max-height: 4.5em; overflow: auto; }

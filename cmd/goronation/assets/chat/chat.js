@@ -6,12 +6,16 @@
 // cmd/goronation/chat_ui_test.go の検査は、静的な見落としの防ぎにすぎない (動的な参照は見逃す): 安全の根拠は、エージェント由来の値が、
 // 属性名・タグ名・URL・コード・class・id に入らないことで、実行時の試験 (chat.test.js) と、実ブラウザでの確認で確かめる。
 //
-// 承認 (permission ダイアログ) の規則 (ADR 0016):
+// 承認 (permission ダイアログ) の規則 (ADR 0016・0048):
 //   - ダイアログは、kind が permission で、state が pending の項目からだけ作る。request_id は、項目 (JS のオブジェクト) の値を、クロージャで使う
 //     (DOM の属性から読み戻さない)。
 //   - 世代は、検証済みの state.generation (chat-core.js の applyHello が受けた値) の写しを、ダイアログを見せた時点で持ち、それだけを送る。
 //     世代が無い間・接続が切れている間・世代が変わった後は、送らない。
 //   - 「決着」の表示は、permission.resolved を受けた項目の state からだけ。ボタンを押しただけでは、承認済みと表示しない。
+//   - 許可できるのは、詳細 (details) があれば詳細の全項目を、なければ input を、切らずに、見た範囲・時間つきで見せているときだけ (ADR 0048 決定 1)。
+//   - 応答には、受け取った content_hash を、そのまま写す (照合はサーバー。ADR 0042・0046)。
+// form (質問) のダイアログの規則 (ADR 0048): form.requested の未決の項目からだけ作る。エージェントの文は textContent だけで出し、「回答はエージェントに渡る」を
+// 常に出す。回答のキーは、項目が持つ生の key・選択肢の value (表示用の文字列でも、DOM から読み戻した値でもない)。送るのは POST /form だけ。
 (function (root) {
   const core = typeof require === 'function' && typeof module !== 'undefined' ? require('./chat-core.js') : root.GoroChatCore;
 
@@ -51,6 +55,7 @@
     let awaitTurn = -1; // 指示を送って、200 を受けた時の turnCount。これより増える (turn.started を受ける) まで、送信欄は無効
     let stopArmed = false;
     let stopRequested = false;
+    let formSeq = 0; // form ダイアログごとの、ラジオの name の接頭辞 (同時に複数の form があっても、選択が混ざらない)
 
     function el(tag, cls, text) {
       const e = doc.createElement(tag);
@@ -110,13 +115,29 @@
         }
         case 'permission': {
           e.className = 'item item-permission state-' + safeClass(it.state);
-          e.appendChild(el('div', 'label', '権限の要求: ' + (it.toolName || '?') + (it.title ? ' — ' + it.title : '')));
+          e.appendChild(el('div', 'label', '権限の要求: ' + (it.summary || it.toolName || '?') + (it.title ? ' — ' + it.title : '')));
           if (it.state === 'pending') {
             e.appendChild(el('div', 'meta', '未決 (下の枠で、許可・拒否する)'));
           } else {
-            e.appendChild(el('pre', 'input', it.input.text + clipNote(it.input)));
+            if (it.details.has) e.appendChild(el('pre', 'input', it.details.text + (it.detailsTruncated ? '\n… (詳細が長すぎて、全部は表示していない)' : '')));
+            else e.appendChild(el('pre', 'input', it.input.text + clipNote(it.input)));
             e.appendChild(el('div', 'meta', '決着: ' + it.state + (it.by ? ' (' + it.by + ')' : '')));
           }
+          break;
+        }
+        case 'form': {
+          e.className = 'item item-form state-' + safeClass(it.state);
+          e.appendChild(el('div', 'label', '質問 (エージェントから)' + (it.title ? ': ' + it.title : '')));
+          if (it.state === 'pending') {
+            e.appendChild(el('div', 'meta', '未決 (下の枠で、回答する)'));
+            break;
+          }
+          for (const f of it.fields) {
+            e.appendChild(el('div', 'form-q', (f.title || f.keyShown) + (f.description ? ' — ' + f.description : '')));
+            const a = it.answer === null ? undefined : it.answer.find((x) => x.key === f.key);
+            if (a) e.appendChild(el('div', 'form-a', '→ ' + a.text));
+          }
+          e.appendChild(el('div', 'meta', '決着: ' + it.state + (it.by ? ' (' + it.by + ')' : '')));
           break;
         }
         case 'usage': {
@@ -191,11 +212,22 @@
     }
 
     // post は、base + path へ JSON を POST し、status を返す (通信の失敗は 0)。
+    // 失敗 (400 以上) の応答の本文の error は、lastCode に入れる (表示には使わず、決まった語との比較だけ)。
+    let lastCode = '';
     async function post(path, body) {
+      lastCode = '';
       try {
         const resp = await env.fetch(base + path, {
           method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
         });
+        if (resp.status >= 400 && typeof resp.json === 'function') {
+          try {
+            const j = await resp.json();
+            if (j !== null && typeof j === 'object' && typeof j.error === 'string') lastCode = j.error;
+          } catch (e) {
+            lastCode = '';
+          }
+        }
         return resp.status;
       } catch (e) {
         return 0;
@@ -277,7 +309,7 @@
     // observe は、直前の表示範囲に、経過時間 (上限つき) を足し、いまの表示範囲を、次の起点にする。スクロールのたびと、TICK_MS ごとに呼ぶ。
     function observe(d) {
       const t = nowMs();
-      const n = Math.ceil(d.pre.scrollHeight / CELL_PX);
+      const n = Math.max(1, Math.ceil(d.pre.scrollHeight / CELL_PX));
       while (d.cells.length < n) d.cells.push(0);
       d.cells.length = n;
       if (d.view) {
@@ -303,7 +335,9 @@
     // hiddenPart は、input の枠が、スクロールしないと見えない部分を持ち、その全体を、まだ十分な時間、画面に出していないか。枠の高さは限ってあるので、字数が
     // 上限以内でも起きる (エージェントが、key の順を決められる: 危険な内容を、途中や末尾に置ける)。
     function hiddenPart(d) {
-      if (d.pre === null || d.pre.scrollHeight <= d.pre.clientHeight + 1) return false;
+      if (d.pre === null) return false;
+      // 溢れない枠も、画面に完全に出ている時間を数える (許可ボタンが見えていても、枠が領域の外に押し出されることがある)。位置の API が無い環境 (試験) だけ、免除。
+      if (d.pre.scrollHeight <= d.pre.clientHeight + 1 && (typeof d.pre.getBoundingClientRect !== 'function' || typeof dialogsEl.getBoundingClientRect !== 'function')) return false;
       observe(d);
       if (dwellProgress(d) >= 1) return false;
       scheduleTick(d);
@@ -320,8 +354,9 @@
     }
 
     function approvable(item, d) {
-      // input を全部は表示できない (打ち切った・枠の見えない部分を見ていない)・request_id が見た目どおりでない (見えない文字・長さ) ときは、許可させない (拒否だけ)。
-      return item.input.cut === false && item.idPlain === true && !hiddenPart(d);
+      // 詳細 (なければ input) を全部は表示できない (打ち切った・details_truncated・枠の見えない部分を見ていない)・request_id が見た目どおりでない
+      // (見えない文字・長さ) ときは、許可させない (拒否だけ)。
+      return core.shownFully(item) && !hiddenPart(d);
     }
 
     function dialogCanAnswer(d, item) {
@@ -333,7 +368,7 @@
       const can = dialogCanAnswer(d, item);
       d.approve.disabled = !can || !approvable(item, d);
       d.deny.disabled = !can;
-      if (d.hint) d.hint.textContent = item.input.cut === false && item.idPlain === true && hiddenPart(d) ? 'input が枠に収まらない。上から下まで、途切れなくスクロールし、どの部分も 0.5 秒以上、画面に出すと、許可できる (いま ' + Math.floor(dwellProgress(d) * 100) + '%。一気に飛ばす・速く送ると、足りない)' : '';
+      if (d.hint) d.hint.textContent = core.shownFully(item) && hiddenPart(d) ? '内容の枠が、画面に完全に出ていない・収まらない。枠の全体を、上から下まで、途切れなく、どの部分も 0.5 秒以上、画面に出すと、許可できる (いま ' + Math.floor(dwellProgress(d) * 100) + '%。一気に飛ばす・速く送ると、足りない)' : '';
     }
 
     async function answer(item, d, outcome) {
@@ -345,11 +380,17 @@
       d.busy = true;
       refreshDialog(item, d);
       d.note.textContent = '送信中';
-      const status = await post('/permission', {generation: gen, request_id: requestId, outcome: outcome});
+      const body = {generation: gen, request_id: requestId, outcome: outcome};
+      if (item.contentHash !== '') body.content_hash = item.contentHash; // 見た要求の値を、そのまま写す (無ければ、欄を付けない)
+      const status = await post('/permission', body);
       d.busy = false;
       if (status === 200) {
         d.done = true; // 決着の表示は、permission.resolved を受けてから (ここでは出さない)
         d.note.textContent = '送信した。決着 (permission.resolved) を待っている';
+      } else if (status === 409 && lastCode === 'content_changed') { // 決着済みとは別: 要求は、まだ未決
+        d.note.textContent = '承認した内容と、いまの要求が違う (応答は受け付けられなかった)。画面を読み込み直して、もう一度、内容を見て決める';
+      } else if (status === 400 && lastCode === 'content_hash_required') {
+        d.note.textContent = '内容の照合に要る値 (content_hash) が、この要求に無い (応答は受け付けられなかった)';
       } else if (status === 404 || status === 409) {
         d.done = true;
         d.note.textContent = status === 409 ? 'すでに決着済み、または別の起動の画面 (応答は受け付けられなかった)' : 'この要求は、もう無い';
@@ -361,7 +402,7 @@
 
     function buildDialog(item) {
       const d = {el: el('div', 'dialog'), gen: state.generation, busy: false, done: false, approve: null, deny: null, note: null, hint: null, pre: null, cells: [], view: null, tick: null, removed: false, item: item};
-      d.el.appendChild(el('div', 'label', '権限の要求'));
+      d.el.appendChild(el('div', 'label', item.summary ? '権限の要求: ' + item.summary : '権限の要求'));
       d.el.appendChild(el('div', 'dialog-tool', 'tool: ' + (item.toolName || '(名前なし)') + (item.toolKind ? ' (' + item.toolKind + ')' : '')));
       if (item.title) d.el.appendChild(el('div', 'dialog-title', '説明 (エージェントの自己申告。検証されていない): ' + item.title));
       d.approve = el('button', 'approve', '許可 (今回だけ)');
@@ -374,18 +415,166 @@
       d.el.appendChild(row); // ボタンは、input より上 (巨大な input が、ボタンを押し出さない)
       d.note = el('div', 'meta', '');
       d.el.appendChild(d.note);
-      if (item.input.cut || item.idPlain !== true) {
-        d.el.appendChild(el('div', 'warn', item.input.cut ? 'input が長すぎる・深すぎる・形が不正で、全部は表示できないので、許可できない (拒否だけ)' : 'request_id に見えない文字・長さがあり、許可できない (拒否だけ)'));
+      if (!core.shownFully(item)) {
+        let why = 'input が長すぎる・深すぎる・形が不正で、全部は表示できないので、許可できない (拒否だけ)';
+        if (item.idPlain !== true) why = 'request_id に見えない文字・長さがあり、許可できない (拒否だけ)';
+        else if (item.details.has) why = '詳細が長すぎる・多すぎる・形が不正で、全部は表示できないので、許可できない (拒否だけ)';
+        d.el.appendChild(el('div', 'warn', why));
       }
       d.hint = el('div', 'warn', '');
       d.el.appendChild(d.hint);
       d.el.appendChild(el('div', 'meta', 'request_id: ' + item.idShown));
-      d.pre = el('pre', 'input', item.input.text + clipNote(item.input));
+      // 関門の枠 (d.pre) は、詳細があれば詳細、なければ input。詳細があるときの生の input は、畳んだ参考 (関門に使わない)。
+      d.pre = el('pre', 'input', item.details.has ? item.details.text + (item.detailsTruncated ? '\n… (詳細が長すぎて、全部は表示していない)' : '') : item.input.text + clipNote(item.input));
       d.pre.addEventListener('scroll', () => { // スクロールのたびに、見た範囲・時間を足す (一発のジャンプ・速いスクロールでは、足りない)
         refreshDialog(item, d);
       });
       d.el.appendChild(d.pre);
+      if (item.details.has) {
+        const raw = el('details', 'detail');
+        raw.appendChild(el('summary', null, '生の input (参考。許可の判断は、上の詳細で)'));
+        raw.appendChild(el('pre', 'input', item.input.text + clipNote(item.input)));
+        d.el.appendChild(raw);
+      }
       return d;
+    }
+
+    // ---- form (質問) ダイアログ ----
+
+    // buildFormDialog は、未決の form から、ダイアログを作る。入力部品は、form.requested の項目 (エージェントが出した要求) からだけ作る。
+    // 値は、項目が持つ生の key・選択肢の value に結ぶ (DOM の属性・表示用の文字列から、キーを読み戻さない)。
+    function buildFormDialog(item) {
+      const d = {el: el('div', 'dialog dialog-form'), gen: state.generation, busy: false, done: false, submit: null, cancel: null, note: null, controls: [], removed: false, item: item};
+      d.el.appendChild(el('div', 'label', '質問 (エージェントから)' + (item.title ? ': ' + item.title : '')));
+      d.el.appendChild(el('div', 'warn', 'この回答は、エージェントに渡ります。秘密・パスワードは、入力しない。質問の文は、エージェントが書いたもの (検証されていない)'));
+      d.cancel = el('button', 'deny', '回答しない (取り消す)');
+      d.submit = el('button', 'approve', '回答を送る');
+      d.cancel.addEventListener('click', () => { answerForm(item, d, 'cancelled'); });
+      d.submit.addEventListener('click', () => { answerForm(item, d, 'answered'); });
+      const row = el('div', 'dialog-buttons');
+      row.appendChild(d.cancel);
+      row.appendChild(d.submit);
+      d.el.appendChild(row);
+      d.note = el('div', 'meta', '');
+      d.el.appendChild(d.note);
+      if (!item.answerable) d.el.appendChild(el('div', 'warn', 'この質問は、数・形・長さ・request_id が想定外で、答えられない (取り消しだけ)'));
+      d.el.appendChild(el('div', 'meta', 'request_id: ' + item.idShown));
+      if (!item.answerable) return d;
+      const changed = () => { refreshFormDialog(item, d); };
+      const prefix = 'f' + (formSeq++) + '_';
+      const choice = (type, name, value, label, description) => { // 選択肢 1 つ (ラジオかチェックボックス)。value は、送り返す生の値
+        const box = el('label', 'form-option');
+        const inp = doc.createElement('input');
+        inp.type = type;
+        inp.name = name;
+        inp.addEventListener('change', changed);
+        box.appendChild(inp);
+        box.appendChild(el('span', null, label + (description ? ' — ' + description : '')));
+        return {box: box, input: inp, value: value};
+      };
+      const textInput = (extra) => {
+        const inp = doc.createElement('input');
+        inp.type = 'text';
+        inp.autocomplete = 'off';
+        inp.maxLength = core.LIMITS.maxAnswer;
+        inp.addEventListener('input', changed);
+        inp.addEventListener('change', changed);
+        if (extra) inp.placeholder = extra;
+        return inp;
+      };
+      item.fields.forEach((f, idx) => {
+        const box = el('div', 'form-field');
+        box.appendChild(el('div', 'form-q', (f.title || f.keyShown) + (f.required ? ' (必須)' : '')));
+        if (f.description) box.appendChild(el('div', 'meta', f.description));
+        const c = {field: f, options: [], other: null, otherText: null, text: null};
+        if (f.type === 'text') {
+          c.text = textInput('');
+          box.appendChild(c.text);
+        } else {
+          const kind = f.type === 'select' ? 'radio' : 'checkbox';
+          for (const o of f.options) {
+            const ch = choice(kind, prefix + idx, o.value, o.label, o.description);
+            c.options.push(ch);
+            box.appendChild(ch.box);
+          }
+          if (f.custom) { // options に無い文字列 (その他)
+            c.other = choice(kind, prefix + idx, '', 'その他', '');
+            c.otherText = textInput('その他の内容');
+            c.otherText.addEventListener('input', () => { if (c.otherText.value !== '') c.other.input.checked = true; changed(); }); // 書き始めたら、その他を選ぶ
+            c.other.box.appendChild(c.otherText);
+            box.appendChild(c.other.box);
+          }
+        }
+        d.controls.push(c);
+        d.el.appendChild(box);
+      });
+      return d;
+    }
+
+    // formAnswerOf は、入力欄から、回答 (キー → 文字列か文字列の配列) の組と、必須が満たされているかを作る。キーは、項目の生の key。空の回答は、含めない。
+    function formAnswerOf(d) {
+      const pairs = [];
+      let ok = true;
+      for (const c of d.controls) {
+        const f = c.field;
+        let value = null;
+        if (f.type === 'text') {
+          if (c.text.value.trim() !== '') value = c.text.value;
+        } else if (f.type === 'select') {
+          const sel = c.options.find((o) => o.input.checked === true);
+          if (sel) value = sel.value;
+          else if (c.other && c.other.input.checked === true && c.otherText.value.trim() !== '') value = c.otherText.value;
+        } else {
+          const vals = c.options.filter((o) => o.input.checked === true).map((o) => o.value);
+          if (c.other && c.other.input.checked === true && c.otherText.value.trim() !== '' && !vals.includes(c.otherText.value)) vals.push(c.otherText.value);
+          if (vals.length > 0) value = vals;
+        }
+        if (value === null) {
+          if (f.required) ok = false;
+        } else {
+          pairs.push([f.key, value]);
+        }
+      }
+      return {pairs: pairs, ok: ok};
+    }
+
+    function refreshFormDialog(item, d) {
+      const can = dialogCanAnswer(d, item);
+      d.cancel.disabled = !can;
+      d.submit.disabled = !can || !item.answerable || !formAnswerOf(d).ok;
+    }
+
+    async function answerForm(item, d, outcome) {
+      if (!dialogCanAnswer(d, item)) return;
+      const body = {generation: d.gen, request_id: item.requestId, outcome: outcome};
+      if (outcome === 'answered') {
+        if (!item.answerable) return;
+        const a = formAnswerOf(d);
+        if (!a.ok) return;
+        body.answer = Object.fromEntries(a.pairs); // 生の key を、own property にする (__proto__ という key でも、プロトタイプを変えない)
+      }
+      if (item.contentHash !== '') body.content_hash = item.contentHash;
+      d.busy = true;
+      refreshFormDialog(item, d);
+      d.note.textContent = '送信中';
+      const status = await post('/form', body);
+      d.busy = false;
+      if (status === 200) {
+        d.done = true; // 決着の表示は、form.resolved を受けてから
+        d.note.textContent = '送信した。決着 (form.resolved) を待っている';
+      } else if (status === 409 && lastCode === 'content_changed') {
+        d.note.textContent = '見た内容と、いまの質問が違う (応答は受け付けられなかった)。画面を読み込み直して、もう一度、内容を見て決める';
+      } else if (status === 404 || status === 409) {
+        d.done = true;
+        d.note.textContent = status === 409 ? 'すでに決着済み、または別の起動の画面 (応答は受け付けられなかった)' : 'この質問は、もう無い';
+      } else if (status === 400 && lastCode === 'bad_answer') {
+        d.note.textContent = '回答の形が、サーバーに拒否された (必須の欠け・選択肢にない値・長さ)。直して、もう一度送れる';
+      } else if (status === 400 && lastCode === 'content_hash_required') {
+        d.note.textContent = '内容の照合に要る値 (content_hash) が、この質問に無い (応答は受け付けられなかった)';
+      } else {
+        d.note.textContent = status === 0 ? '送れなかった (通信の失敗)。もう一度押せる' : describe(status, '回答') + '。もう一度押せる';
+      }
+      refreshFormDialog(item, d);
     }
 
     // syncDialogs は、未決の権限要求 (項目) だけから、ダイアログを作り・外し・有効/無効を更新する。
@@ -399,16 +588,24 @@
       }
       if (connected && state.generation !== null) {
         for (const item of state.pending.values()) {
-          if (item.kind === 'permission' && item.state === 'pending' && !dialogs.has(item)) {
-            const d = buildDialog(item);
+          if ((item.kind === 'permission' || item.kind === 'form') && item.state === 'pending' && !dialogs.has(item)) {
+            const d = item.kind === 'form' ? buildFormDialog(item) : buildDialog(item);
             dialogs.set(item, d);
             dialogsEl.appendChild(d.el);
           }
         }
       }
-      for (const [item, d] of dialogs) refreshDialog(item, d);
+      let forms = 0;
+      for (const [item, d] of dialogs) {
+        if (item.kind === 'form') {
+          forms++;
+          refreshFormDialog(item, d);
+        } else {
+          refreshDialog(item, d);
+        }
+      }
       // 未決が複数あるとき、枠の中をスクロールして、全部に答える (枠の高さは限ってある)。件数を、枠の外に出す。
-      dialogsHead.textContent = dialogs.size === 0 ? '' : '未決の権限要求: ' + dialogs.size + ' 件' + (dialogs.size > 1 ? ' (下の枠の中をスクロールして、すべてに答える)' : '');
+      dialogsHead.textContent = dialogs.size === 0 ? '' : (forms === 0 ? '未決の権限要求: ' : '未決の要求 (権限・質問): ') + dialogs.size + ' 件' + (dialogs.size > 1 ? ' (下の枠の中をスクロールして、すべてに答える)' : '');
     }
 
     function render() {
