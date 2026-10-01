@@ -876,3 +876,33 @@ func TestNonDurableEventsAreNotStored(t *testing.T) {
 		t.Fatalf("rows=%v", st.rows)
 	}
 }
+
+// first_seq の元 (最後の Trim が返した値) は、後退しない: 何も削らなかった Trim が低い値 (固定を解いた古い行など) を返しても、省略を隠さない。
+func TestTrimmedBoundaryNeverRegresses(t *testing.T) {
+	st := newFakeStore()
+	h := NewHub(HubConfig{Store: st, MaxBytes: 4 * 150, StoreMaxBytes: 1000})
+	next := uint64(0)
+	trimWith := func(first uint64) {
+		st.mu.Lock()
+		st.firstUnp = first
+		n := len(st.trimmed)
+		st.mu.Unlock()
+		for {
+			h.Publish(dev(next))
+			next++
+			waitFor(t, "書き込み", func() bool { return h.w.written.Load() >= int64(next-1) })
+			st.mu.Lock()
+			done := len(st.trimmed) > n
+			st.mu.Unlock()
+			if done {
+				break
+			}
+		}
+		waitFor(t, "Trim の完了", func() bool { return h.w.trims.Load()&1 == 0 })
+	}
+	trimWith(20)
+	trimWith(3) // 低い値 (何も削らなかった Trim)
+	if got := h.w.trimmed.Load(); got != 20 {
+		t.Fatalf("後退した: %d", got)
+	}
+}

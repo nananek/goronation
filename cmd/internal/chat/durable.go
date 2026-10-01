@@ -301,8 +301,8 @@ func (w *storeWriter) run() {
 			start = time.Now()
 			w.trims.Add(1)
 			first, err := w.store.Trim(target)
-			if err == nil {
-				w.trimmed.Store(first) // trims を偶数に戻す前に (SubscribeAfter が、偶数の trims と組みで読む)
+			if cur := w.trimmed.Load(); err == nil && (first == 0 || cur == 0 || first > cur) {
+				w.trimmed.Store(first) // 戻さない (何も削らなかった Trim が、低い値を返しても、省略を隠さない)。trims を偶数に戻す前に (SubscribeAfter が、偶数の trims と組みで読む)
 			}
 			w.trims.Add(1)
 			d = time.Since(start)
