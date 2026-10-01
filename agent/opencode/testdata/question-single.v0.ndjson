@@ -1,0 +1,12 @@
+{"type":"session.started","durable":true,"data":{"agent":"opencode","agent_session":"ses_1","cwd":"/work","version":"2.0.20"}}
+{"type":"turn.started","durable":true,"data":{"text":"Ask me."}}
+{"type":"tool.call","durable":true,"data":{"call_id":"call_q","input":{"questions":[{"header":"Color","options":[{"description":"warm","label":"Red"},{"description":"cool","label":"Blue"}],"question":"Which color?"}]},"kind":"other","name":"question","status":"pending"}}
+{"type":"permission.requested","durable":true,"data":{"request_id":"per_1","call_id":"call_q","tool_name":"question","kind":"other","input":{"action":"question","resources":["*"]},"summary":"question: *","details":[{"label":"target","text":"*","kind":"text"}]}}
+{"type":"permission.resolved","durable":true,"data":{"by":"human","outcome":"allow_once","request_id":"per_1"}}
+{"type":"form.requested","durable":true,"data":{"request_id":"frm_1","call_id":"call_q","kind":"question","title":"Questions","fields":[{"key":"q0","title":"Color","description":"Which color?","type":"select","options":[{"label":"Red","value":"Red","description":"warm"},{"label":"Blue","value":"Blue","description":"cool"}],"custom":true}]}}
+{"type":"form.resolved","durable":true,"data":{"answer":{"q0":"Red"},"by":"human","outcome":"answered","request_id":"frm_1"}}
+{"type":"tool.update","durable":true,"data":{"call_id":"call_q","output":"User has answered your questions: \"Which color?\"=\"Red\". You can now continue with the user's answers in mind.","status":"completed"}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"message.text","durable":true,"data":{"message_id":"msg_3","text":"You chose Red."}}
+{"type":"usage","durable":true,"data":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cost_usd":0,"input_tokens":0,"output_tokens":0,"reasoning_tokens":0,"scope":"step"}}
+{"type":"turn.completed","durable":true,"data":{"is_error":false,"stop_reason":"end_turn"}}

@@ -1,0 +1,14 @@
+{"type":"session.started","durable":true,"data":{"agent":"opencode","agent_session":"ses_1","cwd":"/work","version":"2.0.20"}}
+{"type":"turn.started","durable":true,"data":{"text":"Hi."}}
+{"type":"agent.frame","durable":false,"data":{}}
+{"type":"agent.frame","durable":false,"data":{}}
+{"type":"agent.frame","durable":false,"data":{}}
+{"type":"agent.frame","durable":false,"data":{}}
+{"type":"agent.frame","durable":false,"data":{}}
+{"type":"agent.frame","durable":false,"data":{}}
+{"type":"agent.frame","durable":false,"data":{}}
+{"type":"agent.frame","durable":false,"data":{}}
+{"type":"agent.frame","durable":false,"data":{}}
+{"type":"agent.frame","durable":false,"data":{}}
+{"type":"error","durable":true,"data":{"message":"fake provider failure","retryable":true,"status":500}}
+{"type":"turn.completed","durable":true,"data":{"is_error":true,"stop_reason":"error"}}
