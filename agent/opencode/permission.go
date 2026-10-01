@@ -99,9 +99,6 @@ func buildPermission(d permissionAsked) (v0.PermissionRequested, bool) {
 	req := v0.PermissionRequested{
 		RequestID: d.ID.V, CallID: d.Source.V.ID.V, ToolName: action, Kind: toolKind(action), Input: inputJSON,
 	}
-	if d.Source.Bad {
-		req.CallID = ""
-	}
 	sep, label, dk := ", ", "target", v0.DetailText
 	switch action {
 	case "shell":

@@ -378,3 +378,36 @@ func TestToolNameIsPerSession(t *testing.T) {
 		t.Fatalf("名前が分からない tool: %s", envs[0].Data)
 	}
 }
+
+// usage の値は、負数・型違いでも、負にならない (費用・トークンが、合計を減らさない)。
+func TestUsageNeverGoesNegative(t *testing.T) {
+	s := started(t)
+	envs := feed(t, s, "session.step.ended", `{"sessionID":"ses_root","cost":-5,"tokens":{"input":-1,"output":"x","reasoning":-3,"cache":{"read":-2,"write":-9}}}`)
+	mustTypes(t, envs, v0.TypeUsage)
+	for k, v := range dataOf(t, envs[0]) {
+		if n, ok := v.(float64); ok && n < 0 {
+			t.Errorf("%s = %v", k, v)
+		}
+	}
+}
+
+// 覚える tool 名は、完了 (success・failed) で消える: 長い session で、名前の表が埋まって、kind が other になり続けない。
+func TestToolNamesAreForgottenWhenDone(t *testing.T) {
+	s := started(t)
+	for i := 0; i < maxCalls+10; i++ {
+		id := fmt.Sprintf("call_%d", i)
+		feed(t, s, "session.tool.input.started", fmt.Sprintf(`{"sessionID":"ses_root","id":%q,"name":"shell"}`, id))
+		envs := feed(t, s, "session.tool.called", fmt.Sprintf(`{"sessionID":"ses_root","id":%q,"input":{}}`, id))
+		if dataOf(t, envs[0])["kind"] != v0.KindExecute {
+			t.Fatalf("%d 回目の kind = %v", i, dataOf(t, envs[0])["kind"])
+		}
+		typ := "session.tool.success"
+		if i%2 == 1 {
+			typ = "session.tool.failed"
+		}
+		feed(t, s, typ, fmt.Sprintf(`{"sessionID":"ses_root","id":%q}`, id))
+	}
+	if len(s.calls) != 0 {
+		t.Fatalf("calls = %d", len(s.calls))
+	}
+}

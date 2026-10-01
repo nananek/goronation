@@ -35,7 +35,7 @@ func (Adapter) NewStream() agent.Stream { return &Stream{} }
 const (
 	maxPending     = 64      // 未決の permission・form の合計
 	maxSeen        = 1 << 17 // 見た要求・form の ID (SHA-256 で覚える。回復しない)
-	maxChildren    = 64      // 子 session (サブエージェント) の数
+	maxChildren    = 1024    // 子 session (サブエージェント) の数 (累計。終わった子も、後のイベントのため覚える)
 	maxCalls       = 4096    // 覚える tool 名の数
 	maxToolName    = 128
 	maxErrorText   = 4000 // error の message (文字数)
@@ -310,6 +310,7 @@ func (s *Stream) toolSuccess(o *out, data json.RawMessage) {
 	if !d.Metadata.Bad && !d.Metadata.V.Exit.Bad && d.Metadata.V.Exit.V != nil {
 		m["exit"] = *d.Metadata.V.Exit.V
 	}
+	delete(s.calls, callKey(d.SessionID.V, d.ID.V)) // tool 名は、完了するまで (覚える数を、進行中の呼び出しに比例させる)
 	o.add(v0.TypeToolUpdate, true, origin, m)
 }
 
@@ -325,6 +326,7 @@ func (s *Stream) toolFailed(o *out, data json.RawMessage) {
 	if !d.Error.Bad {
 		msg = d.Error.V.Message.V
 	}
+	delete(s.calls, callKey(d.SessionID.V, d.ID.V))
 	o.add(v0.TypeToolUpdate, true, origin, map[string]any{"call_id": d.ID.V, "status": v0.ToolFailed, "error": msg})
 }
 

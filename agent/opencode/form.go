@@ -94,7 +94,7 @@ func buildForm(f formCreated) (v0.FormRequested, bool) {
 	}
 	for _, fo := range f.Fields.V {
 		fd := v0.FormField{Key: fo.Key.V, Title: fo.Title.V, Description: fo.Description.V, Custom: fo.Custom.V, Required: fo.Required.V}
-		if fo.Key.Bad || fo.Type.Bad || fo.Options.Bad { // options が、あるのに読めない field は、応答の形が決められない
+		if fo.Type.Bad || fo.Options.Bad { // type・options が、あるのに読めない field は、応答の形が決められない (key は、読めなければ空で、Validate が断る)
 			return req, false
 		}
 		switch fo.Type.V {
