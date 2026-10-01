@@ -58,6 +58,7 @@
 | [0050](0050-opencode-command-encoding.md) | opencode の EncodeCommand は HTTP 要求の記述を返し、承認は once・reject だけ、ID は検査済みの形だけを path に入れる (M2) | 採用 |
 | [0051](0051-opencode-transport.md) | opencode の transport は、状態の 1 行を読み、SSE を先に開き、root の一致を確かめてから会話を渡す (M2) | 採用 |
 | [0052](0052-opencode-session-permissions.md) | opencode の session は permissions で作り、設定は 1 つの環境変数にまとめ、-- の引数と resume は限る (M2) | 採用 |
+| [0053](0053-event-log-store-and-writer.md) | 耐久イベントログは、同期の Store (eventlog) と、chat の非同期の書き手に分ける (M2) | 採用 |
 
 ## 書き方
 
