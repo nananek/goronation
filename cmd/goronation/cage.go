@@ -127,6 +127,9 @@ func cageSpec(c cageConfig) bwrap.Spec {
 	if len(c.MCPServers) > 0 && c.Agent.mcp != nil {
 		mcpArgs, mcpEnv = c.Agent.mcp(c.MCPServers)
 	}
+	if c.RelayPort != 0 && c.Agent.serveEnv != nil { // HTTP の transport: MCP と permissions を、1 つの環境変数に
+		mcpEnv = c.Agent.serveEnv(c.MCPServers)
+	}
 	cmd = append(cmd, mcpArgs...)
 	env := append(cageEnv(c.Agent, c.Term, c.TZ, c.PushRepo, c.PushRefPrefix), mcpEnv...)
 	return bwrap.Spec{

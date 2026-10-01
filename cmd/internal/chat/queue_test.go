@@ -210,8 +210,11 @@ func TestInputWriteFailureStopsConversation(t *testing.T) {
 }
 
 func TestAgentLookup(t *testing.T) {
-	if _, err := Agent("opencode"); err == nil {
-		t.Error("opencode は、M1.5 では動かせない")
+	if l, err := Agent("opencode"); err != nil || l.Transport() != TransportHTTP {
+		t.Errorf("opencode は HTTP の transport で動かせる: %v", err)
+	}
+	if _, err := Agent("codex"); err == nil {
+		t.Error("未知のエージェント")
 	}
 	if _, err := Agent(""); err == nil {
 		t.Error("空の名前")

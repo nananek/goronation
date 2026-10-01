@@ -210,6 +210,9 @@ func startServeChatSession(ctx context.Context, stateDir, sessionID, agentFlag, 
 	if err != nil {
 		return nil, err
 	}
+	if err := checkAgentArgs(launch, agentArgs); err != nil {
+		return nil, err
+	}
 	isNew := repo != ""
 	tgt, home, err := resolveRepoTarget(ctx, sessStore, dirs, agent, repo, name, email, existing)
 	if err != nil {
@@ -224,5 +227,18 @@ func startServeChatSession(ctx context.Context, stateDir, sessionID, agentFlag, 
 		Host: host, Agent: agent, AgentExe: agentExe, GoroExe: self, CACerts: existingDir("/etc/ssl/certs"),
 		RunDir: tgt.runDir, AgentHome: home, AuthDir: dirs.auth, Work: tgt.work, Term: "dumb", TZ: hostTZ(),
 	}
-	return startChatSession(ctx, tgt.id, cfg, allowList(agent, nil), launch, agentArgs, filepath.Join(filepath.Dir(dirs.auth), "exe"), stderr)
+	exeDir := filepath.Join(filepath.Dir(dirs.auth), "exe")
+	if launch.Transport() == chat.TransportHTTP {
+		return startOpencodeChatSession(ctx, tgt.id, cfg, allowList(agent, nil), launch, exeDir, stderr)
+	}
+	return startChatSession(ctx, tgt.id, cfg, allowList(agent, nil), launch, agentArgs, exeDir, stderr)
+}
+
+// checkAgentArgs は、-- の後ろの引数 (agentArgs) を、HTTP の transport のエージェントでは断る: --hostname・--port・--password などの上書きで、
+// 待ち受け・認証の前提 (ADR 0020・0052) を崩せないようにする。clone の作成より前に呼ぶ。
+func checkAgentArgs(launch chat.Launch, agentArgs []string) error {
+	if launch.Transport() == chat.TransportHTTP && len(agentArgs) > 0 {
+		return fmt.Errorf("%s は、-- の後ろの引数を受けない (待ち受け・認証の設定を、上書きさせない)", launch.Name())
+	}
+	return nil
 }
